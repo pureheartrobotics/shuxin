@@ -9,7 +9,7 @@ description = "舒心 (ShuXin) — 陪伴型 AI 智能体框架，拥有独立�
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "ShuXin Team" }]
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
@@ -29,7 +29,10 @@ web = ["fastapi>=0.110.0", "uvicorn>=0.27.0"]
 voice = ["edge-tts>=6.0.0"]
 
 [project.scripts]
-shuxin = "shuxin_cli.main:cli_entry"
+shuxin = "shuxin.cli.main:cli_entry"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 line-length = 100

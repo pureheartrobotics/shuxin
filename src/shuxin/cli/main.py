@@ -17,8 +17,8 @@ import sys
 import logging
 from typing import Optional
 
-# 确保 shuxin 包在路径中
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 确保 shuxin 包在路径中（src layout: shuxin/src/shuxin/cli/main.py → shuxin/src）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from shuxin.core.agent import Agent
 from shuxin.core.config import Config
