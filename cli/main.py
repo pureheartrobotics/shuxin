@@ -1,7 +1,13 @@
 """舒心 CLI 主入口
 
 对标 Hermes 的 cli.py，提供交互式命令行界面。
-支持流式输出、彩色显示、斜杠命令。
+支持流式输出、彩色显示、斜杠命令、历史记录。
+
+使用方式：
+    shuxin                      # 交互模式
+    shuxin -o "你好"            # 单次对话模式
+    shuxin --debug              # 调试模式
+    shuxin --version            # 版本信息
 """
 
 from __future__ import annotations
@@ -19,9 +25,17 @@ from shuxin.core.config import Config
 
 logger = logging.getLogger("shuxin.cli")
 
+# 版本信息
+VERSION = "0.1.0"
+APP_NAME = "舒心 (ShuXin)"
+
 
 def setup_logging(debug: bool = False) -> None:
-    """配置日志"""
+    """配置日志系统。
+
+    Args:
+        debug: 是否启用调试级别日志。如果为 False，默认使用 WARNING 级别。
+    """
     level = logging.DEBUG if debug else logging.WARNING
     logging.basicConfig(
         level=level,
@@ -31,7 +45,10 @@ def setup_logging(debug: bool = False) -> None:
 
 
 def print_banner() -> None:
-    """打印启动横幅"""
+    """打印启动横幅。
+
+    优先使用 rich 库渲染彩色面板，如果 rich 未安装则使用纯文本。
+    """
     try:
         from rich.console import Console
         from rich.panel import Panel
@@ -41,7 +58,7 @@ def print_banner() -> None:
 
         banner = Text()
         banner.append("╔══════════════════════════════════════╗\n", style="cyan")
-        banner.append("║       舒心 (ShuXin) v0.1.0          ║\n", style="cyan bold")
+        banner.append(f"║       {APP_NAME} v{VERSION}          ║\n", style="cyan bold")
         banner.append("║    陪伴型 AI 智能体框架              ║\n", style="cyan")
         banner.append("╚══════════════════════════════════════╝\n", style="cyan")
 
@@ -49,13 +66,24 @@ def print_banner() -> None:
         console.print("输入 /help 查看命令，输入 exit 或 quit 退出\n", style="dim")
     except ImportError:
         print("=" * 50)
-        print("  舒心 (ShuXin) v0.1.0 — 陪伴型 AI 智能体")
+        print(f"  {APP_NAME} v{VERSION} — 陪伴型 AI 智能体")
         print("=" * 50)
         print("输入 /help 查看命令，输入 exit 或 quit 退出\n")
 
 
 def print_message(role: str, content: str) -> None:
-    """打印格式化的消息"""
+    """打印格式化的消息。
+
+    根据角色使用不同的颜色和图标：
+    - user: 绿色
+    - assistant: 青色 + Markdown 渲染
+    - system: 黄色
+    - error: 红色
+
+    Args:
+        role: 消息角色 (user, assistant, system, error)。
+        content: 消息内容。
+    """
     try:
         from rich.markdown import Markdown
         from rich.console import Console
@@ -72,12 +100,25 @@ def print_message(role: str, content: str) -> None:
         elif role == "error":
             console.print(f"\n[bold red]❌ {content}[/bold red]")
     except ImportError:
-        prefix = {"user": "👤 你", "assistant": "🦊 舒心", "system": "⚙️", "error": "❌"}.get(role, "")
+        prefix_map = {
+            "user": "👤 你",
+            "assistant": "🦊 舒心",
+            "system": "⚙️",
+            "error": "❌",
+        }
+        prefix = prefix_map.get(role, "")
         print(f"\n{prefix}: {content}")
 
 
 def run_interactive(agent: Agent) -> None:
-    """运行交互式对话循环"""
+    """运行交互式对话循环。
+
+    使用 prompt_toolkit 提供历史记录和自动建议功能。
+    如果 prompt_toolkit 未安装，回退到标准 input()。
+
+    Args:
+        agent: 已初始化的 Agent 实例。
+    """
     print_banner()
     print_message("system", "舒心已上线，随时可以开始聊天 💫")
 
@@ -110,9 +151,13 @@ def run_interactive(agent: Agent) -> None:
 
             # 处理命令
             if user_input.startswith("/"):
-                result = agent.handle_command(user_input)
-                if result:
-                    print_message("system", result)
+                try:
+                    result = agent.handle_command(user_input)
+                    if result:
+                        print_message("system", result)
+                except Exception as e:
+                    logger.error("命令处理失败: %s", e, exc_info=True)
+                    print_message("error", f"命令执行出错: {e}")
                 continue
 
             # 正常对话
@@ -123,7 +168,7 @@ def run_interactive(agent: Agent) -> None:
                 print_message("system", "\n（舒心歪了歪头）嗯？")
                 continue
             except Exception as e:
-                logger.error(f"对话出错: {e}", exc_info=True)
+                logger.error("对话出错: %s", e, exc_info=True)
                 print_message("error", f"出错了: {e}")
 
     except KeyboardInterrupt:
@@ -133,11 +178,14 @@ def run_interactive(agent: Agent) -> None:
 
 
 def cli_entry() -> None:
-    """CLI 入口点（由 pyproject.toml 的 scripts 注册）"""
+    """CLI 入口点（由 pyproject.toml 的 scripts 注册）。
+
+    解析命令行参数，初始化配置和 Agent，进入交互或单次对话模式。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="舒心 (ShuXin) — 陪伴型 AI 智能体框架"
+        description=f"{APP_NAME} — 陪伴型 AI 智能体框架"
     )
     parser.add_argument(
         "--config", "-c",
@@ -161,7 +209,7 @@ def cli_entry() -> None:
         help="单次对话模式: shuxin -o '你好'",
     )
     parser.add_argument(
-        "--version", "-v",
+        "--version", "-V",
         action="store_true",
         help="显示版本信息",
     )
@@ -169,14 +217,18 @@ def cli_entry() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print("舒心 (ShuXin) v0.1.0")
+        print(f"{APP_NAME} v{VERSION}")
         return
 
     # 配置日志
     setup_logging(args.debug)
 
     # 加载配置
-    config = Config.load(args.config)
+    try:
+        config = Config.load(args.config)
+    except Exception as e:
+        print(f"❌ 配置加载失败: {e}")
+        sys.exit(1)
 
     # 命令行覆盖
     if args.model:
@@ -188,19 +240,29 @@ def cli_entry() -> None:
     agent = Agent(config)
     try:
         agent.initialize()
-    except Exception as e:
+    except RuntimeError as e:
         print(f"❌ 初始化失败: {e}")
         print("提示: 请确保已设置 OPENAI_API_KEY 环境变量")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 初始化失败: {e}")
         sys.exit(1)
 
     # 单次对话模式
     if args.one_shot:
-        response = agent.chat(args.one_shot)
-        print(response)
+        try:
+            response = agent.chat(args.one_shot)
+            print(response)
+        except Exception as e:
+            print(f"❌ 对话失败: {e}")
+            sys.exit(1)
         return
 
     # 交互模式
-    run_interactive(agent)
+    try:
+        run_interactive(agent)
+    finally:
+        agent.shutdown()
 
 
 if __name__ == "__main__":
