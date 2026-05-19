@@ -26,6 +26,82 @@ logger = logging.getLogger("shuxin.config")
 SHUXIN_HOME_ENV = "SHUXIN_HOME"
 DEFAULT_SHUXIN_HOME = Path.home() / ".shuxin"
 
+# =============================================================================
+# 提供者与模型目录
+# =============================================================================
+
+PROVIDER_MODELS: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "label": "OpenAI",
+        "description": "OpenAI GPT 系列模型（需科学上网）",
+        "env_api_key": "OPENAI_API_KEY",
+        "env_base_url": "OPENAI_BASE_URL",
+        "models": [
+            ("gpt-4o", "GPT-4o（最新旗舰，速度快、能力强）"),
+            ("gpt-4o-mini", "GPT-4o Mini（轻量经济版）"),
+            ("gpt-4-turbo", "GPT-4 Turbo（上一代旗舰）"),
+            ("o1", "o1（推理模型，适合复杂问题）"),
+            ("o3-mini", "o3-mini（轻量推理模型）"),
+        ],
+    },
+    "anthropic": {
+        "label": "Anthropic",
+        "description": "Anthropic Claude 系列模型",
+        "env_api_key": "ANTHROPIC_API_KEY",
+        "env_base_url": "ANTHROPIC_BASE_URL",
+        "models": [
+            ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet（最新旗舰）"),
+            ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku（轻量快速）"),
+            ("claude-3-opus-20240229", "Claude 3 Opus（最强推理）"),
+            ("claude-3-sonnet-20240229", "Claude 3 Sonnet"),
+            ("claude-3-haiku-20240307", "Claude 3 Haiku"),
+        ],
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "description": "DeepSeek 系列模型（国产，性价比高）",
+        "env_api_key": "DEEPSEEK_API_KEY",
+        "env_base_url": "DEEPSEEK_BASE_URL",
+        "models": [
+            ("deepseek-chat", "DeepSeek V3/Chat（通用对话）"),
+            ("deepseek-reasoner", "DeepSeek R1（推理模型）"),
+        ],
+    },
+    "openai-compatible": {
+        "label": "OpenAI 兼容",
+        "description": "兼容 OpenAI API 格式的第三方服务（自定义 base_url）",
+        "env_api_key": "OPENAI_API_KEY",
+        "env_base_url": "OPENAI_BASE_URL",
+        "models": [
+            ("custom", "自定义模型名称（需同时设置 base_url）"),
+        ],
+    },
+}
+
+
+def get_provider_models() -> Dict[str, Dict[str, Any]]:
+    """获取提供者与模型目录。
+
+    Returns:
+        提供者信息字典，包含 label、description、models 等字段。
+    """
+    return dict(PROVIDER_MODELS)
+
+
+def get_provider_model_ids(provider: str) -> List[str]:
+    """获取指定提供者的所有模型 ID 列表。
+
+    Args:
+        provider: 提供者名称。
+
+    Returns:
+        模型 ID 列表。
+    """
+    info = PROVIDER_MODELS.get(provider)
+    if not info:
+        return []
+    return [m[0] for m in info.get("models", [])]
+
 
 def get_shuxin_home() -> Path:
     """获取舒心家目录，优先使用环境变量。

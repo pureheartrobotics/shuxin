@@ -4,7 +4,8 @@
 
 架构：
 - BaseLLMProvider: 抽象基类，定义统一接口
-- OpenAIProvider: OpenAI 兼容 API 实现
+- OpenAIProvider: OpenAI 兼容 API 实现（OpenAI、DeepSeek、Together AI 等）
+- AnthropicProvider: Anthropic Claude API 实现
 - LLMProvider: 门面类，提供懒加载和统一入口
 
 支持同步、异步和流式三种调用模式。
@@ -362,6 +363,290 @@ class OpenAIProvider(BaseLLMProvider):
             raise
 
 
+class AnthropicProvider(BaseLLMProvider):
+    """Anthropic Claude API 提供者。
+
+    支持 Claude 系列模型（claude-3-opus, claude-3-sonnet, claude-3-haiku 等）。
+
+    Attributes:
+        api_key: API 密钥。
+        base_url: API 基础地址。
+        model: 模型名称。
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: str = "claude-3-5-sonnet-20241022",
+    ) -> None:
+        """初始化 Anthropic 提供者。
+
+        Args:
+            api_key: API 密钥。如果为 None，从 ANTHROPIC_API_KEY 环境变量读取。
+            base_url: API 基础地址。如果为 None，从 ANTHROPIC_BASE_URL 环境变量读取。
+            model: 模型名称。
+
+        Raises:
+            ImportError: 当 anthropic 包未安装时抛出。
+        """
+        try:
+            from anthropic import Anthropic
+        except ImportError as e:
+            raise ImportError(
+                "需要安装 anthropic 包: pip install shuxin-agent[anthropic]"
+            ) from e
+
+        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        self.base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL", "")
+        self.model = model
+
+        client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+
+        self._client = Anthropic(**client_kwargs)
+        self._async_client: Optional[Any] = None
+        self._lock = threading.Lock()
+
+    @property
+    def async_client(self) -> Any:
+        """懒加载异步客户端。
+
+        Returns:
+            AsyncAnthropic: 异步 Anthropic 客户端实例。
+        """
+        if self._async_client is None:
+            with self._lock:
+                if self._async_client is None:
+                    from anthropic import AsyncAnthropic
+                    client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+                    if self.base_url:
+                        client_kwargs["base_url"] = self.base_url
+                    self._async_client = AsyncAnthropic(**client_kwargs)
+        return self._async_client
+
+    @staticmethod
+    def _to_anthropic_messages(
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+    ) -> tuple[Optional[str], List[Dict[str, Any]]]:
+        """将内部消息格式转换为 Anthropic Messages API 格式。
+
+        Anthropic 的 system prompt 是顶层参数，不在 messages 数组中。
+
+        Args:
+            messages: 内部消息列表。
+            system_prompt: 可选的系统提示。
+
+        Returns:
+            (system, messages) 元组，其中 system 是顶层 system prompt 字符串，
+            messages 是 Anthropic 格式的消息列表。
+        """
+        anthropic_messages: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = "assistant" if msg.role == "assistant" else "user"
+            anthropic_messages.append({
+                "role": role,
+                "content": msg.content,
+            })
+        return system_prompt, anthropic_messages
+
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """同步对话调用。
+
+        Args:
+            messages: 消息历史列表。
+            system_prompt: 可选的系统提示。
+            temperature: 生成温度。
+            max_tokens: 最大生成 token 数。
+            **kwargs: 额外的 Anthropic API 参数。
+
+        Returns:
+            LLMResponse: LLM 响应。
+
+        Raises:
+            ConnectionError: API 连接失败时抛出。
+            RuntimeError: API 返回错误时抛出。
+        """
+        system, anthropic_messages = self._to_anthropic_messages(messages, system_prompt)
+        try:
+            create_kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                **kwargs,
+            }
+            if system:
+                create_kwargs["system"] = system
+
+            response = self._client.messages.create(**create_kwargs)
+
+            content = ""
+            for block in response.content:
+                if block.type == "text":
+                    content += block.text
+
+            return LLMResponse(
+                content=content,
+                model=response.model,
+                usage={
+                    "input_tokens": response.usage.input_tokens if response.usage else 0,
+                    "output_tokens": response.usage.output_tokens if response.usage else 0,
+                },
+                finish_reason=response.stop_reason or "",
+            )
+        except Exception as e:
+            logger.error("Anthropic 同步调用失败 [model=%s]: %s", self.model, e)
+            raise
+
+    async def chat_async(
+        self,
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """异步对话调用。
+
+        Args:
+            messages: 消息历史列表。
+            system_prompt: 可选的系统提示。
+            temperature: 生成温度。
+            max_tokens: 最大生成 token 数。
+            **kwargs: 额外的 Anthropic API 参数。
+
+        Returns:
+            LLMResponse: LLM 响应。
+
+        Raises:
+            ConnectionError: API 连接失败时抛出。
+            RuntimeError: API 返回错误时抛出。
+        """
+        system, anthropic_messages = self._to_anthropic_messages(messages, system_prompt)
+        try:
+            create_kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                **kwargs,
+            }
+            if system:
+                create_kwargs["system"] = system
+
+            response = await self.async_client.messages.create(**create_kwargs)
+
+            content = ""
+            for block in response.content:
+                if block.type == "text":
+                    content += block.text
+
+            return LLMResponse(
+                content=content,
+                model=response.model,
+                usage={
+                    "input_tokens": response.usage.input_tokens if response.usage else 0,
+                    "output_tokens": response.usage.output_tokens if response.usage else 0,
+                },
+                finish_reason=response.stop_reason or "",
+            )
+        except Exception as e:
+            logger.error("Anthropic 异步调用失败 [model=%s]: %s", self.model, e)
+            raise
+
+    def chat_stream(
+        self,
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        """流式对话调用。
+
+        Args:
+            messages: 消息历史列表。
+            system_prompt: 可选的系统提示。
+            temperature: 生成温度。
+            max_tokens: 最大生成 token 数。
+            **kwargs: 额外的 Anthropic API 参数。
+
+        Yields:
+            str: 流式响应的文本片段。
+
+        Raises:
+            ConnectionError: API 连接失败时抛出。
+            RuntimeError: API 返回错误时抛出。
+        """
+        system, anthropic_messages = self._to_anthropic_messages(messages, system_prompt)
+        try:
+            create_kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+                **kwargs,
+            }
+            if system:
+                create_kwargs["system"] = system
+
+            stream = self._client.messages.create(**create_kwargs)
+            for event in stream:
+                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                    yield event.delta.text
+        except Exception as e:
+            logger.error("Anthropic 流式调用失败 [model=%s]: %s", self.model, e)
+            raise
+
+
+# 提供者注册表：名称 -> (实现类, 环境变量密钥名, 默认模型)
+PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "class": OpenAIProvider,
+        "env_api_key": "OPENAI_API_KEY",
+        "env_base_url": "OPENAI_BASE_URL",
+        "default_model": "gpt-4o",
+        "label": "OpenAI",
+        "description": "OpenAI GPT 系列模型（需科学上网）",
+    },
+    "openai-compatible": {
+        "class": OpenAIProvider,
+        "env_api_key": "OPENAI_API_KEY",
+        "env_base_url": "OPENAI_BASE_URL",
+        "default_model": "gpt-4o",
+        "label": "OpenAI 兼容",
+        "description": "兼容 OpenAI API 格式的第三方服务（DeepSeek、Together AI、vLLM 等）",
+    },
+    "anthropic": {
+        "class": AnthropicProvider,
+        "env_api_key": "ANTHROPIC_API_KEY",
+        "env_base_url": "ANTHROPIC_BASE_URL",
+        "default_model": "claude-3-5-sonnet-20241022",
+        "label": "Anthropic",
+        "description": "Anthropic Claude 系列模型",
+    },
+    "deepseek": {
+        "class": OpenAIProvider,
+        "env_api_key": "DEEPSEEK_API_KEY",
+        "env_base_url": "DEEPSEEK_BASE_URL",
+        "default_model": "deepseek-chat",
+        "label": "DeepSeek",
+        "description": "DeepSeek 系列模型（国产，性价比高）",
+    },
+}
+
+
 class LLMProvider:
     """LLM 提供者门面 — 统一接口。
 
@@ -386,7 +671,7 @@ class LLMProvider:
         """初始化 LLM 提供者。
 
         Args:
-            provider_type: 提供者类型，目前支持 "openai"。
+            provider_type: 提供者类型，支持 "openai", "openai-compatible", "anthropic", "deepseek"。
             **kwargs: 提供者特定的初始化参数
                       (api_key, base_url, model 等)。
 
@@ -396,18 +681,36 @@ class LLMProvider:
         Example:
             >>> provider = LLMProvider()
             >>> provider.initialize("openai", model="gpt-4o")
+            >>> provider.initialize("anthropic", model="claude-3-5-sonnet-20241022")
+            >>> provider.initialize("deepseek", model="deepseek-chat")
         """
         with self._lock:
-            if provider_type == "openai":
-                self._provider = OpenAIProvider(
-                    api_key=kwargs.get("api_key"),
-                    base_url=kwargs.get("base_url"),
-                    model=kwargs.get("model", "gpt-4o"),
+            provider_info = PROVIDER_REGISTRY.get(provider_type)
+            if provider_info is None:
+                raise ValueError(
+                    f"不支持的 LLM 提供者: {provider_type}。"
+                    f" 支持的提供者: {', '.join(PROVIDER_REGISTRY.keys())}"
                 )
-            else:
-                raise ValueError(f"不支持的 LLM 提供者: {provider_type}")
 
-            logger.info("LLM 提供者已初始化: %s [model=%s]", provider_type, kwargs.get("model", "gpt-4o"))
+            provider_class = provider_info["class"]
+            env_api_key = provider_info["env_api_key"]
+            env_base_url = provider_info["env_base_url"]
+            default_model = provider_info["default_model"]
+
+            api_key = kwargs.get("api_key") or os.environ.get(env_api_key)
+            base_url = kwargs.get("base_url") or os.environ.get(env_base_url, "")
+            model = kwargs.get("model", default_model)
+
+            self._provider = provider_class(
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+            )
+
+            logger.info(
+                "LLM 提供者已初始化: %s [model=%s]",
+                provider_type, model,
+            )
 
     @property
     def provider(self) -> BaseLLMProvider:

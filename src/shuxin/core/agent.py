@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from shuxin.core.config import Config
 from shuxin.core.soul import SoulEngine
 from shuxin.core.identity import IdentityEngine
-from shuxin.core.llm import LLMProvider, LLMMessage, LLMResponse
+from shuxin.core.llm import LLMProvider, LLMMessage, LLMResponse, PROVIDER_REGISTRY
 from shuxin.core.memory import MemoryManager
 from shuxin.core.plugin import PluginManager
 
@@ -132,21 +132,26 @@ class Agent:
             self.identity.profile.name = self.soul.profile.name
             self.identity.profile.species = self.soul.profile.species
 
-            # 3. 初始化 LLM
-            api_key = self.config.llm.api_key or os.environ.get("OPENAI_API_KEY")
+            # 3. 初始化 LLM（支持多提供者）
+            provider_type = self.config.llm.provider
+            provider_info = PROVIDER_REGISTRY.get(provider_type, {})
+            env_api_key = provider_info.get("env_api_key", "OPENAI_API_KEY")
+            env_base_url = provider_info.get("env_base_url", "OPENAI_BASE_URL")
+
+            api_key = self.config.llm.api_key or os.environ.get(env_api_key)
             if not api_key:
                 raise RuntimeError(
-                    "未找到 API 密钥。请设置 OPENAI_API_KEY 环境变量 "
+                    f"未找到 API 密钥。请设置 {env_api_key} 环境变量 "
                     "或在配置文件中指定 llm.api_key"
                 )
 
             self.llm.initialize(
-                provider_type=self.config.llm.provider,
+                provider_type=provider_type,
                 api_key=api_key,
-                base_url=self.config.llm.base_url or os.environ.get("OPENAI_BASE_URL"),
+                base_url=self.config.llm.base_url or os.environ.get(env_base_url),
                 model=self.config.llm.model,
             )
-            logger.info("LLM 已初始化: %s (%s)", self.config.llm.model, self.config.llm.provider)
+            logger.info("LLM 已初始化: %s (%s)", self.config.llm.model, provider_type)
 
             # 4. 初始化插件系统
             self.plugins.initialize(self.config.shuxin_home)
@@ -254,7 +259,20 @@ class Agent:
             )
             final_content = response.content
         except Exception as e:
-            logger.error("LLM 调用失败: %s", e)
+            logger.error("LLM 调用失败: %s", e, exc_info=True)
+            error_msg = str(e)
+            # 401 等认证错误直接抛出，让上层处理
+            if "401" in error_msg or "Incorrect API key" in error_msg or "invalid_api_key" in error_msg:
+                provider_type = self.config.llm.provider
+                provider_info = PROVIDER_REGISTRY.get(provider_type, {})
+                env_api_key = provider_info.get("env_api_key", "OPENAI_API_KEY")
+                raise RuntimeError(
+                    f"API 密钥无效，请检查后重试。\n"
+                    f"  提供者: {provider_info.get('label', provider_type)}\n"
+                    f"  环境变量: {env_api_key}\n"
+                    f"  详情: {error_msg[:200]}"
+                ) from e
+            # 其他错误使用降级回复
             final_content = self._get_fallback_response()
 
         # 5. 输出转换 Hook
@@ -445,10 +463,12 @@ class Agent:
             "## 舒心可用命令",
             "",
             "### 内置命令",
-            "/help     — 显示此帮助",
-            "/status   — 查看舒心当前状态",
-            "/reset    — 清空会话记忆",
-            "/mbti     — 查看或切换 MBTI 类型（如 /mbti ENFP）",
+            "/help          — 显示此帮助",
+            "/status        — 查看舒心当前状态",
+            "/reset         — 清空会话记忆",
+            "/mbti          — 查看或切换 MBTI 类型（如 /mbti ENFP）",
+            "/reset-key     — 重新设置 API 密钥",
+            "/switch-model  — 切换 LLM 提供者和模型",
             "",
             "### 插件命令",
         ]
@@ -467,11 +487,17 @@ class Agent:
         plugin_names = ", ".join(
             p.manifest.name for p in self.plugins._plugins.values()
         )
+        from shuxin.core.config import PROVIDER_MODELS
+        provider_label = PROVIDER_MODELS.get(
+            self.config.llm.provider, {}
+        ).get("label", self.config.llm.provider)
         return (
             f"## 舒心状态\n\n"
             f"**名字**: {self.soul.profile.name}\n"
             f"**物种**: {self.soul.profile.species}\n"
             f"**MBTI**: {self.identity.profile.mbti}\n"
+            f"**提供者**: {provider_label}\n"
+            f"**模型**: {self.config.llm.model}\n"
             f"**对话轮次**: {self.context.turn_count}\n"
             f"**短期记忆**: {len(self.memory.short_term)} 条\n"
             f"**长期记忆**: {len(self.memory.facts)} 条\n"
