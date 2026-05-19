@@ -1,0 +1,12 @@
+name: companion
+version: 1.0.0
+description: 舒心陪伴系统 — 自尊、情感、守护、用户建模
+author: ShuXin Team
+kind: standalone
+hooks:
+  - pre_llm_call
+  - transform_output
+  - on_session_start
+  - on_session_end
+  - on_user_message
+  - on_ai_message
