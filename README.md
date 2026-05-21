@@ -7,7 +7,6 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-0.1.0-orange)]()
-[![PyPI](https://img.shields.io/badge/PyPI-shuxin--agent-blueviolet)](https://pypi.org)
 
 </div>
 
@@ -15,9 +14,7 @@
 
 ## 📖 简介
 
-**舒心 (ShuXin)** 是一个**独立的、完整的 AI 智能体框架**，对标 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的品质标准，但专注于**陪伴型 AI** 场景。
-
-与市面上其他 AI 框架不同，舒心拥有：
+**舒心 (ShuXin)** 是一个**独立的 AI 智能体框架**，对标 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的品质标准，专注于**陪伴型 AI** 场景。
 
 | 特性 | 说明 |
 |------|------|
@@ -28,7 +25,7 @@
 | 📝 **用户建模** | 记住你的喜好、习惯，关系会随着时间加深 |
 | 🧬 **MBTI 人格** | 默认 INFJ，可动态切换，影响行为方式 |
 | 📖 **SOUL.md 灵魂文件** | 人格的核心定义，可自由定制 |
-| 🔄 **多模型支持** | 支持 OpenAI、Anthropic、DeepSeek 等多种 LLM 提供者 |
+| 🔄 **多模型支持** | 支持 OpenAI、Anthropic、DeepSeek 等多种 LLM 后端 |
 
 ---
 
@@ -41,14 +38,17 @@
 git clone https://github.com/pureheartrobotics/shuxin.git
 cd shuxin
 
-# 2. 安装依赖
+# 2. 安装核心依赖
 pip install -e .
 
-# 3. （可选）安装额外支持
-pip install -e ".[anthropic]"   # Anthropic Claude 支持
-pip install -e ".[web]"         # Web 管理界面
-pip install -e ".[voice]"       # 语音交互
+# 3. （可选）安装 Anthropic Claude 支持
+pip install -e ".[anthropic]"
+
+# 4. （可选）安装开发依赖（测试、代码检查）
+pip install -e ".[dev]"
 ```
+
+> **注意**：`[anthropic]` 额外依赖需要手动安装 `anthropic` 包才能使用 Claude 系列模型。DeepSeek 使用 OpenAI 兼容协议，无需额外安装。
 
 ### 首次启动
 
@@ -61,7 +61,7 @@ shuxin
 
 ```
 🌐 请选择 LLM 提供者（模型服务商）:
-  1. OpenAI       — GPT 系列模型（需科学上网）
+  1. OpenAI       — GPT 系列模型
   2. Anthropic    — Claude 系列模型
   3. DeepSeek     — DeepSeek 系列模型（国产，性价比高）
   4. OpenAI 兼容  — 兼容 OpenAI API 格式的第三方服务
@@ -85,6 +85,9 @@ shuxin
 # 交互模式（默认）
 shuxin
 
+# 指定模型
+shuxin --provider deepseek --model deepseek-chat
+
 # 指定自定义 API 地址
 shuxin --base-url https://api.openai.com/v1
 
@@ -104,9 +107,9 @@ shuxin --debug
 | `/help` | 显示帮助 |
 | `/status` | 查看舒心状态（含当前模型信息） |
 | `/reset` | 清空会话记忆 |
-| `/mbti <类型>` | 切换 MBTI 人格 |
+| `/mbti <类型>` | 查看或切换 MBTI 人格 |
 | `/reset-key` | 重新设置 API 密钥 |
-| `/switch-model` | 切换 LLM 提供者和模型 |
+| `/switch-model` | 切换 LLM 后���和模型 |
 | `/shuxin status` | 查看完整状态（自尊+情感+守护+关系） |
 | `/shuxin emotion` | 查看情感状态 |
 | `/shuxin reset` | 重置自尊系统 |
@@ -133,33 +136,36 @@ shuxin/
 │   │
 │   ├── core/                        # 框架核心层
 │   │   ├── agent.py                 # 智能体主循环
-│   │   ├── config.py                # 配置管理（YAML + 环境变量）
+│   │   ├── config.py                # 配置管理（YAML + 环境变量 + 交互式设置向导）
 │   │   ├── soul.py                  # 人格引擎（SOUL.md 加载与解析）
 │   │   ├── identity.py              # 身份引擎（MBTI 人格管理）
-│   │   ├── llm.py                   # LLM 提供者抽象层
-│   │   ├── memory.py                # 记忆系统（会话上下文管理）
+│   │   ├── llm.py                   # LLM 提供者（OpenAI / Anthropic / DeepSeek）
+│   │   ├── memory.py                # 记忆系统（短期会话 + 长期事实记忆）
 │   │   └── plugin.py                # 插件系统（Hook 机制 + 动态加载）
 │   │
-│   ├── providers/                   # LLM 提供者实现
 │   ├── tools/                       # 工具系统
-│   │   └── __init__.py              # 工具注册表
+│   │   └── __init__.py              # 工具注册表（ToolRegistry + 装饰器）
 │   ├── skills/                      # 技能系统
-│   │   └── __init__.py              # 技能管理器
-│   ├── locales/                     # 国际化/本地化
-│   ├── assets/                      # 静态资源
+│   │   └── __init__.py              # 技能管理器（SKILL.md 加载）
 │   │
 │   └── plugins/                     # 内置插件目录
 │       └── companion/               # 陪伴插件（核心功能）
-│           ├── __init__.py          # 插件入口
+│           ├── __init__.py          # 插件入口 + 命令注册
 │           ├── plugin.yaml          # 插件清单
-│           ├── self_esteem.py       # 自尊系统
-│           ├── emotion.py           # 情感引擎
-│           ├── guardian.py          # 守护系统
-│           ├── user_model.py        # 用户建模
-│           └── interceptor.py       # 响应拦截器
+│           ├── self_esteem.py       # 自尊系统（0–100，≤20 沉默）
+│           ├── emotion.py           # 情感引擎（Plutchik 6 维模型）
+│           ├── guardian.py          # 守护系统（6 种守护场景）
+│           ├── user_model.py        # 用户建模 + 关系亲密度
+│           └── interceptor.py       # 沉默模式响应拦截器
 │
-├── plugins/                         # 用户插件目录
-└── tests/                           # 测试目录
+├── plugins/                         # 用户插件目录（自定义插件放这里）
+├── tests/                           # 测试目录
+│
+│   （预留目录，当前为空）
+└── src/shuxin/
+    ├── providers/                   # LLM 提供者独立实现
+    ├── locales/                     # 国际化支持
+    └── assets/                      # 静态资源
 ```
 
 ---
@@ -201,7 +207,7 @@ shuxin/
 
 ### 插件系统
 
-舒心的插件系统对标 Hermes Agent，支持：
+对标 Hermes Agent 的插件架构，支持：
 
 - **6 种 Hook**: `pre_llm_call`、`transform_output`、`on_session_start`、`on_session_end`、`on_user_message`、`on_ai_message`
 - **斜杠命令**: 插件可以注册 `/command` 命令
@@ -243,16 +249,16 @@ shuxin/
 
 ## 🔄 多模型支持
 
-舒心支持多种 LLM 提供者，可在首次启动时选择，或随时通过 `/switch-model` 命令切换。
+舒心支持多种 LLM 后端，可在首次启动时选择，或随时通过 `/switch-model` 命令切换。
 
-| 提供者 | 环境变量 | 默认模型 | 说明 |
-|--------|----------|----------|------|
-| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o` | GPT 系列模型（需科学上网） |
-| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-3-5-sonnet-20241022` | Claude 系列模型 |
-| **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-chat` | DeepSeek 系列模型（国产，性价比高） |
-| **OpenAI 兼容** | `OPENAI_API_KEY` | `gpt-4o` | 兼容 OpenAI API 格式的第三方服务 |
+| 后端 | 环境变量 | 默认模型 | 协议 | 说明 |
+|------|----------|----------|------|------|
+| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o` | OpenAI 原生 | GPT 系列模型 |
+| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-3-5-sonnet-20241022` | Anthropic 原生 | 需 `pip install anthropic` |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI 兼容 | 国产，性价比高 |
+| **OpenAI 兼容** | `OPENAI_API_KEY` | 自定义 | OpenAI 兼容 | 支持 vLLM、Together AI 等 |
 
-> 在对话中随时输入 `/switch-model` 即可重新选择提供者和模型，无需重启。
+> 在对话中随时输入 `/switch-model` 即可重新选择后端和模型，无需重启。
 
 ---
 
@@ -262,7 +268,7 @@ shuxin/
 
 ```yaml
 llm:
-  provider: openai              # 提供者：openai / anthropic / deepseek / openai-compatible
+  provider: openai              # 后端：openai / anthropic / deepseek / openai-compatible
   model: gpt-4o                 # 模型名称
   api_key: sk-...               # API 密钥（首次设置后自动保存）
   base_url: ""                  # 自定义 API 地址（可选）
@@ -294,8 +300,9 @@ enabled_plugins:
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
 | `DEEPSEEK_BASE_URL` | DeepSeek API 地址 |
 | `SHUXIN_LLM_MODEL` | 模型名称 |
-| `SHUXIN_LLM_PROVIDER` | LLM 提供者 |
+| `SHUXIN_LLM_PROVIDER` | LLM 后端 |
 | `SHUXIN_DEBUG` | 调试模式 |
+| `SHUXIN_HOME` | 自定义数据目录（默认 `~/.shuxin`） |
 
 > API 密钥支持通过环境变量或配置文件设置。如果两者都未设置，首次启动时会交互式提示输入。
 
@@ -308,8 +315,9 @@ enabled_plugins:
 - [x] 陪伴插件（自尊、情感、守护、用户建模）
 - [x] SOUL.md 灵魂文件
 - [x] 交互式首次设置（API 密钥、模型选择）
-- [x] 多 LLM 提供者支持（OpenAI、Anthropic、DeepSeek、OpenAI 兼容）
+- [x] 多 LLM 后端支持（OpenAI、Anthropic、DeepSeek、OpenAI 兼容）
 - [x] 运行时切换模型（`/switch-model` 命令）
+- [ ] 单元测试
 - [ ] 集成 Mem0 记忆系统
 - [ ] Web 管理界面
 - [ ] 语音交互支持
