@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+@dataclass
+class LLMDeviceConfig:
+    provider: str = ""
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+
+
+@dataclass
+class ProviderConfig:
+    type: str = "local"
+    model: str = ""
+    model_dir: str = "models/SenseVoiceSmall"
+    api_url: str = ""
+    api_key: str = ""
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    output_dir: str = "outputs"
+
+
+@dataclass
+class DeviceConfig:
+    device_id: str
+    llm: LLMDeviceConfig = field(default_factory=LLMDeviceConfig)
+    stt: ProviderConfig = field(default_factory=ProviderConfig)
+    tts: ProviderConfig = field(default_factory=ProviderConfig)
+
+
+@dataclass
+class VoiceConfig:
+    default_device_id: str = "demo-device-001"
+    stt: ProviderConfig = field(default_factory=ProviderConfig)
+    tts: ProviderConfig = field(default_factory=ProviderConfig)
+
+
+def _expand_env(value: Any) -> Any:
+    if isinstance(value, str):
+        expanded = os.path.expandvars(value)
+        return re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", "", expanded)
+    if isinstance(value, dict):
+        return {key: _expand_env(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(item) for item in value]
+    return value
+
+
+def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+class DeviceConfigProvider:
+    """Loads demo device configuration from a local YAML file.
+
+    The shape is intentionally close to a future remote config service: callers
+    ask for a device id and receive LLM/STT/TTS settings for that device.
+    """
+
+    def __init__(self, config_path: str | os.PathLike[str] | None = None) -> None:
+        self.config_path = Path(
+            config_path
+            or os.environ.get("VOICE_DEVICE_CONFIG", "data/devices.yaml")
+        )
+        self._raw = self._load()
+
+    def _load(self) -> dict[str, Any]:
+        if not self.config_path.exists():
+            return {}
+        with self.config_path.open("r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"Device config must be a mapping: {self.config_path}")
+        return _expand_env(data)
+
+    def get(self, device_id: str | None = None) -> DeviceConfig:
+        defaults = self._raw.get("defaults", {})
+        devices = self._raw.get("devices", {})
+        selected_id = device_id or self._raw.get("default_device_id") or "demo-device-001"
+        device_data = devices.get(selected_id, {})
+        data = _merge_dict(defaults, device_data)
+
+        return DeviceConfig(
+            device_id=selected_id,
+            llm=LLMDeviceConfig(**data.get("llm", {})),
+            stt=ProviderConfig(**data.get("stt", {})),
+            tts=ProviderConfig(**data.get("tts", {})),
+        )

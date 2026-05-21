@@ -1,0 +1,9 @@
+# Voice demo dependencies kept separate until the demo stabilizes.
+edge-tts==7.2.6
+funasr==1.2.7
+modelscope==1.32.0
+pydub==0.25.1
+soundfile==0.13.1
+torch==2.2.2
+torchaudio==2.2.2
+  

@@ -1,0 +1,3 @@
+# Extra compatibility pins for the voice demo image.
+# Keep this file separate so Docker can reuse the heavy main dependency layer.
+numpy==1.26.4
