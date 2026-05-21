@@ -34,3 +34,14 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Voice demo runtime data
+data/devices.yaml
+data/docker_deps.hash
+data/shuxin_home/
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+samples/*
+!samples/README.md
