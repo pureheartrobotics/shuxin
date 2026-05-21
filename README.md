@@ -34,6 +34,9 @@
 
 ## 🚀 快速开始
 
+语音 Demo 的无硬件最小测试流程见：[语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md)。
+语音闭环和后续硬件接口规划见：[舒心语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md)。
+
 ### 安装
 
 ```bash
