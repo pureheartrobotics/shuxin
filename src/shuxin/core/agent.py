@@ -239,6 +239,9 @@ class Agent:
         # 2. 记录用户消息
         self.memory.add_message("user", user_input)
 
+        # 动态层（长期记忆、陪伴状态、用户画像）每轮都可能变化。
+        self._build_system_prompt()
+
         # 3. 构建上下文
         messages = self.memory.build_context(
             system_prompt=self._system_prompt,
@@ -305,6 +308,7 @@ class Agent:
         self.context.turn_count += 1
         self.plugins.invoke_hook("on_user_message", agent=self, message=user_input)
         self.memory.add_message("user", user_input)
+        self._build_system_prompt()
 
         messages = self.memory.build_context(
             system_prompt=self._system_prompt,
@@ -354,6 +358,7 @@ class Agent:
         self.context.turn_count += 1
         self.plugins.invoke_hook("on_user_message", agent=self, message=user_input)
         self.memory.add_message("user", user_input)
+        self._build_system_prompt()
 
         messages = self.memory.build_context(
             system_prompt=self._system_prompt,

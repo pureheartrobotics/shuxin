@@ -1,0 +1,10 @@
+defaults:
+  audio_quota_mb: 512
+
+users:
+  demo-user:
+    token: ""
+    audio_quota_mb: 128
+  user-001:
+    token: change-me
+    audio_quota_mb: 1024

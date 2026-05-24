@@ -21,7 +21,9 @@
 from __future__ import annotations
 
 import time
+import json
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 from shuxin.plugins.companion.self_esteem import SelfEsteemSystem
@@ -47,12 +49,13 @@ class CompanionPlugin:
         interceptor: 响应拦截器实例。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: Optional[str] = None) -> None:
         """初始化陪伴插件及其所有子系统。"""
-        self.self_esteem = SelfEsteemSystem()
-        self.emotion = EmotionEngine()
-        self.guardian = GuardianSystem()
-        self.user_model = UserModel()
+        self.data_dir = data_dir
+        self.self_esteem = SelfEsteemSystem(data_dir=data_dir)
+        self.emotion = EmotionEngine(data_dir=data_dir)
+        self.guardian = GuardianSystem(data_dir=data_dir)
+        self.user_model = UserModel(data_dir=data_dir)
         self.interceptor = ResponseInterceptor()
         self._initialized = False
 
@@ -93,13 +96,49 @@ class CompanionPlugin:
 
         # 注入自尊状态
         esteem_status = self.self_esteem.get_status_text()
+        growth_context = self._get_growth_context()
 
         return (
             f"## 舒心当前状态\n\n"
             f"{esteem_status}\n\n"
             f"{emotion_context}\n\n"
-            f"{profile_context}"
+            f"{profile_context}\n\n"
+            f"{growth_context}"
         )
+
+    def _get_growth_context(self) -> str:
+        """读取用户级人格成长和共享记忆摘要，注入给 LLM。
+
+        这里不直接修改成长状态，只把 storage 初始化出的 personality.json
+        和 shared_memory.json 转成简短提示，保证每轮回复能感知长期关系进展。
+        """
+        if not self.data_dir:
+            return "## 长期成长\n暂无长期成长摘要。"
+
+        base = Path(self.data_dir)
+        personality_path = base / "personality.json"
+        summary_path = base.parent / "summaries" / "shared_memory.json"
+        lines = ["## 长期成长"]
+
+        try:
+            personality = json.loads(personality_path.read_text(encoding="utf-8"))
+            lines.append(f"当前阶段: {personality.get('stage', '初遇')}")
+            rituals = personality.get("shared_rituals") or []
+            if rituals:
+                lines.append(f"共同习惯: {'、'.join(map(str, rituals[:5]))}")
+        except (OSError, json.JSONDecodeError):
+            lines.append("当前阶段: 初遇")
+
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            lines.append(f"累计对话: {summary.get('turn_count', 0)} 次")
+            warning = summary.get("last_warning")
+            if warning:
+                lines.append(f"存储状态: {warning}")
+        except (OSError, json.JSONDecodeError):
+            lines.append("累计对话: 0 次")
+
+        return "\n".join(lines)
 
     def on_transform_output(self, **kwargs: Any) -> Optional[str]:
         """transform_output hook — 沉默模式拦截 LLM 输出。
@@ -287,19 +326,33 @@ class CompanionPlugin:
 
 # ---- 插件注册入口 ----
 
-_plugin_instance: Optional[CompanionPlugin] = None
+_plugin_instances: Dict[str, CompanionPlugin] = {}
 
 
-def get_plugin() -> CompanionPlugin:
-    """获取插件单例。
+def _plugin_key(data_dir: Optional[str] = None) -> str:
+    """用 data_dir 区分插件实例，避免多用户 Web 会话共享陪伴状态。"""
+    return data_dir or "__default__"
+
+
+def get_plugin(data_dir: Optional[str] = None) -> CompanionPlugin:
+    """获取指定 data_dir 对应的插件单例。
 
     Returns:
         CompanionPlugin: 陪伴插件实例。
     """
-    global _plugin_instance
-    if _plugin_instance is None:
-        _plugin_instance = CompanionPlugin()
-    return _plugin_instance
+    key = _plugin_key(data_dir)
+    if key not in _plugin_instances:
+        _plugin_instances[key] = CompanionPlugin(data_dir=data_dir)
+    return _plugin_instances[key]
+
+
+def get_plugin_for_agent(agent: Any = None) -> CompanionPlugin:
+    """从 Agent 配置中解析 companion.data_dir 并返回对应插件实例。"""
+    data_dir = None
+    if agent is not None:
+        data_dir = getattr(getattr(agent, "config", None), "companion", None)
+        data_dir = getattr(data_dir, "data_dir", "") or None
+    return get_plugin(data_dir=data_dir)
 
 
 def register(ctx: Any) -> None:
@@ -310,15 +363,31 @@ def register(ctx: Any) -> None:
     Args:
         ctx: 插件上下文，提供 register_hook 和 register_command 方法。
     """
-    plugin = get_plugin()
-
-    # 注册 hooks
-    ctx.register_hook("pre_llm_call", plugin.on_pre_llm_call)
-    ctx.register_hook("transform_output", plugin.on_transform_output)
-    ctx.register_hook("on_session_start", plugin.on_session_start)
-    ctx.register_hook("on_session_end", plugin.on_session_end)
-    ctx.register_hook("on_user_message", plugin.on_user_message)
-    ctx.register_hook("on_ai_message", plugin.on_ai_message)
+    # 注册 hooks 时延迟按 agent 取插件实例，支持同进程里的多用户隔离。
+    ctx.register_hook(
+        "pre_llm_call",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_pre_llm_call(**kwargs),
+    )
+    ctx.register_hook(
+        "transform_output",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_transform_output(**kwargs),
+    )
+    ctx.register_hook(
+        "on_session_start",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_session_start(**kwargs),
+    )
+    ctx.register_hook(
+        "on_session_end",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_session_end(**kwargs),
+    )
+    ctx.register_hook(
+        "on_user_message",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_user_message(**kwargs),
+    )
+    ctx.register_hook(
+        "on_ai_message",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_ai_message(**kwargs),
+    )
 
     # 注册命令
     ctx.register_command("shuxin", _handle_shuxin_command)
@@ -338,7 +407,7 @@ def _handle_shuxin_command(raw_args: str, **kwargs: Any) -> str:
     Returns:
         str: 命令执行结果。
     """
-    plugin = get_plugin()
+    plugin = get_plugin_for_agent(kwargs.get("agent"))
     parts = raw_args.strip().split()
     subcommand = parts[0] if parts else "status"
     sub_args = " ".join(parts[1:]) if len(parts) > 1 else ""
