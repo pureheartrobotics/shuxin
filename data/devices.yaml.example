@@ -17,3 +17,17 @@ devices:
       model: ${DEMO_LLM_MODEL}
       base_url: ${DEMO_LLM_BASE_URL}
       api_key: ${DEMO_LLM_API_KEY}
+  demo-device-streaming-001:
+    stt:
+      type: streaming-local
+      model_dir: models/paraformer-zh-streaming
+      output_dir: outputs
+    tts:
+      type: local
+      voice: zh-CN-XiaoxiaoNeural
+      output_dir: outputs
+    llm:
+      provider: ${DEMO_LLM_PROVIDER}
+      model: ${DEMO_LLM_MODEL}
+      base_url: ${DEMO_LLM_BASE_URL}
+      api_key: ${DEMO_LLM_API_KEY}

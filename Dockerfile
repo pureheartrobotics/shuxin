@@ -26,14 +26,25 @@ ENV LANG=zh_CN.UTF-8 \
 WORKDIR /app
 
 COPY pyproject.toml ./
-COPY requirements-voice-demo.txt requirements-voice-extra.txt ./
+COPY requirements-voice-demo.txt ./
 
+# 先安装体积较大的语音依赖，最大化复用 Docker 缓存。
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements-voice-demo.txt && \
-    pip install --no-cache-dir -r requirements-voice-extra.txt
+    pip install --no-cache-dir -r requirements-voice-demo.txt
+
+COPY requirements-voice-extra.txt ./
+
+# WebSocket demo 的轻量 Web 依赖单独分层，避免改核心依赖时重装语音模型栈。
+RUN pip install --no-cache-dir -r requirements-voice-extra.txt
+
+COPY requirements-shuxin-core.txt ./
+
+# ShuXin 核心运行依赖放在最后，便于独立调整 Agent 侧依赖。
+RUN pip install --no-cache-dir -r requirements-shuxin-core.txt
 
 COPY README.md SOUL.md ./
 COPY src ./src
+COPY scripts ./scripts
 
 RUN pip install --no-cache-dir --no-deps -e .
 RUN mkdir -p /app/data /app/models /app/samples /app/outputs

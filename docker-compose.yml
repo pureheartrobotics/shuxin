@@ -8,15 +8,21 @@ services:
     environment:
       SHUXIN_HOME: /app/data/shuxin_home
       VOICE_DEVICE_CONFIG: /app/data/devices.yaml
+      # v1 用本地 YAML 模拟后台用户配置，后续可替换为管理服务。
+      SHUXIN_USERS_CONFIG: /app/data/users.yaml
       DEMO_LLM_PROVIDER: ${DEMO_LLM_PROVIDER:-openai-compatible}
       DEMO_LLM_MODEL: ${DEMO_LLM_MODEL:-deepseek-chat}
       DEMO_LLM_BASE_URL: ${DEMO_LLM_BASE_URL:-}
       DEMO_LLM_API_KEY: ${DEMO_LLM_API_KEY:-}
+    ports:
+      - "${VOICE_DEMO_PORT:-8765}:8765"
     volumes:
       - ./src:/app/src
+      # 挂载脚本目录，便于容器内下载/更新语音模型。
+      - ./scripts:/app/scripts
       - ./data:/app/data
       - ./models:/app/models
       - ./samples:/app/samples
       - ./outputs:/app/outputs
     working_dir: /app
-    command: ["sleep", "infinity"]
+    command: ["python", "-m", "shuxin.voice.server", "--host", "0.0.0.0", "--port", "8765"]

@@ -57,6 +57,7 @@ current_deps_hash() {
   sha256sum \
     requirements-voice-demo.txt \
     requirements-voice-extra.txt \
+    requirements-shuxin-core.txt \
     pyproject.toml | sha256sum | awk '{print $1}'
 }
 
