@@ -2,6 +2,8 @@
 
 本文档说明当前语音 demo 的边界：我们参考小智项目的成熟服务端形态，但不复制它的产品核心。舒心自己的核心仍然是 Agent 主循环、人格、记忆、插件和陪伴编排。
 
+硬件接入方优先阅读：[语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。
+
 ## 1. 架构边界
 
 可以参考小智的部分：
@@ -75,6 +77,38 @@ exit
 - `outputs/session/reply-002.mp3`
 - `outputs/session/transcript.txt`
 
+## 2.1 WebSocket 准实时测试台
+
+在没有硬件时，浏览器可以作为假硬件接入常驻 voice server：
+
+```bash
+python -m shuxin.voice.server --host 0.0.0.0 --port 8765
+```
+
+浏览器打开：
+
+```text
+http://localhost:8765/voice-demo
+```
+
+第一版准实时链路：
+
+```text
+浏览器按住说话
+  -> Web Audio 采集麦克风
+  -> 下采样为 16k mono PCM16
+  -> WebSocket 二进制音频帧上行
+  -> 松手发送 listen stop
+  -> 服务端写临时 wav
+  -> STT final transcript
+  -> ShuXin Agent
+  -> EdgeTTS 合成 mp3
+  -> WebSocket 二进制 mp3 下发
+  -> 浏览器播放
+```
+
+这个阶段的实时目标是“用户说完一句后几秒内回复”，不是边说边打断、自动 VAD 或流式 TTS。
+
 ## 3. 当前代码分层
 
 语音 demo 的代码在 `src/shuxin/voice/` 下：
@@ -84,12 +118,18 @@ exit
 - `service.py`：语音服务门面，保留原有 `stt / tts / chat-audio` 单点能力。
 - `transport.py`：硬件输入输出抽象，目前用文件模拟麦克风和扬声器。
 - `session.py`：无硬件语音闭环，会话内复用同一个 Agent。
+- `server.py`：WebSocket voice server 和浏览器测试台。
 - `cli.py`：命令行入口。
 
 当前默认 provider：
 
 - STT：本地 FunASR `models/SenseVoiceSmall`。
 - TTS：EdgeTTS。
+
+准实时测试 provider：
+
+- STT：FunASR `models/paraformer-zh-streaming`，配置类型为 `streaming-local`。
+- TTS：第一版仍然使用 EdgeTTS 整段 mp3 返回。
 
 同时保留 API provider 的接口位置，后续可以把 `ProviderConfig.type` 切到 `api` 后实现远程服务调用。
 
@@ -180,6 +220,12 @@ audio frame bytes
 tts audio frame bytes
 ```
 
+当前浏览器测试台已使用同一协议方向：
+
+- 文本消息处理 `hello / listen start / listen stop / abort / ping`。
+- 二进制上行使用 16kHz mono PCM16。
+- 二进制下行第一版使用完整 mp3。
+
 ## 6. 多设备配置方向
 
 当前 `data/devices.yaml` 已经按设备 ID 保存配置：
@@ -189,6 +235,22 @@ tts audio frame bytes
 - 每个设备可以有自己的 TTS provider/voice/api_url/api_key。
 
 这满足 demo 阶段需求。未来如果产品量变多，可以把本地 YAML 换成数据库或远程配置服务，但调用方仍然只按 `device_id` 获取配置。
+
+## 6.1 Web 多用户记忆与附件存储
+
+Web 测试台现在区分三类数据：
+
+- 用户长期资产：`$SHUXIN_HOME/users/{user_id}/`，包含长期记忆、陪伴状态、人格成长状态、事件库和共同记忆摘要。
+- 音频附件：`outputs/web/users/{user_id}/{device_id}/{session_id}/`，包含输入录音和回复音频，通过事件库索引回对话轮次。
+- 后台用户配置：`data/users.yaml`，v1 用来模拟后台配置用户 token 和音频额度。
+
+WebSocket `hello` 需要携带：
+
+```json
+{"type":"hello","user_id":"user-001","token":"change-me","device_id":"demo-device-001","client_id":"web-demo"}
+```
+
+同一个 `user_id` 的多个 `device_id` 共享用户记忆和人格成长；设备只决定语音和模型配置。音频附件按用户额度管理，超过额度后优先把旧输入 wav 压缩为 32kbps mono mp3，并保留事件索引。长期陪伴记忆不依赖热存音频无限增长，而依赖事件、摘要、用户画像和人格成长状态。
 
 ## 7. 成功标准
 

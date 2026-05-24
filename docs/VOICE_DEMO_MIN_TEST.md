@@ -7,6 +7,7 @@
 - TTS 可以把文字合成为音频文件。
 - 在准备 FunASR 模型和样本音频后，STT 可以把语音识别为文字。
 - 在准备 LLM 配置后，可以跑通 `语音 -> 文本 -> Agent 回复 -> 回复语音`。
+- 在准备 Web 依赖和准实时模型后，可以用浏览器麦克风测试 WebSocket 语音对话。
 - 打包和导入脚本可用于迁移 demo 环境。
 
 当前 demo 不测试真实硬件、WebSocket 实时音频流、设备管理后台和生产级并发。
@@ -62,10 +63,12 @@ python3 -m py_compile \
   src/shuxin/voice/service.py \
   src/shuxin/voice/session.py \
   src/shuxin/voice/transport.py \
-  src/shuxin/voice/cli.py
+  src/shuxin/voice/cli.py \
+  src/shuxin/voice/server.py
 
 bash -n scripts/export_pack.sh
 bash -n scripts/import_deploy.sh
+bash -n scripts/download_voice_models.sh
 docker compose config
 ```
 
@@ -87,10 +90,23 @@ docker compose run --rm shuxin-voice-demo \
   python -m shuxin.voice.cli --help
 ```
 
+如果使用常驻服务，启动或重启：
+
+```bash
+bash scripts/redeploy_docker.sh
+```
+
+默认 Web 测试台端口：
+
+```text
+http://localhost:8765/voice-demo
+```
+
 验收标准：
 
 - 镜像构建成功。
 - 容器里能看到 CLI help。
+- 常驻容器启动后，浏览器能打开 Web 测试台页面。
 
 如果构建失败，优先检查网络、pip 镜像源和 `requirements-voice-demo.txt` 里的依赖下载。
 
@@ -162,12 +178,15 @@ docker compose run --rm shuxin-voice-demo \
   python -m shuxin.voice.cli chat-audio samples/demo.wav \
   --device-id demo-device-001 \
   --out outputs/reply.mp3
+```
 
+如果容器已经常驻启动，推荐使用：
 
-  **docker exec -it shuxin-voice-demo \
+```bash
+docker exec -it shuxin-voice-demo \
   python -m shuxin.voice.cli chat-audio samples/demo.wav \
   --device-id demo-device-001 \
-  --out outputs/reply.mp3**
+  --out outputs/reply.mp3
 ```
 
 验收标准：
@@ -227,7 +246,67 @@ exit
 - `AGENT_REPLY` 报错：检查 `.env` 和 `data/devices.yaml` 的 LLM 配置。
 - `reply-001.mp3` 没生成：先回到 TTS 测试。
 
-## 9. 打包测试
+## 9. WebSocket 准实时语音测试台
+
+这个测试用浏览器模拟未来硬件：浏览器麦克风采集 16k mono PCM16，通过 WebSocket 发给服务端，服务端完成 STT、Agent 回复和 TTS 播放。
+
+首次测试 streaming STT 前，下载模型到挂载目录：
+
+```bash
+docker exec -it shuxin-voice-demo \
+  bash scripts/download_voice_models.sh streaming-stt
+```
+
+如果希望先下载原有 SenseVoice 模型：
+
+```bash
+docker exec -it shuxin-voice-demo \
+  bash scripts/download_voice_models.sh sensevoice
+```
+
+启动或重启常驻服务：
+
+```bash
+bash scripts/redeploy_docker.sh
+```
+
+打开浏览器：
+
+```text
+http://localhost:8765/voice-demo
+```
+
+测试步骤：
+
+```text
+1. 点击连接。
+2. 按住“按住说话”。
+3. 说一句中文。
+4. 松手。
+5. 等待页面显示 STT 文本、Agent 回复，并自动播放 TTS 音频。
+```
+
+如果要测试 streaming 配置，把页面里的 device id 改为：
+
+```text
+demo-device-streaming-001
+```
+
+验收标准：
+
+- 页面连接状态显示已连接。
+- 松手后页面显示识别文本。
+- 页面显示舒心回复文本。
+- 浏览器播放回复 mp3。
+- 页面日志能看到 STT、Agent、TTS 状态消息和耗时。
+
+当前边界：
+
+- 第一版是准实时 turn-based，不是自动 VAD。
+- 松手后才进入 final STT。
+- TTS 第一版是整段 mp3 返回，不是流式 TTS。
+
+## 10. 打包测试
 
 ```bash
 bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
@@ -243,7 +322,7 @@ bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
 
 - 如果 `models/` 没有模型文件，会出现 warning，但不应该导致打包失败。
 
-## 10. 导入部署测试
+## 11. 导入部署测试
 
 建议先导入到临时目录：
 
@@ -259,7 +338,7 @@ bash scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shuxin_voice_bundle_
 - `docker compose build` 成功。
 - 最后的容器 CLI smoke test 成功。
 
-## 11. Docker 日常重部署
+## 12. Docker 日常重部署
 
 代码发生变化后，可以使用：
 
@@ -285,7 +364,7 @@ bash scripts/redeploy_docker.sh --no-build
 - 普通代码变更后，终端输出 `Code-only redeploy: skipping dependency build`。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
 
-## 12. 最终通过标准
+## 13. 最终通过标准
 
 最小可测试单元通过标准：
 
@@ -296,5 +375,6 @@ bash scripts/redeploy_docker.sh --no-build
 - 有模型和样本音频时，`stt` 可以输出文字。
 - 有 LLM 配置时，`chat-audio` 可以输出识别文本、Agent 回复和回复音频。
 - 有 LLM 配置时，`session` 可以输出初始化音频、回复音频和 transcript。
+- 有 LLM 配置和浏览器麦克风权限时，Web 测试台可以完成按住说话、松手识别、回复和播放。
 - `export_pack.sh` 可以打包。
 - `import_deploy.sh` 可以在新目录恢复并跑通容器 smoke test。
