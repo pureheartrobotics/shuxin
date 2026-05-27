@@ -88,7 +88,9 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 
 ### 当前边界
 
+- 协作边界：`src/shuxin/cli/`、`core/`、`plugins/`、`skills/`、`tools/` 归其他协作者维护；设备绑定、数据库接入、后台管理、小程序/硬件协议优先落在 `src/shuxin/voice/`、`apps/wechat-miniprogram/`、`docs/` 和 `scripts/`，通过现有公开接口调用核心能力。
 - `tools` 已有注册表和 OpenAI tool schema 转换能力，但尚未接入 `Agent` 的 LLM 调用链。
 - `skills` 已有 `SKILL.md` 发现和解析框架，但尚未注入 `Agent` 系统提示或命令流程。
-- 仓库当前没有 `tests/` 目录，`pyproject.toml` 已预留 pytest 配置。
-- README 中提到的部分目录如 `providers/`、`locales/`、`assets/` 当前尚未在源码树中实现。
+- `tests/` 目录已存在，当前重点覆盖语音 Web 用户和存储相关逻辑；`pyproject.toml` 已配置 pytest。
+- 语音模块已落在 `src/shuxin/voice/`，包含 STT/TTS CLI、无硬件会话、WebSocket 浏览器测试台、用户配置、附件存储、后台管理、Postgres 设备绑定和 YAML fallback；生产级 VAD、流式 TTS、每设备独立密钥仍是后续边界。
+- 本地 Docker voice 服务使用 `DATABASE_URL` 连接 Postgres；后台 token 为 `SHUXIN_ADMIN_TOKEN`；硬件原型密钥为 `SHUXIN_DEVICE_SHARED_SECRET`；真实小程序登录需要 `SHUXIN_WECHAT_APPID` 和 `SHUXIN_WECHAT_SECRET`，本地可用 `SHUXIN_WECHAT_MOCK=1`。

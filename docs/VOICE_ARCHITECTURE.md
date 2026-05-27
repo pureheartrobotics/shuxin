@@ -29,7 +29,6 @@
 - VAD。
 - MQTT。
 - OTA。
-- manager-api。
 - 生产级并发和流式 Opus 帧调度。
 
 ## 2. 当前无硬件闭环
@@ -113,6 +112,11 @@ http://localhost:8765/voice-demo
 
 语音 demo 的代码在 `src/shuxin/voice/` 下：
 
+- `db.py`：asyncpg 连接池与迁移入口。
+- `migrations/`：voice Postgres SQL 迁移。
+- `postgres_repository.py`：Postgres 用户、设备、绑定、事件和附件仓储。
+- `local_repository.py`：未配置 `DATABASE_URL` 时的 YAML demo fallback。
+- `audio_files.py`：用户音频附件路径、额度和压缩策略。
 - `config.py`：设备级配置，后续可以替换成远程设备配置服务。
 - `providers.py`：STT/TTS provider 抽象与实现。
 - `service.py`：语音服务门面，保留原有 `stt / tts / chat-audio` 单点能力。
@@ -226,31 +230,94 @@ tts audio frame bytes
 - 二进制上行使用 16kHz mono PCM16。
 - 二进制下行第一版使用完整 mp3。
 
-## 6. 多设备配置方向
+## 6. 多设备配置与绑定方向
 
-当前 `data/devices.yaml` 已经按设备 ID 保存配置：
+当前语音模块支持两种数据来源：
 
-- 每个设备可以有自己的 LLM provider/model/base_url/api_key。
+- 配置 `DATABASE_URL` 时，启动时连接 Postgres、执行 `src/shuxin/voice/migrations/*.sql`，并把开发 YAML seed 到数据库。
+- 未配置 `DATABASE_URL` 时，继续走 `data/devices.yaml` / `data/users.yaml` 和本地文件存储，作为浏览器 demo fallback。
+
+`data/devices.yaml` 和 Postgres 设备配置都按设备 ID 保存：
+
+- 每个用户可以有自己的 LLM provider/model/base_url/api_key；设备鉴权后按绑定关系使用用户级 LLM 配置。
 - 每个设备可以有自己的 STT provider/model_dir/api_url/api_key。
 - 每个设备可以有自己的 TTS provider/voice/api_url/api_key。
 
-这满足 demo 阶段需求。未来如果产品量变多，可以把本地 YAML 换成数据库或远程配置服务，但调用方仍然只按 `device_id` 获取配置。
+调用方仍然只按 `device_id` / `device_code` 获取配置。RDS 迁移时只需要把 `DATABASE_URL` 指向新库并执行同一套迁移脚本。
 
-## 6.1 Web 多用户记忆与附件存储
+## 6.1 硬件绑定模型
+
+真实硬件不是开放 SaaS 多租户模型，而是硬件绑定型产品：
+
+```text
+微信用户 openid -> claim_code(外壳条形码) -> device_id + device_secret -> 设备访问用户资产
+```
+
+第一阶段内部原型：
+
+- 管理后台批量生成 `device_id`、一次性可见的 `device_secret` 和外壳公开 `claim_code`。
+- 后端把设备和公开码写入数据库，`device_secret` 只保存 hash。
+- 工人把 `device_id + device_secret` 烧录进设备，外部条形码只暴露 `claim_code`。
+- 用户小程序先调用 `/api/wechat/login` 换取舒心 `session_token`，扫码后再提交 `session_token + claim_code` 建立 active binding。
+- 设备 WebSocket `hello` 使用 `device_code + device_secret`；后端鉴权通过后才允许访问绑定用户资产和模型 API。
+
+数据库使用 `devices.auth_mode` 和 `device_secret_hash` 支持逐台设备独立密钥。
+
+核心表：
+
+- `users`：用户配置、模型 API 配置、音频额度、人工 token 额度和软删除状态。
+- `devices`：设备配置、鉴权模式、设备状态和软删除状态。
+- `device_claim_codes`：外壳公开码明文、hash、认领状态和重置记录。
+- `device_bindings`：用户和设备的 active binding；一台设备同一时间只能有一个 active binding。
+- `device_binding_events`：绑定、解绑、后台操作等审计事件。
+- `device_status`：设备在线状态、当前 session、`last_error`。
+- `voice_sessions` / `conversation_events` / `audio_attachments`：语音会话、对话轮次和音频附件索引。
+
+绑定规则：
+
+- 条形码只代表公开 `claim_code`，不包含设备编号和设备密钥。
+- `claim_code` 绑定后标记为 claimed；用户或后台解绑成功后恢复为 active，后台也可显式重置以支持售后换绑。
+- 每台设备同一时间只能有一个 active binding。
+- 用户解绑设备时只解除设备访问权，不删除用户记忆。
+- 模型 API key 挂在用户上，设备鉴权后按 active binding 找到用户并使用用户级 LLM 配置。
+
+主要 HTTP 路由：
+
+| 路由 | 用途 |
+|------|------|
+| `POST /api/factory/devices/provision` | 单台登记设备，生成一次性 `device_secret` 和 `claim_code` |
+| `POST /admin/api/factory/devices/batch` | 后台批量生成 `device_id + device_secret + claim_code` 并入库 |
+| `GET /admin/api/claim-codes/{claim_code}/barcode.png` | 返回外壳公开码的 Code128 PNG |
+| `POST /api/barcodes/decode` | 小程序上传条形码图片后端识别，返回公开码文本 |
+| `POST /api/wechat/login` | 小程序提交 `wx_code`，服务端换 openid 并返回自定义 `session_token` |
+| `POST /api/devices/bind` | 小程序提交 `session_token + claim_code` 绑定设备；兼容旧 `wx_code/device_code` |
+| `POST /api/devices/my` | 小程序按 `session_token` 查询当前用户设备 |
+| `POST /api/devices/unbind` | 小程序按 `session_token + device_code` 解绑设备；兼容旧 demo 形式 |
+| `GET /admin` | 轻量后台管理页面 |
+| `GET/POST/PATCH/DELETE /admin/api/devices` | 后台设备配置 CRUD、外壳码/备注更新，删除为软删除 |
+| `POST /admin/api/devices/{device_id}/rotate-secret` | 后台轮换设备密钥，明文新密钥只返回一次 |
+| `POST /admin/api/devices/{device_id}/reset-claim` | 后台把最近的外壳码重置为可认领 |
+| `GET/POST/DELETE /admin/api/users` | 后台用户配置 CRUD，包含模型 API 配置和人工 token 额度，删除为软删除 |
+| `GET/POST /admin/api/bindings` | 后台查看和手动创建用户设备绑定 |
+| `POST /admin/api/bindings/unbind` | 后台解绑 active binding |
+
+## 6.2 Web 多用户记忆与附件存储
 
 Web 测试台现在区分三类数据：
 
 - 用户长期资产：`$SHUXIN_HOME/users/{user_id}/`，包含长期记忆、陪伴状态、人格成长状态、事件库和共同记忆摘要。
 - 音频附件：`outputs/web/users/{user_id}/{device_id}/{session_id}/`，包含输入录音和回复音频，通过事件库索引回对话轮次。
-- 后台用户配置：`data/users.yaml`，v1 用来模拟后台配置用户 token 和音频额度。
+- 用户/设备配置：Postgres 为权威来源；没有 `DATABASE_URL` 时回退到 `data/users.yaml` 和 `data/devices.yaml`。
 
-WebSocket `hello` 需要携带：
+真实设备 WebSocket `hello` 携带：
 
 ```json
-{"type":"hello","user_id":"user-001","token":"change-me","device_id":"demo-device-001","client_id":"web-demo"}
+{"type":"hello","device_code":"ESP32_MAC_OR_EFUSE_CODE","device_secret":"shared-secret-for-prototype","client_id":"device-001"}
 ```
 
-同一个 `user_id` 的多个 `device_id` 共享用户记忆和人格成长；设备只决定语音和模型配置。音频附件按用户额度管理，超过额度后优先把旧输入 wav 压缩为 32kbps mono mp3，并保留事件索引。长期陪伴记忆不依赖热存音频无限增长，而依赖事件、摘要、用户画像和人格成长状态。
+浏览器测试台默认模拟真实硬件，使用 `device_code + device_secret + client_id`。服务端仍兼容旧的 `user_id + token + device_id` 形式，但不作为推荐测试路径。
+
+同一个用户的多台设备共享用户记忆和人格成长；设备只决定语音、模型配置和访问入口。音频附件按用户额度管理，超过额度后优先把旧输入 wav 压缩为 32kbps mono mp3，并保留事件索引。长期陪伴记忆不依赖热存音频无限增长，而依赖事件、摘要、用户画像和人格成长状态。
 
 ## 7. 成功标准
 

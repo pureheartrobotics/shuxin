@@ -36,6 +36,7 @@
 
 语音 Demo 的无硬件最小测试流程见：[语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md)。
 语音闭环和后续硬件接口规划见：[舒心语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md)。
+硬件 WebSocket、小程序绑定和后台设备管理接口见：[语音硬件 WebSocket 接口协议](docs/VOICE_HARDWARE_WS_PROTOCOL.md)。
 
 ### 安装
 
@@ -143,13 +144,23 @@ shuxin/
 │   │   ├── memory.py                # 记忆系统（会话上下文管理）
 │   │   └── plugin.py                # 插件系统（Hook 机制 + 动态加载）
 │   │
-│   ├── providers/                   # LLM 提供者实现
 │   ├── tools/                       # 工具系统
 │   │   └── __init__.py              # 工具注册表
 │   ├── skills/                      # 技能系统
 │   │   └── __init__.py              # 技能管理器
-│   ├── locales/                     # 国际化/本地化
-│   ├── assets/                      # 静态资源
+│   ├── voice/                       # 语音 demo 与 WebSocket 测试台
+│   │   ├── migrations/              # voice Postgres SQL 迁移
+│   │   ├── postgres_repository.py   # Postgres 用户、设备、绑定和附件仓储
+│   │   ├── local_repository.py      # 无 DATABASE_URL 时的 YAML fallback
+│   │   ├── cli.py                   # STT/TTS/chat-audio/session 命令
+│   │   ├── config.py                # 设备级 LLM/STT/TTS 配置
+│   │   ├── providers.py             # STT/TTS provider 抽象与实现
+│   │   ├── server.py                # WebSocket voice server 和浏览器测试台
+│   │   ├── service.py               # 语音服务门面
+│   │   ├── session.py               # 无硬件语音闭环
+│   │   ├── storage.py               # Web 用户语音事件与附件存储
+│   │   ├── transport.py             # 音频输入输出抽象
+│   │   └── users.py                 # Web 用户配置、token 和额度
 │   │
 │   └── plugins/                     # 内置插件目录
 │       └── companion/               # 陪伴插件（核心功能）
@@ -162,6 +173,7 @@ shuxin/
 │           └── interceptor.py       # 响应拦截器
 │
 ├── plugins/                         # 用户插件目录
+├── apps/wechat-miniprogram/          # 微信小程序绑定端，uni-app 编译到 dist/*/mp-weixin
 └── tests/                           # 测试目录
 ```
 
@@ -299,6 +311,39 @@ enabled_plugins:
 | `SHUXIN_LLM_MODEL` | 模型名称 |
 | `SHUXIN_LLM_PROVIDER` | LLM 提供者 |
 | `SHUXIN_DEBUG` | 调试模式 |
+| `DATABASE_URL` | 语音 Web 服务的 Postgres 连接串；未设置时回退到 YAML demo |
+| `SHUXIN_ADMIN_TOKEN` | 语音后台管理登录 token；本地 Docker 默认 `dev-admin-token` |
+| `SHUXIN_DEVICE_SHARED_SECRET` | ESP32 内部原型阶段的统一设备密钥 |
+| `SHUXIN_WECHAT_MOCK` | 本地开发时模拟微信 `wx.login` 换 openid |
+| `SHUXIN_WECHAT_APPID` | 真实微信小程序 `code2Session` 的 appid |
+| `SHUXIN_WECHAT_SECRET` | 真实微信小程序 `code2Session` 的 secret |
+
+### 语音 Web / 设备绑定本地入口
+
+本地 Docker 默认提供 Postgres 和 voice server：
+
+```bash
+docker compose up -d postgres shuxin-voice-demo
+curl -s http://localhost:8765/health
+```
+
+常用入口：
+
+| 入口 | 说明 |
+|------|------|
+| `http://localhost:8765/admin` | 后台管理用户、设备、绑定和适配器；本地 token 默认 `dev-admin-token` |
+| `http://localhost:8765/voice-demo` | 浏览器模拟硬件，使用 `device_code + device_secret` 连接 |
+| `apps/wechat-miniprogram/dist/build/mp-weixin` | 微信开发者工具导入的构建产物目录 |
+
+WSL 下构建小程序时运行 `scripts/wechat_miniprogram_build.sh`。脚本默认自动探测 WSL IP，并把小程序 API 编译为 `http://<WSL_IP>:8765`；需要手动指定时设置 `SHUXIN_API_BASE`。
+
+本地默认硬件模拟参数：
+
+```text
+device_code: demo-device-001
+device_secret: dev-device-secret
+client_id: web-demo-test
+```
 
 > API 密钥支持通过环境变量或配置文件设置。如果两者都未设置，首次启动时会交互式提示输入。
 
@@ -313,9 +358,10 @@ enabled_plugins:
 - [x] 交互式首次设置（API 密钥、模型选择）
 - [x] 多 LLM 提供者支持（OpenAI、Anthropic、DeepSeek、OpenAI 兼容）
 - [x] 运行时切换模型（`/switch-model` 命令）
+- [x] 语音 demo（STT/TTS、无硬件会话、WebSocket 浏览器测试台、Postgres 设备绑定原型）
 - [ ] 集成 Mem0 记忆系统
 - [ ] Web 管理界面
-- [ ] 语音交互支持
+- [ ] 生产级语音交互（VAD、流式 TTS、每设备独立密钥）
 - [ ] 多语言支持
 - [ ] 发布至 PyPI
 

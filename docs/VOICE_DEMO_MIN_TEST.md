@@ -8,9 +8,10 @@
 - 在准备 FunASR 模型和样本音频后，STT 可以把语音识别为文字。
 - 在准备 LLM 配置后，可以跑通 `语音 -> 文本 -> Agent 回复 -> 回复语音`。
 - 在准备 Web 依赖和准实时模型后，可以用浏览器麦克风测试 WebSocket 语音对话。
+- 在 Docker Postgres 模式下，可以测试后台设备绑定、小程序绑定接口和硬件身份鉴权。
 - 打包和导入脚本可用于迁移 demo 环境。
 
-当前 demo 不测试真实硬件、WebSocket 实时音频流、设备管理后台和生产级并发。
+当前 demo 不测试真实量产硬件、WebSocket 流式打断、OTA、MQTT 和生产级并发。
 
 语音闭环和硬件接口设计见：[舒心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md)。
 
@@ -183,7 +184,7 @@ docker compose run --rm shuxin-voice-demo \
 如果容器已经常驻启动，推荐使用：
 
 ```bash
-docker exec -it shuxin-voice-demo \
+docker exec -it shuxin-voice-demo-pg \
   python -m shuxin.voice.cli chat-audio samples/demo.wav \
   --device-id demo-device-001 \
   --out outputs/reply.mp3
@@ -209,7 +210,7 @@ docker exec -it shuxin-voice-demo \
 如果容器已经通过 `scripts/redeploy_docker.sh` 常驻启动，推荐使用：
 
 ```bash
-docker exec -it shuxin-voice-demo \
+docker exec -it shuxin-voice-demo-pg \
   python -m shuxin.voice.cli session \
   --device-id demo-device-001 \
   --out-dir outputs/session
@@ -253,14 +254,14 @@ exit
 首次测试 streaming STT 前，下载模型到挂载目录：
 
 ```bash
-docker exec -it shuxin-voice-demo \
+docker exec -it shuxin-voice-demo-pg \
   bash scripts/download_voice_models.sh streaming-stt
 ```
 
 如果希望先下载原有 SenseVoice 模型：
 
 ```bash
-docker exec -it shuxin-voice-demo \
+docker exec -it shuxin-voice-demo-pg \
   bash scripts/download_voice_models.sh sensevoice
 ```
 
@@ -274,6 +275,14 @@ bash scripts/redeploy_docker.sh
 
 ```text
 http://localhost:8765/voice-demo
+```
+
+页面默认按真实硬件模式连接。先在后台确认 `demo-device-001` 已绑定到 `demo-user`，再填写：
+
+```text
+device_code: demo-device-001
+device_secret: dev-device-secret
+client_id: web-demo-test
 ```
 
 测试步骤：
@@ -305,6 +314,119 @@ demo-device-streaming-001
 - 第一版是准实时 turn-based，不是自动 VAD。
 - 松手后才进入 final STT。
 - TTS 第一版是整段 mp3 返回，不是流式 TTS。
+
+## 9.1 后台绑定和硬件鉴权测试
+
+启动本地 Postgres 与 voice 服务：
+
+```bash
+docker compose up -d postgres shuxin-voice-demo
+curl -s http://localhost:8765/health
+```
+
+打开后台：
+
+```text
+http://localhost:8765/admin
+```
+
+本地默认 token：
+
+```text
+dev-admin-token
+```
+
+用后台页面或 API 建立绑定：
+
+```bash
+curl -s -H 'X-Admin-Token: dev-admin-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"demo-user","device_id":"demo-device-001"}' \
+  http://localhost:8765/admin/api/bindings
+```
+
+查看绑定列表：
+
+```bash
+curl -s -H 'X-Admin-Token: dev-admin-token' \
+  http://localhost:8765/admin/api/bindings
+```
+
+验收标准：
+
+- 列表出现 `demo-user -> demo-device-001` 的 active binding。
+- `/voice-demo` 使用 `demo-device-001 + dev-device-secret` 连接后，WebSocket hello 返回 `state: ok` 和 `user_id: demo-user`。
+
+如果 WebSocket 返回 `invalid device secret`，确认容器环境变量已刷新；修改 compose 环境变量后需要重新创建服务：
+
+```bash
+docker compose up -d shuxin-voice-demo
+```
+
+## 9.2 微信小程序绑定测试
+
+小程序源码在：
+
+```text
+apps/wechat-miniprogram
+```
+
+开发模式脚本：
+
+```bash
+export WECHAT_MINIPROGRAM_APPID="your-appid-or-touristappid"
+scripts/wechat_miniprogram_dev.sh
+```
+
+脚本默认自动探测 WSL IP，并把小程序 API 编译为 `http://<WSL_IP>:8765`。如果要手动指定后端地址，再设置 `SHUXIN_API_BASE`。
+
+生产构建：
+
+```bash
+scripts/wechat_miniprogram_build.sh
+```
+
+Windows 微信开发者工具导入：
+
+```text
+apps/wechat-miniprogram/dist/build/mp-weixin
+```
+
+日常联调推荐导入开发产物：
+
+```text
+apps/wechat-miniprogram/dist/dev/mp-weixin
+```
+
+`scripts/wechat_miniprogram_dev.sh` 会监听源码变化并持续更新 `dist/dev/mp-weixin`。如果导入的是 `dist/build/mp-weixin`，它只是执行 `scripts/wechat_miniprogram_build.sh` 时的快照；改完源码后必须重新构建，再在微信开发者工具里重新编译或刷新项目。
+
+后台现在可以批量生成三码：外壳公开 `claim_code`、设备内部 `device_id` 和一次性 `device_secret`。本地最小验证可以调用：
+
+```bash
+curl -s -H 'X-Admin-Token: dev-admin-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"device_prefix":"SX","device_start":1,"label_prefix":"CLM","label_batch":"A001","quantity":3}' \
+  http://localhost:8765/admin/api/factory/devices/batch
+```
+
+把返回的 `claim_code` 填到小程序页面，点击绑定，再查看“我的设备”。如果要贴条形码或二维码，内容使用 `claim_code` 或返回的 `qr_payload`；`device_id + device_secret` 只用于设备烧录/设备鉴权，不要贴在外部。
+
+验收标准：
+
+- 小程序可以通过 `wx.login()` 获取 code。
+- 小程序调用 `/api/wechat/login` 后获得舒心自定义 `session_token`，响应不包含微信 `session_key`。
+- 本地 `SHUXIN_WECHAT_MOCK=1` 时，后端可以 mock openid 并用 `session_token` 完成绑定。
+- 绑定后 `/api/devices/my` 使用 `session_token` 能返回该设备。
+- 旧包即使把 `claim_code` 误放进 `device_code` 字段，后端也会兜底识别并完成绑定。
+- 设备 WebSocket `hello` 使用正确 `device_id/device_code + device_secret` 才能通过鉴权。
+- 解绑后 active binding 消失，用户记忆不删除，外壳 `claim_code` 恢复为 active 并可再次绑定。
+
+常见失败原因：
+
+- 控制台提示 `wx.getSystemInfoSync is deprecated`：这是基础库兼容警告，通常不是本次绑定失败根因。
+- 控制台提示关闭合法域名校验：这是开发者工具设置提示；本地 HTTP 联调时可以保留，但真机和上线必须配置 HTTPS 合法域名。
+- `SystemError ... timeout`：通常是小程序请求的后端地址不可达。确认 Docker voice 服务已启动，`curl -s http://localhost:8765/health` 可用；小程序页面里也可以点“测试后端连接”。当前开发构建默认使用 `http://localhost:8765`，需要改地址时设置 `SHUXIN_API_BASE` 后重新编译。
+- `scanCode:fail 解析二维码失败`：“相机扫码”只走微信原生相机扫码；上传图片请点“传图识别”，它会调用后端 `/api/barcodes/decode`。如果“传图识别”可返回 `claim_code`，说明后端和条码内容正常，原生相机扫不出时优先检查条码打印尺寸、留白、对焦和光线。
 
 ## 10. 打包测试
 
@@ -349,8 +471,10 @@ bash scripts/redeploy_docker.sh
 这个命令默认是日常重启，不会重新安装 `torch`、`funasr`、`modelscope` 等大包。只有以下情况会触发 Docker build：
 
 - 本地没有 `shuxin-voice-demo:latest` 镜像。
-- `requirements-voice-demo.txt`、`requirements-voice-extra.txt` 或 `pyproject.toml` 的依赖 hash 变化。
+- `requirements-voice-demo.txt`、`requirements-voice-extra.txt`、`requirements-voice-dev-extra.txt` 或 `pyproject.toml` 的依赖 hash 变化。
 - 显式执行 `bash scripts/redeploy_docker.sh --build`。
+
+`requirements-voice-dev-extra.txt` 会在 Dockerfile 最后一个依赖层安装，用来承载条形码识别这类变动较频繁的 voice Web 兜底能力，避免反复下载前面的语音和 Web 基础依赖层。
 
 如果只想强制跳过 build，可以使用：
 
@@ -360,7 +484,7 @@ bash scripts/redeploy_docker.sh --no-build
 
 验收标准：
 
-- Docker Desktop 中 `shuxin-voice-demo` 显示 Running。
+- Docker Desktop 中 `shuxin-voice-demo-pg` 显示 Running。
 - 普通代码变更后，终端输出 `Code-only redeploy: skipping dependency build`。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
 
