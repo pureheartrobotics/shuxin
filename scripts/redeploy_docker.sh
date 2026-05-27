@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PROJECT_NAME="${PROJECT_NAME:-shuxin_voice_demo}"
+PROJECT_NAME="${PROJECT_NAME:-shuxin}"
 SERVICE="${SERVICE:-shuxin-voice-demo}"
 IMAGE="${IMAGE:-shuxin-voice-demo:latest}"
 DEPS_HASH_FILE="${DEPS_HASH_FILE:-data/docker_deps.hash}"
@@ -57,6 +57,7 @@ current_deps_hash() {
   sha256sum \
     requirements-voice-demo.txt \
     requirements-voice-extra.txt \
+    requirements-voice-dev-extra.txt \
     requirements-shuxin-core.txt \
     pyproject.toml | sha256sum | awk '{print $1}'
 }

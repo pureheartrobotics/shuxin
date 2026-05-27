@@ -1,15 +1,42 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shuxin-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shuxin}
+      POSTGRES_USER: ${POSTGRES_USER:-shuxin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shuxin_dev_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - shuxin_postgres_data:/var/lib/postgresql/data
+    networks:
+      - shuxin_backend
+
   shuxin-voice-demo:
     build:
       context: .
       dockerfile: Dockerfile
     image: shuxin-voice-demo:latest
-    container_name: shuxin-voice-demo
+    container_name: shuxin-voice-demo-pg
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       SHUXIN_HOME: /app/data/shuxin_home
       VOICE_DEVICE_CONFIG: /app/data/devices.yaml
-      # v1 用本地 YAML 模拟后台用户配置，后续可替换为管理服务。
       SHUXIN_USERS_CONFIG: /app/data/users.yaml
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shuxin}:${POSTGRES_PASSWORD:-shuxin_dev_password}@postgres:5432/${POSTGRES_DB:-shuxin}
+      SHUXIN_DB_POOL_MIN: ${SHUXIN_DB_POOL_MIN:-1}
+      SHUXIN_DB_POOL_MAX: ${SHUXIN_DB_POOL_MAX:-10}
+      SHUXIN_ADMIN_TOKEN: ${SHUXIN_ADMIN_TOKEN:-dev-admin-token}
+      SHUXIN_DEVICE_SHARED_SECRET: ${SHUXIN_DEVICE_SHARED_SECRET:-dev-device-secret}
+      SHUXIN_WECHAT_MOCK: ${SHUXIN_WECHAT_MOCK:-1}
+      SHUXIN_WECHAT_APPID: ${SHUXIN_WECHAT_APPID:-}
+      SHUXIN_WECHAT_SECRET: ${SHUXIN_WECHAT_SECRET:-}
       DEMO_LLM_PROVIDER: ${DEMO_LLM_PROVIDER:-openai-compatible}
       DEMO_LLM_MODEL: ${DEMO_LLM_MODEL:-deepseek-chat}
       DEMO_LLM_BASE_URL: ${DEMO_LLM_BASE_URL:-}
@@ -26,3 +53,11 @@ services:
       - ./outputs:/app/outputs
     working_dir: /app
     command: ["python", "-m", "shuxin.voice.server", "--host", "0.0.0.0", "--port", "8765"]
+    networks:
+      - shuxin_backend
+
+volumes:
+  shuxin_postgres_data:
+
+networks:
+  shuxin_backend:

@@ -42,6 +42,11 @@ COPY requirements-shuxin-core.txt ./
 # ShuXin 核心运行依赖放在最后，便于独立调整 Agent 侧依赖。
 RUN pip install --no-cache-dir -r requirements-shuxin-core.txt
 
+COPY requirements-voice-dev-extra.txt ./
+
+# 变动较频繁的 voice Web 兜底能力依赖放在最后，避免反复下载前面的依赖层。
+RUN pip install --no-cache-dir -r requirements-voice-dev-extra.txt
+
 COPY README.md SOUL.md ./
 COPY src ./src
 COPY scripts ./scripts
