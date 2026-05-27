@@ -1,0 +1,14 @@
+{
+  "name": "舒心",
+  "appid": "touristappid",
+  "description": "舒心陪伴机器人设备绑定端",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "mp-weixin": {
+    "appid": "touristappid",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  }
+}

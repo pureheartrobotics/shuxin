@@ -1,0 +1,12 @@
+{
+  "appid": "__WECHAT_MINIPROGRAM_APPID__",
+  "projectname": "shuxin-wechat-miniprogram",
+  "miniprogramRoot": "dist/dev/mp-weixin/",
+  "compileType": "miniprogram",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": false
+  }
+}

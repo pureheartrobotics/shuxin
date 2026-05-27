@@ -1,0 +1,49 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "舒心设备绑定",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "个人中心",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "舒心登录",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    }
+  ],
+  "globalStyle": {
+    "backgroundColor": "#f5f1ea",
+    "navigationBarBackgroundColor": "#f5f1ea",
+    "navigationBarTextStyle": "black"
+  },
+  "tabBar": {
+    "color": "#82786d",
+    "selectedColor": "#2f604f",
+    "backgroundColor": "#fffaf3",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "绑定"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "个人中心"
+      }
+    ]
+  }
+}
