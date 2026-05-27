@@ -24,6 +24,7 @@ class UserSettings:
     user_id: str
     token: str = ""
     audio_quota_mb: int = DEFAULT_AUDIO_QUOTA_MB
+    llm_config: dict[str, Any] | None = None
 
     @property
     def audio_quota_bytes(self) -> int:
@@ -65,6 +66,7 @@ class UserConfigProvider:
                     defaults.get("audio_quota_mb", DEFAULT_AUDIO_QUOTA_MB),
                 )
             ),
+            llm_config=dict(user_data.get("llm_config") or defaults.get("llm_config") or {}),
         )
 
     def authenticate(self, user_id: str | None, token: str | None) -> UserSettings:
