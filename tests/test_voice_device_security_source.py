@@ -58,11 +58,16 @@ def test_admin_supports_batch_codes_and_label_updates() -> None:
     server = SERVER.read_text(encoding="utf-8")
 
     assert "/admin/api/factory/devices/batch" in server
+    assert "/admin/api/factory/devices/next-sequence" in server
     assert "/admin/api/claim-codes/{claim_code}/barcode.png" in server
     assert "/admin/api/devices/{device_id}/reset-claim" in server
     assert "update_device_label" in source
     assert "claim_code" in source
     assert "device_secret_hash" in source
+    assert "next_device_sequence" in source
+    assert "next_device_id" in source
+    assert "refreshBatchStart" in server
+    assert "下一设备号" in server
 
 
 def test_admin_lists_support_server_search_and_pagination_controls() -> None:

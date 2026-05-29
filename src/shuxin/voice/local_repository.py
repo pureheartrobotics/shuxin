@@ -139,6 +139,9 @@ class VoiceLocalRepository:
     async def provision_devices_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for factory provisioning")
 
+    async def next_device_sequence(self, device_prefix: str) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for factory provisioning")
+
     async def bind_device(
         self,
         *,

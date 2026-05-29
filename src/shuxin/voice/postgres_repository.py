@@ -151,6 +151,26 @@ class VoicePostgresRepository:
                     )
         return {"items": items}
 
+    async def next_device_sequence(self, device_prefix: str) -> dict[str, Any]:
+        prefix = _validate_code_prefix(device_prefix or "SX")
+        pattern = f"^{re.escape(prefix)}-[0-9]{{6}}$"
+        async with self.pool.acquire() as conn:
+            next_sequence = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(substring(device_id from '[0-9]+$')::integer), 0) + 1
+                FROM devices
+                WHERE device_id LIKE $1
+                  AND device_id ~ $2
+                """,
+                f"{prefix}-%",
+                pattern,
+            )
+        return {
+            "device_prefix": prefix,
+            "next_sequence": int(next_sequence or 1),
+            "next_device_id": _make_device_id(prefix, int(next_sequence or 1)),
+        }
+
     async def _insert_provisioned_device(
         self,
         conn,

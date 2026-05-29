@@ -71,3 +71,38 @@ def test_device_routes_accept_session_token_while_keeping_wx_code(monkeypatch) -
         ("unbind_session", {"session_token": "app-session", "device_code": "SX-000003"}),
         ("my", {"wx_code": "legacy-code", "session_token": ""}),
     ]
+
+
+def test_admin_next_sequence_route_requires_token_and_uses_repo(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_ADMIN_TOKEN", "admin-token")
+    app = create_app()
+
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.prefixes = []
+
+        async def next_device_sequence(self, device_prefix: str):
+            self.prefixes.append(device_prefix)
+            return {
+                "device_prefix": device_prefix,
+                "next_sequence": 4,
+                "next_device_id": f"{device_prefix}-000004",
+            }
+
+    with TestClient(app) as client:
+        fake = FakeRepo()
+        app.state.repo = fake
+        forbidden = client.get("/admin/api/factory/devices/next-sequence?device_prefix=SX")
+        ok = client.get(
+            "/admin/api/factory/devices/next-sequence?device_prefix=SX",
+            headers={"X-Admin-Token": "admin-token"},
+        )
+
+    assert forbidden.status_code == 403
+    assert ok.status_code == 200
+    assert ok.json() == {
+        "device_prefix": "SX",
+        "next_sequence": 4,
+        "next_device_id": "SX-000004",
+    }
+    assert fake.prefixes == ["SX"]
