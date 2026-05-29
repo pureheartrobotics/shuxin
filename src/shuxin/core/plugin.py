@@ -375,6 +375,10 @@ class PluginManager:
 
             module = importlib.util.module_from_spec(spec)
 
+            # 注册模块到 sys.modules 防止重复导入
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
             # 检查 register 函数是否存在
             if not hasattr(module, "register"):
                 logger.warning(
@@ -382,10 +386,6 @@ class PluginManager:
                     manifest.name,
                 )
                 return False
-
-            # 注册模块到 sys.modules 防止重复导入
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
 
             # 创建插件实例
             loaded = LoadedPlugin(manifest=manifest, module=module)
