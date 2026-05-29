@@ -22,6 +22,61 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("shuxin.llm")
 
+DEFAULT_LLM_READ_TIMEOUT_SECONDS = 60.0
+DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS = 5.0
+LLM_TIMEOUT_ENV = "SHUXIN_LLM_TIMEOUT_SECONDS"
+LLM_CONNECT_TIMEOUT_ENV = "SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS"
+
+
+def _get_llm_read_timeout_seconds() -> float:
+    """Return the LLM read timeout configured for low-latency voice use."""
+    raw = os.environ.get(LLM_TIMEOUT_ENV, str(DEFAULT_LLM_READ_TIMEOUT_SECONDS))
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "无效的 %s=%r，使用默认 %.1fs",
+            LLM_TIMEOUT_ENV,
+            raw,
+            DEFAULT_LLM_READ_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_LLM_READ_TIMEOUT_SECONDS
+    if timeout <= 0:
+        logger.warning(
+            "无效的 %s=%r，使用默认 %.1fs",
+            LLM_TIMEOUT_ENV,
+            raw,
+            DEFAULT_LLM_READ_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_LLM_READ_TIMEOUT_SECONDS
+    return timeout
+
+
+def _get_llm_connect_timeout_seconds() -> float:
+    raw = os.environ.get(
+        LLM_CONNECT_TIMEOUT_ENV,
+        str(DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS
+    if timeout <= 0:
+        return DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS
+    return timeout
+
+
+def _get_llm_timeout() -> Any:
+    """Build granular httpx timeouts so connect failures fail fast."""
+    import httpx
+
+    return httpx.Timeout(
+        connect=_get_llm_connect_timeout_seconds(),
+        read=_get_llm_read_timeout_seconds(),
+        write=10.0,
+        pool=2.0,
+    )
+
 
 @dataclass
 class LLMMessage:
@@ -178,7 +233,11 @@ class OpenAIProvider(BaseLLMProvider):
         self.base_url = base_url or os.environ.get("OPENAI_BASE_URL", "")
         self.model = model
 
-        client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+        client_kwargs: Dict[str, Any] = {
+            "api_key": self.api_key,
+            "timeout": _get_llm_timeout(),
+            "max_retries": 0,
+        }
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
 
@@ -197,7 +256,11 @@ class OpenAIProvider(BaseLLMProvider):
             with self._lock:
                 if self._async_client is None:
                     from openai import AsyncOpenAI
-                    client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+                    client_kwargs: Dict[str, Any] = {
+                        "api_key": self.api_key,
+                        "timeout": _get_llm_timeout(),
+                        "max_retries": 0,
+                    }
                     if self.base_url:
                         client_kwargs["base_url"] = self.base_url
                     self._async_client = AsyncOpenAI(**client_kwargs)

@@ -39,6 +39,28 @@ from shuxin.core.plugin import PluginManager
 logger = logging.getLogger("shuxin.agent")
 
 # ---------------------------------------------------------------------------
+# LLM 错误分类
+# ---------------------------------------------------------------------------
+
+
+def classify_llm_error(exc: BaseException) -> str:
+    """Map provider exceptions to stable voice-facing error kinds."""
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+
+    if "timeout" in name or "timeout" in message or "timed out" in message:
+        if "connect" in message:
+            return "connect_timeout"
+        return "read_timeout"
+    if "authentication" in name or "permission" in name:
+        return "auth_error"
+    if any(token in message for token in ("401", "403", "invalid api key", "authentication")):
+        return "auth_error"
+    if "connect" in name or "connection" in message or "network" in message:
+        return "connect_error"
+    return "llm_error"
+
+# ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
 
@@ -414,7 +436,9 @@ class Agent:
             self.plugins.invoke_hook("on_ai_message", agent=self, message=full_content)
 
         except Exception as e:
-            logger.error("LLM 流式调用失败: %s", e)
+            error_kind = classify_llm_error(e)
+            self.context.metadata["llm_error_kind"] = error_kind
+            logger.exception("LLM 流式调用失败 [kind=%s]", error_kind)
             yield self._get_fallback_response()
 
     def _get_blocked_llm_response(self) -> Optional[str]:

@@ -92,3 +92,4 @@ def test_agent_chat_stream_timeout_uses_technical_fallback() -> None:
     assert chunks == [agent._get_fallback_response()]
     assert "模型连接" in chunks[0]
     assert "不舒服" not in chunks[0]
+    assert agent.context.metadata.get("llm_error_kind") == "read_timeout"
