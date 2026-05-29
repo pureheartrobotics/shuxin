@@ -91,7 +91,7 @@ container: none
 <pcm16 audio frame bytes>
 ```
 
-建议每帧 20ms 到 100ms。当前 demo 会把一轮音频暂存在内存中，收到 `listen stop` 后再进入 STT。
+建议每帧 20ms 到 100ms。默认本地 STT 会把一轮音频暂存在内存中，收到 `listen stop` 后再进入识别；当设备 STT 配置为 `tencent-realtime` 时，服务端会在 `listen start` 后把 PCM 持续转发到腾讯云实时语音识别。
 
 ## 5. 服务端下行文本消息
 
@@ -113,13 +113,51 @@ container: none
 {"type":"stt","state":"start"}
 ```
 
+实时识别开始：
+
+```json
+{"type":"stt","state":"stream_start"}
+```
+
+实时识别中间结果：
+
+```json
+{"type":"stt","state":"partial","text":"你好","elapsed_ms":500}
+```
+
+实时识别稳定句子结果：
+
+```json
+{"type":"stt","state":"sentence_final","text":"你好，舒心","elapsed_ms":1200}
+```
+
 最终识别文本：
 
 ```json
 {"type":"stt","state":"final","text":"你好，舒心","elapsed_ms":1234}
 ```
 
-Agent 回复文本：
+Agent 开始思考（STT 完成后、LLM 首 token 前）：
+
+```json
+{"type":"agent","state":"thinking"}
+```
+
+Agent 流式片段（可多帧）：
+
+```json
+{"type":"agent","state":"delta","text":"你好","elapsed_ms":1200}
+```
+
+Agent 调用失败（随后仍可能有降级 `delta`/`reply`）：
+
+```json
+{"type":"agent","state":"error","error_kind":"connect_timeout","elapsed_ms":5000}
+```
+
+`error_kind` 常见值：`connect_timeout`、`read_timeout`、`auth_error`、`connect_error`、`llm_error`。
+
+Agent 完整回复：
 
 ```json
 {"type":"agent","state":"reply","text":"你好，我在。","elapsed_ms":1500}
@@ -131,10 +169,17 @@ Agent 回复文本：
 {"type":"tts","state":"start"}
 ```
 
+单句 TTS 开始/结束（流式分句下发）：
+
+```json
+{"type":"tts","state":"sentence_start","text":"你好，","index":1,"total_elapsed_ms":2500}
+{"type":"tts","state":"sentence_stop","text":"你好，","index":1,"elapsed_ms":900,"total_elapsed_ms":3400}
+```
+
 结束语音合成：
 
 ```json
-{"type":"tts","state":"stop","elapsed_ms":800,"total_elapsed_ms":3600}
+{"type":"tts","state":"stop","elapsed_ms":800,"total_elapsed_ms":3600,"first_agent_delta_ms":1200,"first_tts_audio_ms":2500,"llm_ttft_ms":1200,"error_kind":""}
 ```
 
 错误：
@@ -151,7 +196,7 @@ Agent 回复文本：
 
 ## 6. 服务端下行二进制消息
 
-当前 demo 在 `tts start` 后发送完整 mp3 二进制，并在本轮完成后发送 `tts stop`：
+当前 demo 在 `tts start` 后按句发送 mp3 二进制（每句一对 `sentence_start` / `sentence_stop`），并在本轮完成后发送 `tts stop`：
 
 ```text
 <mp3 audio bytes>

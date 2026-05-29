@@ -94,3 +94,11 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - `tests/` 目录已存在，当前重点覆盖语音 Web 用户和存储相关逻辑；`pyproject.toml` 已配置 pytest。
 - 语音模块已落在 `src/shuxin/voice/`，包含 STT/TTS CLI、无硬件会话、WebSocket 浏览器测试台、用户配置、附件存储、后台管理、Postgres 设备绑定和 YAML fallback；生产级 VAD、流式 TTS、每设备独立密钥仍是后续边界。
 - 本地 Docker voice 服务使用 `DATABASE_URL` 连接 Postgres；后台 token 为 `SHUXIN_ADMIN_TOKEN`；硬件原型密钥为 `SHUXIN_DEVICE_SHARED_SECRET`；真实小程序登录需要 `SHUXIN_WECHAT_APPID` 和 `SHUXIN_WECHAT_SECRET`，本地可用 `SHUXIN_WECHAT_MOCK=1`。
+
+### 语音 LLM 与 WebSocket 约束
+
+- Postgres 用户 `llm_config` 与设备 LLM 合并必须使用 [`merge_llm_device_config()`](src/shuxin/voice/config.py)：**空字符串不得覆盖**已有 `model`/`base_url`/`api_key`。
+- `/admin` 保存用户 LLM 时勿提交空的 `model`/`base_url`/`api_key`；否则可能让 WebSocket 路径退回全局默认模型（与 `devices.yaml` 不一致）。
+- Voice 专用限额：`SHUXIN_VOICE_MAX_HISTORY`（默认 8）、`SHUXIN_VOICE_MAX_TOKENS`（默认 384）；LLM 超时：`SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS`（默认 5）、`SHUXIN_LLM_TIMEOUT_SECONDS`（默认 60）。
+- WebSocket 一轮对话：`stt/final` → `agent/thinking` → 流式 `agent/delta`（失败时先发 `agent/error` + `error_kind`）→ 分句 `tts/sentence_*` → `agent/reply` → `tts/stop`（含 `llm_ttft_ms`）。
+- 语音故障排查：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。

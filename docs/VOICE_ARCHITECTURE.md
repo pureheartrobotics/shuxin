@@ -98,15 +98,16 @@ http://localhost:8765/voice-demo
   -> 下采样为 16k mono PCM16
   -> WebSocket 二进制音频帧上行
   -> 松手发送 listen stop
-  -> 服务端写临时 wav
-  -> STT final transcript
-  -> ShuXin Agent
-  -> EdgeTTS 合成 mp3
-  -> WebSocket 二进制 mp3 下发
+  -> STT final（tencent-realtime 通常 <200ms）
+  -> agent/thinking
+  -> Agent 流式 delta -> 按标点/逗号分句 TTS
+  -> WebSocket 二进制 mp3 分句下发
   -> 浏览器播放
 ```
 
-这个阶段的实时目标是“用户说完一句后几秒内回复”，不是边说边打断、自动 VAD 或流式 TTS。
+典型延迟（本地 Docker + DeepSeek API 可达时）：STT 完成后约 3–6s 出现首段 `agent/delta`，首段 TTS 紧随其后。失败时先发 `agent/error`（`error_kind`）再降级，不应长时间空等。
+
+这个阶段的实时目标是“用户说完一句后几秒内听到回复”，不是边说边打断、自动 VAD 或流式 TTS。
 
 ## 3. 当前代码分层
 
@@ -135,7 +136,41 @@ http://localhost:8765/voice-demo
 - STT：FunASR `models/paraformer-zh-streaming`，配置类型为 `streaming-local`。
 - TTS：第一版仍然使用 EdgeTTS 整段 mp3 返回。
 
+低延时实时 STT provider：
+
+- STT：腾讯云实时语音识别 WebSocket，配置类型为 `tencent-realtime`。
+- 浏览器/硬件仍向舒心服务端发送 16k mono PCM16；服务端在 `listen start` 后连接腾讯云 ASR，并在录音期间持续转发 PCM。
+- 腾讯云返回的中间结果会下发为 `stt partial`，稳定句子结果下发为 `stt sentence_final`；`listen stop` 后用累积文本进入 Agent 和 TTS。
+- 需要环境变量 `TENCENT_ASR_APPID`、`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`，设备配置示例见 `data/devices.yaml.example`。
+
 同时保留 API provider 的接口位置，后续可以把 `ProviderConfig.type` 切到 `api` 后实现远程服务调用。
+
+## 3.1 后续：STT/TTS API 化路线
+
+当前 STT/TTS 仍是 demo 优先的组合：
+
+- STT 默认依赖本地 FunASR 模型，适合离线验证，但会增加模型下载、镜像体积和部署成本。
+- TTS 默认使用 EdgeTTS，属于在线语音合成封装，但不是我们自己的稳定生产级 API 能力。
+
+后续目标是把 STT 和 TTS 都切到可配置的 API provider：
+
+- 实现 `ProviderConfig.type = "api"` 对应的真实 STT/TTS 调用，不再停留在占位异常。
+- 继续复用现有配置字段：`api_url`、`api_key`、`model`、`voice`。
+- 本地 FunASR 和 EdgeTTS 保留为开发 fallback，避免 API 不可用时完全阻塞 demo。
+- 早期优先选择免费额度、免费试用或低成本 API 方案验证链路；具体服务商不写死在架构里，落地前按当时免费额度、中文效果、延迟、稳定性和合规要求重新评估。
+
+阶段计划：
+
+1. 先补齐 API provider 的接口约定和测试，用 mock API 跑通 `语音 -> STT API -> Agent -> TTS API -> 音频`。
+2. 再接入第一个低成本/免费额度供应商，保证不下载本地 STT 模型也能完成最小闭环。
+3. 后台预留管理员配置入口，可以按设备或设备组设置 STT/TTS 的 `api_url`、`api_key`、`model` 和 `voice`。
+4. 生产前再补充预算、限流、失败重试、错误提示和供应商降级策略。
+
+配置归属保持简单：
+
+- LLM 模型 API 继续挂在用户侧，支持按用户套餐和额度调整。
+- STT/TTS 先挂在系统/设备侧，由管理员配置；普通用户不能自己配置语音供应商。
+- 后续如果套餐需要区分语音质量，再在后台增加设备组或套餐级覆盖，不先做复杂用户自定义。
 
 ## 4. Transport 预留接口
 
@@ -242,6 +277,7 @@ tts audio frame bytes
 - 每个用户可以有自己的 LLM provider/model/base_url/api_key；设备鉴权后按绑定关系使用用户级 LLM 配置。
 - 每个设备可以有自己的 STT provider/model_dir/api_url/api_key。
 - 每个设备可以有自己的 TTS provider/voice/api_url/api_key。
+- STT/TTS 属于基础语音能力，先由管理员在系统/设备侧配置，不开放给普通用户自定义。
 
 调用方仍然只按 `device_id` / `device_code` 获取配置。RDS 迁移时只需要把 `DATABASE_URL` 指向新库并执行同一套迁移脚本。
 
@@ -280,6 +316,7 @@ tts audio frame bytes
 - 每台设备同一时间只能有一个 active binding。
 - 用户解绑设备时只解除设备访问权，不删除用户记忆。
 - 模型 API key 挂在用户上，设备鉴权后按 active binding 找到用户并使用用户级 LLM 配置。
+- 合并规则：[`merge_llm_device_config()`](../../src/shuxin/voice/config.py) 将用户 `llm_config` 覆盖到设备默认 LLM，但**空字符串不会清掉**已有字段。Postgres 中若存在 `{"model":"","base_url":""}` 这类记录，在修复前会导致 WebSocket 误用全局默认模型；可执行 `UPDATE users SET llm_config='{}'::jsonb WHERE user_id='demo-user';` 清理，或只在 admin 填写完整 LLM 配置。
 
 主要 HTTP 路由：
 

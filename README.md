@@ -310,6 +310,10 @@ enabled_plugins:
 | `DEEPSEEK_BASE_URL` | DeepSeek API 地址 |
 | `SHUXIN_LLM_MODEL` | 模型名称 |
 | `SHUXIN_LLM_PROVIDER` | LLM 提供者 |
+| `SHUXIN_LLM_TIMEOUT_SECONDS` | LLM 读超时（秒）；语音 Docker 默认 60 |
+| `SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS` | LLM 连接超时（秒）；默认 5 |
+| `SHUXIN_VOICE_MAX_HISTORY` | 语音 WebSocket 会话历史轮数；默认 8 |
+| `SHUXIN_VOICE_MAX_TOKENS` | 语音回复 max_tokens；默认 384 |
 | `SHUXIN_DEBUG` | 调试模式 |
 | `DATABASE_URL` | 语音 Web 服务的 Postgres 连接串；未设置时回退到 YAML demo |
 | `SHUXIN_ADMIN_TOKEN` | 语音后台管理登录 token；本地 Docker 默认 `dev-admin-token` |

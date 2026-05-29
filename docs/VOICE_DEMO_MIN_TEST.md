@@ -428,7 +428,50 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 - `SystemError ... timeout`：通常是小程序请求的后端地址不可达。确认 Docker voice 服务已启动，`curl -s http://localhost:8765/health` 可用；小程序页面里也可以点“测试后端连接”。当前开发构建默认使用 `http://localhost:8765`，需要改地址时设置 `SHUXIN_API_BASE` 后重新编译。
 - `scanCode:fail 解析二维码失败`：“相机扫码”只走微信原生相机扫码；上传图片请点“传图识别”，它会调用后端 `/api/barcodes/decode`。如果“传图识别”可返回 `claim_code`，说明后端和条码内容正常，原生相机扫不出时优先检查条码打印尺寸、留白、对焦和光线。
 
-## 10. 打包测试
+## 10. LLM 连通性自测（voice-demo 出现降级文案时）
+
+STT 很快但 Agent 返回「模型连接有点慢…」时，说明 **LLM 调用失败**，不是模型推理慢。按顺序在本机执行（不要提交 `.env`）：
+
+```bash
+# 1) 容器能否访问 LLM API 域名（不测 API key；镜像内无 curl 时用 python）
+docker exec shuxin-voice-demo-pg python -c "
+import urllib.request, time
+start=time.perf_counter()
+try:
+    r=urllib.request.urlopen('https://api.deepseek.com', timeout=10)
+    print('status', r.status, 'time', round(time.perf_counter()-start, 2))
+except Exception as e:
+    print(type(e).__name__, round(time.perf_counter()-start, 2))
+"
+
+# 2) 环境变量是否注入容器（只看是否非空，不打印 key）
+docker exec shuxin-voice-demo-pg sh -c 'test -n "$DEMO_LLM_API_KEY" && echo KEY=set || echo KEY=empty'
+docker exec shuxin-voice-demo-pg sh -c 'echo MODEL=$DEMO_LLM_MODEL BASE=$DEMO_LLM_BASE_URL'
+
+# 3) Postgres 用户配置是否含空 model/base_url（会间接退回错误模型）
+docker exec shuxin-postgres psql -U shuxin -d shuxin -c \
+  "SELECT user_id, llm_config FROM users WHERE user_id='demo-user';"
+# 若 llm_config 为 {"model":"","base_url":""}，可清理：
+docker exec shuxin-postgres psql -U shuxin -d shuxin -c \
+  "UPDATE users SET llm_config='{}'::jsonb WHERE user_id='demo-user';"
+
+# 4) 同容器最小 LLM 闭环
+docker exec -it shuxin-voice-demo-pg \
+  python -m shuxin.voice.cli chat-audio samples/demo.wav --device-id demo-device-001
+```
+
+WebSocket 日志里若出现 `{"type":"agent","state":"error","error_kind":"connect_timeout"}`，优先检查 Docker 出网/代理；`auth_error` 优先检查 key 和 model。
+
+相关环境变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS` | 5 | 连接超时，避免 ~21s 空等 |
+| `SHUXIN_LLM_TIMEOUT_SECONDS` | 60 | 读超时 |
+| `SHUXIN_VOICE_MAX_HISTORY` | 8 | 语音会话历史轮数 |
+| `SHUXIN_VOICE_MAX_TOKENS` | 384 | 语音回复 token 上限 |
+
+## 11. 打包测试
 
 ```bash
 bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
@@ -444,7 +487,7 @@ bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
 
 - 如果 `models/` 没有模型文件，会出现 warning，但不应该导致打包失败。
 
-## 11. 导入部署测试
+## 12. 导入部署测试
 
 建议先导入到临时目录：
 
@@ -460,7 +503,7 @@ bash scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shuxin_voice_bundle_
 - `docker compose build` 成功。
 - 最后的容器 CLI smoke test 成功。
 
-## 12. Docker 日常重部署
+## 13. Docker 日常重部署
 
 代码发生变化后，可以使用：
 
@@ -488,7 +531,7 @@ bash scripts/redeploy_docker.sh --no-build
 - 普通代码变更后，终端输出 `Code-only redeploy: skipping dependency build`。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
 
-## 13. 最终通过标准
+## 14. 最终通过标准
 
 最小可测试单元通过标准：
 
