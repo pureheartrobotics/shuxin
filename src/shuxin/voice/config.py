@@ -22,6 +22,7 @@ class ProviderConfig:
     type: str = "local"
     model: str = ""
     model_dir: str = "models/SenseVoiceSmall"
+    appid: str = ""
     api_url: str = ""
     api_key: str = ""
     voice: str = "zh-CN-XiaoxiaoNeural"
@@ -62,6 +63,27 @@ def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+_LLM_MERGE_KEYS = ("provider", "model", "base_url", "api_key")
+
+
+def merge_llm_device_config(
+    base: LLMDeviceConfig,
+    override: dict[str, Any],
+) -> LLMDeviceConfig:
+    """Merge user-level LLM overrides without blanking device defaults."""
+    merged = dict(base.__dict__)
+    for key in _LLM_MERGE_KEYS:
+        if key not in override:
+            continue
+        value = override[key]
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        merged[key] = value
+    return LLMDeviceConfig(**merged)
 
 
 class DeviceConfigProvider:

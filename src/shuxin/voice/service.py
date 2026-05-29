@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from shuxin.core.agent import Agent
 from shuxin.core.config import Config
 from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
 from shuxin.voice.providers import create_stt_provider, create_tts_provider
+
+
+def _voice_max_history() -> int:
+    return int(os.environ.get("SHUXIN_VOICE_MAX_HISTORY", "8"))
+
+
+def _voice_max_tokens() -> int:
+    return int(os.environ.get("SHUXIN_VOICE_MAX_TOKENS", "384"))
 
 
 class VoiceService:
@@ -88,4 +97,6 @@ class VoiceService:
             config.llm.base_url = device.llm.base_url
         if device.llm.api_key:
             config.llm.api_key = device.llm.api_key
+        config.max_history = _voice_max_history()
+        config.llm.max_tokens = _voice_max_tokens()
         return config
