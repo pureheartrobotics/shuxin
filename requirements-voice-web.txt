@@ -1,0 +1,5 @@
+# Voice HTTP/WebSocket server and database runtime dependencies.
+# Put FastAPI, ASGI server, and DB adapter packages here.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+asyncpg==0.30.0

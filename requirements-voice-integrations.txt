@@ -1,0 +1,3 @@
+# Third-party cloud or realtime voice integration dependencies.
+# Put provider SDKs and protocol clients for external services here.
+websockets==13.1

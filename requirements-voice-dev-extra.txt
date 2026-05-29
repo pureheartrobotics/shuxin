@@ -1,2 +1,3 @@
-Pillow==10.4.0
-zxing-cpp==2.2.0
+# Compatibility placeholder.
+# Docker builds now install barcode dependencies from requirements-voice-barcode.txt.
+-r requirements-voice-barcode.txt

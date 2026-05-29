@@ -1,6 +1,5 @@
-# Extra compatibility pins for the voice demo image.
-# Keep this file separate so Docker can reuse the heavy main dependency layer.
-numpy==1.26.4
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-asyncpg==0.30.0
+# Compatibility placeholder.
+# Docker builds now install web dependencies from requirements-voice-web.txt
+# and third-party integration dependencies from requirements-voice-integrations.txt.
+-r requirements-voice-web.txt
+-r requirements-voice-integrations.txt

@@ -17,6 +17,13 @@ IMAGE="${IMAGE:-shuxin-voice-demo:latest}"
 DEPS_HASH_FILE="${DEPS_HASH_FILE:-data/docker_deps.hash}"
 FORCE_BUILD=0
 NO_BUILD=0
+DEPS_MODULES=(
+  "voice-local requirements-voice-local.txt"
+  "shuxin-core requirements-shuxin-core.txt"
+  "voice-web requirements-voice-web.txt"
+  "voice-integrations requirements-voice-integrations.txt"
+  "voice-barcode requirements-voice-barcode.txt"
+)
 
 for arg in "$@"; do
   case "$arg" in
@@ -54,12 +61,43 @@ info "Checking docker compose config ..."
 docker compose -p "$PROJECT_NAME" config >/dev/null
 
 current_deps_hash() {
-  sha256sum \
-    requirements-voice-demo.txt \
-    requirements-voice-extra.txt \
-    requirements-voice-dev-extra.txt \
-    requirements-shuxin-core.txt \
-    pyproject.toml | sha256sum | awk '{print $1}'
+  local module path hash
+  for entry in "${DEPS_MODULES[@]}"; do
+    module="${entry%% *}"
+    path="${entry#* }"
+    hash="$(sha256sum "$path" | awk '{print $1}')"
+    echo "$module $hash $path"
+  done
+}
+
+changed_deps_modules() {
+  local current previous entry module path hash old_hash changed=()
+  current="$1"
+  previous="$2"
+
+  if [[ -z "$previous" ]]; then
+    return 0
+  fi
+
+  # Older deployments stored one aggregate hash line. Treat that as an unknown
+  # dependency layout and report all current modules as changed.
+  if [[ "$previous" != *$'\n'* && "$previous" != *" "* ]]; then
+    for entry in "${DEPS_MODULES[@]}"; do
+      changed+=("${entry%% *}")
+    done
+    printf "%s" "${changed[*]}"
+    return 0
+  fi
+
+  while read -r module hash path; do
+    [[ -n "$module" ]] || continue
+    old_hash="$(awk -v target="$module" '$1 == target {print $2}' <<<"$previous")"
+    if [[ "$old_hash" != "$hash" ]]; then
+      changed+=("$module")
+    fi
+  done <<<"$current"
+
+  printf "%s" "${changed[*]}"
 }
 
 CURRENT_HASH="$(current_deps_hash)"
@@ -76,19 +114,20 @@ elif [[ "$FORCE_BUILD" -eq 1 ]]; then
 elif ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   BUILD_REASON="image not found: $IMAGE"
 elif [[ -n "$PREVIOUS_HASH" && "$PREVIOUS_HASH" != "$CURRENT_HASH" ]]; then
-  BUILD_REASON="dependency files changed"
+  CHANGED_MODULES="$(changed_deps_modules "$CURRENT_HASH" "$PREVIOUS_HASH")"
+  BUILD_REASON="dependency modules changed: ${CHANGED_MODULES:-unknown}"
 elif [[ -z "$PREVIOUS_HASH" ]]; then
   info "Dependency hash file not found; initializing without rebuild because image exists"
 fi
 
 if [[ -n "$BUILD_REASON" ]]; then
   info "Building Docker image ($BUILD_REASON) ..."
-  docker compose -p "$PROJECT_NAME" build "$SERVICE"
-  echo "$CURRENT_HASH" > "$DEPS_HASH_FILE"
+  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -p "$PROJECT_NAME" build "$SERVICE"
+  printf "%s\n" "$CURRENT_HASH" > "$DEPS_HASH_FILE"
 else
   info "Code-only redeploy: skipping dependency build"
   if [[ -z "$PREVIOUS_HASH" ]]; then
-    echo "$CURRENT_HASH" > "$DEPS_HASH_FILE"
+    printf "%s\n" "$CURRENT_HASH" > "$DEPS_HASH_FILE"
   fi
 fi
 

@@ -25,29 +25,38 @@ ENV LANG=zh_CN.UTF-8 \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-COPY requirements-voice-demo.txt ./
+COPY requirements-voice-local.txt ./
 
-# 先安装体积较大的语音依赖，最大化复用 Docker 缓存。
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements-voice-demo.txt
-
-COPY requirements-voice-extra.txt ./
-
-# WebSocket demo 的轻量 Web 依赖单独分层，避免改核心依赖时重装语音模型栈。
-RUN pip install --no-cache-dir -r requirements-voice-extra.txt
+# Install the large local voice stack first so Docker can reuse this layer.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements-voice-local.txt
 
 COPY requirements-shuxin-core.txt ./
 
-# ShuXin 核心运行依赖放在最后，便于独立调整 Agent 侧依赖。
-RUN pip install --no-cache-dir -r requirements-shuxin-core.txt
+# Core ShuXin runtime dependencies are separate from voice feature packages.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-shuxin-core.txt
 
-COPY requirements-voice-dev-extra.txt ./
+COPY requirements-voice-web.txt ./
 
-# 变动较频繁的 voice Web 兜底能力依赖放在最后，避免反复下载前面的依赖层。
-RUN pip install --no-cache-dir -r requirements-voice-dev-extra.txt
+# Voice server and database dependencies.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-voice-web.txt
 
-COPY README.md SOUL.md ./
+COPY requirements-voice-integrations.txt ./
+
+# External provider dependencies change more often than the local voice stack.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-voice-integrations.txt
+
+COPY requirements-voice-barcode.txt ./
+
+# Device binding barcode dependencies are isolated in the final dependency layer.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-voice-barcode.txt
+
+COPY pyproject.toml README.md SOUL.md ./
 COPY src ./src
 COPY scripts ./scripts
 
