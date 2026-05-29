@@ -24,6 +24,7 @@ import os
 import sys
 import logging
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Generator, AsyncIterator
 from dataclasses import dataclass, field
@@ -248,6 +249,12 @@ class Agent:
             max_history=self.config.max_history,
         )
 
+        blocked_content = self._get_blocked_llm_response()
+        if blocked_content is not None:
+            self.memory.add_message("assistant", blocked_content)
+            self.plugins.invoke_hook("on_ai_message", agent=self, message=blocked_content)
+            return blocked_content
+
         # 4. 调用 LLM
         try:
             response = self.llm.chat(
@@ -315,6 +322,12 @@ class Agent:
             max_history=self.config.max_history,
         )
 
+        blocked_content = self._get_blocked_llm_response()
+        if blocked_content is not None:
+            self.memory.add_message("assistant", blocked_content)
+            self.plugins.invoke_hook("on_ai_message", agent=self, message=blocked_content)
+            return blocked_content
+
         try:
             response = await self.llm.chat_async(
                 messages=[
@@ -365,6 +378,13 @@ class Agent:
             max_history=self.config.max_history,
         )
 
+        blocked_content = self._get_blocked_llm_response()
+        if blocked_content is not None:
+            self.memory.add_message("assistant", blocked_content)
+            self.plugins.invoke_hook("on_ai_message", agent=self, message=blocked_content)
+            yield blocked_content
+            return
+
         try:
             stream = self.llm.chat_stream(
                 messages=[
@@ -378,7 +398,7 @@ class Agent:
             )
 
             full_content: str = ""
-            for chunk in stream():
+            for chunk in stream:
                 full_content += chunk
                 yield chunk
 
@@ -397,6 +417,17 @@ class Agent:
             logger.error("LLM 流式调用失败: %s", e)
             yield self._get_fallback_response()
 
+    def _get_blocked_llm_response(self) -> Optional[str]:
+        """Return a plugin replacement when calling the LLM would be wasted."""
+        sentinel = f"__shuxin_no_llm_probe_{uuid.uuid4().hex}__"
+        hook_results = self.plugins.invoke_hook(
+            "transform_output", agent=self, content=sentinel
+        )
+        for _plugin_name, result in hook_results:
+            if result is not None and result != sentinel:
+                return result
+        return None
+
     @staticmethod
     def _get_fallback_response() -> str:
         """LLM 调用失败时的降级回复。
@@ -404,7 +435,7 @@ class Agent:
         Returns:
             温和的降级回复文本。
         """
-        return "（舒心轻轻叹了口气）抱歉，我现在有点不舒服……能等一下再聊吗？"
+        return "模型连接有点慢，刚才没有及时响应。我们稍等一下再试。"
 
     # -- 命令处理 ----------------------------------------------------------
 
