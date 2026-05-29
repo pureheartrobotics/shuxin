@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import threading
 import uuid
 import time
 from pathlib import Path
@@ -12,12 +13,17 @@ from shuxin.core.config import get_shuxin_home
 from shuxin.voice.adapters import VoiceAdapterRegistry
 from shuxin.voice.audio_files import AudioFileStore
 from shuxin.voice.barcode import decode_barcode_image_base64, generate_code128_png
-from shuxin.voice.config import DeviceConfigProvider, LLMDeviceConfig, _merge_dict
+from shuxin.voice.config import DeviceConfigProvider, LLMDeviceConfig, merge_llm_device_config
 from shuxin.voice.db import PostgresDatabase
 from shuxin.voice.local_repository import VoiceLocalRepository
 from shuxin.voice.postgres_repository import VoicePostgresRepository
 from shuxin.voice.providers import create_stt_provider, create_tts_provider
 from shuxin.voice.service import VoiceService
+from shuxin.voice.tencent_realtime_asr import (
+    TencentRealtimeASRResult,
+    TencentRealtimeASRSession,
+    is_tencent_realtime_stt,
+)
 from shuxin.voice.users import DEFAULT_USER_ID, UserConfigProvider
 
 # WebSocket 上行音频统一按 16kHz / mono / PCM16 处理。
@@ -25,6 +31,39 @@ from shuxin.voice.users import DEFAULT_USER_ID, UserConfigProvider
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 CHANNELS = 1
+SENTENCE_DELIMITERS = "。！？!?；;\n"
+FIRST_SEGMENT_WEAK_DELIMITERS = "，,、"
+MAX_STREAMING_TTS_CHARS = 48
+
+
+def _pop_speakable_segments(
+    buffer: str,
+    *,
+    force: bool = False,
+    allow_weak_punctuation: bool = False,
+) -> tuple[list[str], str]:
+    """Split streamed LLM text into speakable segments for low-latency TTS."""
+    delimiters = SENTENCE_DELIMITERS
+    if allow_weak_punctuation:
+        delimiters += FIRST_SEGMENT_WEAK_DELIMITERS
+    segments: list[str] = []
+    while buffer:
+        cut_at = -1
+        for index, char in enumerate(buffer):
+            if char in delimiters:
+                cut_at = index + 1
+                break
+        if cut_at < 0 and force:
+            cut_at = len(buffer)
+        if cut_at < 0 and len(buffer) >= MAX_STREAMING_TTS_CHARS:
+            cut_at = MAX_STREAMING_TTS_CHARS
+        if cut_at < 0:
+            break
+        segment = buffer[:cut_at].strip()
+        buffer = buffer[cut_at:]
+        if segment:
+            segments.append(segment)
+    return segments, buffer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -162,6 +201,16 @@ def create_app(
             require_admin(request)
             payload = await request.json()
             return JSONResponse(await repo().provision_devices_batch(payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/factory/devices/next-sequence")
+    async def admin_factory_next_sequence(request: Request, device_prefix: str = "SX"):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().next_device_sequence(device_prefix))
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -484,6 +533,8 @@ class _VoiceWebSocketSession:
         self.tts = None
         self.agent = None
         self.audio_chunks: list[bytes] = []
+        self.realtime_asr: TencentRealtimeASRSession | None = None
+        self.realtime_stt_started = 0.0
         self.listening = False
 
     async def run(self) -> None:
@@ -501,6 +552,9 @@ class _VoiceWebSocketSession:
 
     async def shutdown(self, mark_offline: bool = True) -> None:
         """关闭连接时释放当前 Agent，避免插件状态和资源泄漏。"""
+        if self.realtime_asr is not None:
+            await self.realtime_asr.close()
+            self.realtime_asr = None
         if self.agent is not None:
             await asyncio.to_thread(self.agent.shutdown)
             self.agent = None
@@ -570,6 +624,12 @@ class _VoiceWebSocketSession:
         if message_type == "listen" and data.get("state") == "start":
             self.audio_chunks = []
             self.listening = True
+            try:
+                await self._start_realtime_asr_if_needed()
+            except Exception as exc:
+                self.listening = False
+                await self._send_json({"type": "error", "message": str(exc)})
+                return
             await self._send_json({"type": "listen", "state": "start"})
             return
 
@@ -581,6 +641,9 @@ class _VoiceWebSocketSession:
         if message_type == "abort":
             self.audio_chunks = []
             self.listening = False
+            if self.realtime_asr is not None:
+                await self.realtime_asr.close()
+                self.realtime_asr = None
             await self._send_json({"type": "abort", "state": "ok"})
             return
 
@@ -591,9 +654,11 @@ class _VoiceWebSocketSession:
         await self._send_json({"type": "error", "message": f"unsupported message: {data}"})
 
     async def _handle_audio_frame(self, frame: bytes) -> None:
-        """缓存 listen 窗口内收到的 PCM16 二进制音频帧。"""
+        """缓存 listen 窗口内收到的 PCM16 二进制音频帧，并按需转发实时 ASR。"""
         if self.listening and frame:
             self.audio_chunks.append(frame)
+            if self.realtime_asr is not None:
+                await self.realtime_asr.send_audio(frame)
 
     async def _process_turn(self) -> None:
         """处理完整的一轮语音对话。
@@ -618,25 +683,123 @@ class _VoiceWebSocketSession:
             self.audio_store.write_input_wav(pcm, paths.input_wav)
             await self._send_json({"type": "stt", "state": "start"})
             stt_started = time.perf_counter()
-            text = await self.stt.transcribe(paths.input_wav)
+            if self.realtime_asr is not None:
+                try:
+                    text = await self.realtime_asr.finish()
+                finally:
+                    self.realtime_asr = None
+            else:
+                text = await self.stt.transcribe(paths.input_wav)
             stt_ms = _elapsed_ms(stt_started)
             await self._send_json(
                 {"type": "stt", "state": "final", "text": text, "elapsed_ms": stt_ms}
             )
 
             agent_started = time.perf_counter()
-            reply = await asyncio.to_thread(self.agent.chat, text)
-            reply = reply.strip()
+            reply_parts: list[str] = []
+            tts_started = 0.0
+            tts_total_ms = 0
+            first_agent_delta_ms: int | None = None
+            first_tts_audio_ms: int | None = None
+            llm_ttft_ms: int | None = None
+            error_kind: str | None = None
+            speech_path: Path | None = None
+            sentence_buffer = ""
+            sentence_index = 0
+            allow_weak_punctuation = True
+
+            await self._send_json({"type": "agent", "state": "thinking"})
+            if self.agent is not None:
+                self.agent.context.metadata.pop("llm_error_kind", None)
+
+            async for chunk in self._stream_agent_chunks(text):
+                if not chunk:
+                    continue
+                if first_agent_delta_ms is None:
+                    first_agent_delta_ms = _elapsed_ms(agent_started)
+                    llm_ttft_ms = first_agent_delta_ms
+                    pending_error = (
+                        self.agent.context.metadata.get("llm_error_kind")
+                        if self.agent is not None
+                        else None
+                    )
+                    if pending_error:
+                        error_kind = str(pending_error)
+                        await self._send_json(
+                            {
+                                "type": "agent",
+                                "state": "error",
+                                "error_kind": error_kind,
+                                "elapsed_ms": first_agent_delta_ms,
+                            }
+                        )
+                reply_parts.append(chunk)
+                await self._send_json(
+                    {
+                        "type": "agent",
+                        "state": "delta",
+                        "text": chunk,
+                        "elapsed_ms": _elapsed_ms(agent_started),
+                    }
+                )
+                sentence_buffer += chunk
+                segments, sentence_buffer = _pop_speakable_segments(
+                    sentence_buffer,
+                    allow_weak_punctuation=allow_weak_punctuation,
+                )
+                if segments:
+                    allow_weak_punctuation = False
+                for segment in segments:
+                    if not tts_started:
+                        tts_started = time.perf_counter()
+                        await self._send_json({"type": "tts", "state": "start"})
+                    sentence_index += 1
+                    speech_path = await self._synthesize_and_send_sentence(
+                        segment,
+                        paths.reply_mp3,
+                        sentence_index,
+                        started,
+                    )
+                    tts_total_ms = _elapsed_ms(tts_started)
+                    if first_tts_audio_ms is None:
+                        first_tts_audio_ms = _elapsed_ms(started)
+
+            segments, sentence_buffer = _pop_speakable_segments(sentence_buffer, force=True)
+            for segment in segments:
+                if not tts_started:
+                    tts_started = time.perf_counter()
+                    await self._send_json({"type": "tts", "state": "start"})
+                sentence_index += 1
+                speech_path = await self._synthesize_and_send_sentence(
+                    segment,
+                    paths.reply_mp3,
+                    sentence_index,
+                    started,
+                )
+                tts_total_ms = _elapsed_ms(tts_started)
+                if first_tts_audio_ms is None:
+                    first_tts_audio_ms = _elapsed_ms(started)
+
+            reply = "".join(reply_parts).strip()
             agent_ms = _elapsed_ms(agent_started)
             await self._send_json(
                 {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
             )
 
-            await self._send_json({"type": "tts", "state": "start"})
-            tts_started = time.perf_counter()
-            speech_path = await self.tts.synthesize(reply, paths.reply_mp3)
-            tts_ms = _elapsed_ms(tts_started)
-            await self.websocket.send_bytes(speech_path.read_bytes())
+            if speech_path is None and reply:
+                tts_started = time.perf_counter()
+                await self._send_json({"type": "tts", "state": "start"})
+                speech_path = await self._synthesize_and_send_sentence(
+                    reply,
+                    paths.reply_mp3,
+                    1,
+                    started,
+                )
+                tts_total_ms = _elapsed_ms(tts_started)
+                first_tts_audio_ms = _elapsed_ms(started)
+            if speech_path is None:
+                speech_path = paths.reply_mp3
+                speech_path.write_bytes(b"")
             await self.repo.record_turn(
                 user_settings=self.user_settings,
                 device_id=self.device_id,
@@ -650,8 +813,12 @@ class _VoiceWebSocketSession:
                 timings={
                     "stt_ms": stt_ms,
                     "agent_ms": agent_ms,
-                    "tts_ms": tts_ms,
+                    "tts_ms": tts_total_ms,
+                    "llm_ttft_ms": llm_ttft_ms or 0,
+                    "first_agent_delta_ms": first_agent_delta_ms or 0,
+                    "first_tts_audio_ms": first_tts_audio_ms or 0,
                     "total_elapsed_ms": _elapsed_ms(started),
+                    "error_kind": error_kind or "",
                 },
             )
             asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
@@ -659,8 +826,12 @@ class _VoiceWebSocketSession:
                 {
                     "type": "tts",
                     "state": "stop",
-                    "elapsed_ms": tts_ms,
+                    "elapsed_ms": tts_total_ms,
                     "total_elapsed_ms": _elapsed_ms(started),
+                    "first_agent_delta_ms": first_agent_delta_ms or 0,
+                    "first_tts_audio_ms": first_tts_audio_ms or 0,
+                    "llm_ttft_ms": llm_ttft_ms or 0,
+                    "error_kind": error_kind or "",
                 }
             )
         except Exception as exc:
@@ -674,6 +845,102 @@ class _VoiceWebSocketSession:
         self.stt = None
         self.tts = None
         self.device = None
+
+    async def _stream_agent_chunks(self, text: str):
+        """Run the sync Agent streaming iterator without blocking the event loop."""
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        done = object()
+
+        def worker() -> None:
+            try:
+                for chunk in self.agent.chat_stream(text):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, done)
+
+        threading.Thread(target=worker, daemon=True).start()
+        while True:
+            item = await queue.get()
+            if item is done:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield str(item)
+
+    async def _synthesize_and_send_sentence(
+        self,
+        text: str,
+        base_path: Path,
+        sentence_index: int,
+        turn_started: float,
+    ) -> Path:
+        """Synthesize one sentence and send its audio immediately."""
+        if sentence_index == 1:
+            output_path = base_path
+        else:
+            output_path = base_path.with_name(
+                f"{base_path.stem}-{sentence_index:03d}{base_path.suffix}"
+            )
+        await self._send_json(
+            {
+                "type": "tts",
+                "state": "sentence_start",
+                "text": text,
+                "index": sentence_index,
+                "total_elapsed_ms": _elapsed_ms(turn_started),
+            }
+        )
+        sentence_started = time.perf_counter()
+        speech_path = await self.tts.synthesize(text, output_path)
+        await self.websocket.send_bytes(speech_path.read_bytes())
+        await self._send_json(
+            {
+                "type": "tts",
+                "state": "sentence_stop",
+                "text": text,
+                "index": sentence_index,
+                "elapsed_ms": _elapsed_ms(sentence_started),
+                "total_elapsed_ms": _elapsed_ms(turn_started),
+            }
+        )
+        return speech_path
+
+    async def _start_realtime_asr_if_needed(self) -> None:
+        """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
+        await self._ensure_runtime()
+        if self.device is None or not is_tencent_realtime_stt(self.device.stt):
+            return
+        if self.realtime_asr is not None:
+            await self.realtime_asr.close()
+        self.realtime_stt_started = time.perf_counter()
+        self.realtime_asr = TencentRealtimeASRSession(
+            self.device.stt,
+            on_result=self._handle_realtime_asr_result,
+        )
+        await self.realtime_asr.start()
+        await self._send_json({"type": "stt", "state": "stream_start"})
+
+    async def _handle_realtime_asr_result(
+        self,
+        result: TencentRealtimeASRResult,
+    ) -> None:
+        """把腾讯云实时 ASR 的中间/稳定结果转发给前端。"""
+        state = "partial"
+        if result.is_sentence_final:
+            state = "sentence_final"
+        if result.is_stream_final:
+            state = "stream_final"
+        await self._send_json(
+            {
+                "type": "stt",
+                "state": state,
+                "text": result.text,
+                "elapsed_ms": _elapsed_ms(self.realtime_stt_started),
+            }
+        )
 
     async def _ensure_runtime(self) -> None:
         """懒加载设备配置、STT/TTS provider 和按用户隔离的 Agent。"""
@@ -691,17 +958,22 @@ class _VoiceWebSocketSession:
         if self.device is None:
             self.device = await self.repo.get_device(self.device_id)
             if self.user_settings and self.user_settings.llm_config:
-                merged_llm = _merge_dict(
-                    self.device.llm.__dict__,
+                self.device.llm = merge_llm_device_config(
+                    self.device.llm,
                     self.user_settings.llm_config,
                 )
-                self.device.llm = LLMDeviceConfig(**merged_llm)
-            self.stt = create_stt_provider(self.device.stt)
+            if not self.device.llm.api_key:
+                raise ValueError("LLM api_key is not configured for this device/user")
+            if is_tencent_realtime_stt(self.device.stt):
+                self.stt = None
+            else:
+                self.stt = create_stt_provider(self.device.stt)
             self.tts = create_tts_provider(self.device.tts)
             self.agent = self.service.create_agent(
                 self.device,
                 user_home=self.audio_store.user_shuxin_home(),
             )
+            self.agent.context.metadata["channel"] = "voice"
             await asyncio.to_thread(self.agent.initialize)
 
     async def _send_json(self, data: dict) -> None:
@@ -788,14 +1060,14 @@ def _admin_html(authenticated: bool) -> str:
         <div class="panel">
           <h2>批量制码</h2>
           <div class="form-row">
-            <label><span class="hint">设备前缀</span><input id="batchDevicePrefix" value="SX" /></label>
+            <label><span class="hint">设备前缀</span><input id="batchDevicePrefix" value="SX" onchange="refreshBatchStart()" /></label>
             <label><span class="hint">起始编号</span><input id="batchStart" type="number" value="1" min="1" /></label>
             <label><span class="hint">外壳码前缀</span><input id="batchLabelPrefix" value="CLM" /></label>
             <label><span class="hint">批次</span><input id="batchLabelBatch" value="A001" /></label>
             <label><span class="hint">数量</span><input id="batchQuantity" type="number" value="3" min="1" max="500" /></label>
             <button onclick="provisionBatch()">生成并入库</button>
           </div>
-          <div class="toolbar" style="margin-top:12px"><button class="secondary" onclick="downloadBatchCsv()">下载本批 CSV</button><span class="hint">device_secret 只在本次生成结果里明文显示。</span></div>
+          <div class="toolbar" style="margin-top:12px"><button class="secondary" onclick="downloadBatchCsv()">下载本批 CSV</button><span id="batchNextHint" class="hint">device_secret 只在本次生成结果里明文显示。</span></div>
           <div id="batchResult" class="table"></div>
         </div>
         <div class="panel">
@@ -901,7 +1173,7 @@ def _admin_html(authenticated: bool) -> str:
       $('login').style.display = authenticated ? 'none' : 'block';
       $('admin').style.display = authenticated ? 'block' : 'none';
       $('adapterPayload').value = JSON.stringify({{adapter_name:'skills', action:'list', params:{{}}}}, null, 2);
-      if (authenticated) loadAll();
+      if (authenticated) {{ refreshBatchStart(); loadAll(); }}
     }}
     async function login() {{
       const res = await fetch('/admin/api/login', {{method:'POST', headers:headers(), body:JSON.stringify({{token:$('adminToken').value}})}});
@@ -1076,6 +1348,15 @@ def _admin_html(authenticated: bool) -> str:
         <div class="meta">${{esc(item.qr_payload || '')}}</div>
       </div>`).join('') : '';
     }}
+    async function refreshBatchStart() {{
+      const prefix = $('batchDevicePrefix').value || 'SX';
+      const params = new URLSearchParams({{device_prefix: prefix}});
+      const res = await fetch('/admin/api/factory/devices/next-sequence?' + params.toString());
+      const data = await res.json();
+      if (!res.ok || data.error) {{ $('batchNextHint').textContent = data.error || '无法读取下一编号'; return; }}
+      $('batchStart').value = data.next_sequence || 1;
+      $('batchNextHint').textContent = `下一设备号 ${{data.next_device_id}}；device_secret 只在本次生成结果里明文显示。`;
+    }}
     async function provisionBatch() {{
       const payload = {{
         device_prefix: $('batchDevicePrefix').value,
@@ -1088,6 +1369,7 @@ def _admin_html(authenticated: bool) -> str:
       const data = await res.json();
       if (!res.ok || data.error) {{ alert(data.error || 'batch failed'); return; }}
       renderBatch(data.items || []);
+      await refreshBatchStart();
       await loadDevices();
     }}
     function downloadBatchCsv() {{
@@ -1225,6 +1507,8 @@ def _web_demo_html(default_device_id: str) -> str:
     let recording = false;
     let recordingRequested = false;
     let startingRecording = false;
+    let audioQueue = [];
+    let audioPlaying = false;
 
     function log(line) {{
       logEl.textContent += `${{new Date().toLocaleTimeString()}} ${{line}}\\n`;
@@ -1234,6 +1518,29 @@ def _web_demo_html(default_device_id: str) -> str:
     function wsUrl() {{
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${{protocol}}//${{location.host}}/ws/voice`;
+    }}
+
+    function enqueueAudio(data) {{
+      audioQueue.push(data);
+      playNextAudio();
+    }}
+
+    function playNextAudio() {{
+      if (audioPlaying || !audioQueue.length) return;
+      audioPlaying = true;
+      const blob = new Blob([audioQueue.shift()], {{type: 'audio/mpeg'}});
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = audio.onerror = () => {{
+        URL.revokeObjectURL(url);
+        audioPlaying = false;
+        playNextAudio();
+      }};
+      audio.play().catch(() => {{
+        URL.revokeObjectURL(url);
+        audioPlaying = false;
+        playNextAudio();
+      }});
     }}
 
     connectBtn.onclick = () => {{
@@ -1265,17 +1572,17 @@ def _web_demo_html(default_device_id: str) -> str:
       }};
       ws.onmessage = (event) => {{
         if (typeof event.data !== 'string') {{
-          const blob = new Blob([event.data], {{type: 'audio/mpeg'}});
-          new Audio(URL.createObjectURL(blob)).play();
+          enqueueAudio(event.data);
           return;
         }}
         const msg = JSON.parse(event.data);
         log(JSON.stringify(msg));
         if (msg.type === 'hello' && msg.state === 'ok') boundUserEl.textContent = `${{msg.user_id || '-'}} / ${{msg.device_id || '-'}}`;
-        if (msg.type === 'stt' && msg.state === 'final') sttEl.textContent = msg.text || '-';
+        if (msg.type === 'stt' && ['partial', 'sentence_final', 'stream_final', 'final'].includes(msg.state)) sttEl.textContent = msg.text || '-';
+        if (msg.type === 'agent' && msg.state === 'delta') replyEl.textContent = (replyEl.textContent === '-' ? '' : replyEl.textContent) + (msg.text || '');
         if (msg.type === 'agent' && msg.state === 'reply') replyEl.textContent = msg.text || '-';
         if (msg.type === 'tts' && msg.state === 'stop') {{
-          timingEl.textContent = `STT/Agent/TTS 总耗时 ${{msg.total_elapsed_ms}}ms`;
+          timingEl.textContent = `首字 ${{msg.first_agent_delta_ms || '-'}}ms · 首段语音 ${{msg.first_tts_audio_ms || '-'}}ms · 总耗时 ${{msg.total_elapsed_ms}}ms`;
           recordBtn.disabled = false;
           recordBtn.textContent = '按住说话';
         }}
@@ -1297,6 +1604,8 @@ def _web_demo_html(default_device_id: str) -> str:
       recordBtn.classList.add('recording');
       recordBtn.textContent = '录音中';
       connectBtn.disabled = true;
+      audioQueue = [];
+      audioPlaying = false;
       sttEl.textContent = '-';
       replyEl.textContent = '-';
       timingEl.textContent = '-';
