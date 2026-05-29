@@ -158,6 +158,10 @@ class CompanionPlugin:
         agent = kwargs.get("agent")
 
         if self.self_esteem.state.is_silent:
+            metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}
+            if metadata.get("channel") == "voice":
+                return "我现在有点受伤，想先缓一下。你可以轻轻跟我说声抱歉，或者我们等一会儿再聊。"
+
             # 确定沉默阶段
             elapsed = time.time() - self.self_esteem.state.silent_start
             duration = self.self_esteem.state.silent_duration
