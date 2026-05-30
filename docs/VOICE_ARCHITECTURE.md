@@ -172,6 +172,24 @@ http://localhost:8765/voice-demo
 - STT/TTS 先挂在系统/设备侧，由管理员配置；普通用户不能自己配置语音供应商。
 - 后续如果套餐需要区分语音质量，再在后台增加设备组或套餐级覆盖，不先做复杂用户自定义。
 
+## 3.2 三层记忆与上下文
+
+语音路径不追求「无限回合原文」进 LLM，而是分层：
+
+| 层级 | 内容 | 默认规模 |
+|------|------|----------|
+| 短期 | `Agent` 会话 `short_term` 最近原文 | `SHUXIN_VOICE_MAX_HISTORY=8` |
+| 中期 | `shared_memory` 的 7 日 `rolling_summary` + 规则 `recent_topics` | 每 `SHUXIN_SUMMARY_EVERY_N` 轮（默认 5）及 WebSocket 断线时异步合并 |
+| 长期 | `facts.json` / Postgres `user_facts` + 陪伴插件状态 | 规则抽取 + 既有 companion 持久化 |
+
+实现见 `src/shuxin/voice/memory_summary.py`。`record_turn` 后规则更新 topics；满足轮次或断线时 `maybe_merge_rolling_summary` 调用便宜模型合并摘要，并同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json` 供陪伴插件注入。重连**不**从 `conversation_events` 恢复最近原文，仅依赖中期摘要与长期 facts。
+
+环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`。`compress_if_needed` 仍只处理音频附件配额，与对话摘要无关。
+
+CLI 默认 `max_history=30`（全局配置），与语音短期窗口独立。
+
+voice-demo 人工验收步骤见 [VOICE_DEMO_MIN_TEST.md §11](VOICE_DEMO_MIN_TEST.md)。
+
 ## 4. Transport 预留接口
 
 当前接口：
@@ -306,7 +324,9 @@ tts audio frame bytes
 - `device_claim_codes`：外壳公开码明文、hash、认领状态和重置记录。
 - `device_bindings`：用户和设备的 active binding；一台设备同一时间只能有一个 active binding。
 - `device_binding_events`：绑定、解绑、后台操作等审计事件。
-- `device_status`：设备在线状态、当前 session、`last_error`。
+- `device_status`：设备在线状态、当前 session、`last_error`（WebSocket 连接时置 `online=true`）。
+- `devices.status`：生命周期 `provisioned` / `bound` / `disabled`；管理后台与 `device_status.online`、认领码状态、active binding 组合展示。
+- `devices.device_secret_encrypted`：可选 Fernet 密文，供后台与 `/voice-demo` 测试台读取（需 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`）。
 - `voice_sessions` / `conversation_events` / `audio_attachments`：语音会话、对话轮次和音频附件索引。
 
 绑定规则：

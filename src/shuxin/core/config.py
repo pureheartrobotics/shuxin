@@ -209,7 +209,7 @@ class Config:
 
     # 会话
     session_timeout: int = 3600
-    max_history: int = 100
+    max_history: int = 30
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 

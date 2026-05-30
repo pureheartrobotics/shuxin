@@ -132,6 +132,12 @@ class CompanionPlugin:
         try:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             lines.append(f"累计对话: {summary.get('turn_count', 0)} 次")
+            rolling = str(summary.get("rolling_summary") or "").strip()
+            if rolling:
+                lines.append(f"近 7 日概况: {rolling}")
+            topics = summary.get("recent_topics") or []
+            if topics:
+                lines.append(f"近期话题: {'、'.join(map(str, topics[:5]))}")
             warning = summary.get("last_warning")
             if warning:
                 lines.append(f"存储状态: {warning}")

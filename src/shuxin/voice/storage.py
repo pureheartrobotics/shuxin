@@ -14,6 +14,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from shuxin.voice.memory_summary import (
+    SUMMARY_WINDOW_DAYS,
+    apply_turn_to_summary,
+    finalize_summary_after_merge,
+    merge_summary_with_llm,
+    merge_summary_with_stats,
+    memory_field_defaults,
+    should_merge_summary,
+    sync_summary_json,
+)
+from shuxin.voice.config import DeviceConfig
 from shuxin.voice.users import UserSettings, validate_user_id
 
 SAMPLE_RATE = 16000
@@ -151,7 +162,12 @@ class UserVoiceStorage:
                         compressed=True,
                     )
                 self._update_facts_from_text(user_text)
-                self._update_summary_locked(conn, user_settings=user_settings, warning=warning)
+                self._update_summary_locked(
+                    conn,
+                    user_settings=user_settings,
+                    warning=warning,
+                    user_text=user_text,
+                )
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:
         """返回用户当前音频额度、已用空间、后台任务和告警摘要。"""
@@ -384,19 +400,31 @@ class UserVoiceStorage:
         ).fetchone()
         return int(row[0] or 0)
 
+    def _load_summary_locked(self) -> dict[str, Any]:
+        summary_path = self.summaries_dir / "shared_memory.json"
+        if not summary_path.exists():
+            return {**_initial_summary(self.user_id), **memory_field_defaults()}
+        try:
+            data = json.loads(summary_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {**_initial_summary(self.user_id), **memory_field_defaults()}
+
     def _update_summary_locked(
         self,
         conn: sqlite3.Connection,
         *,
         user_settings: UserSettings,
         warning: str,
+        user_text: str = "",
     ) -> None:
         """根据事件库当前状态刷新共享记忆摘要文件。"""
         event_count = conn.execute(
             "SELECT COUNT(*) FROM events WHERE deleted_at IS NULL"
         ).fetchone()[0]
         attachment_bytes = self._attachment_total_bytes(conn)
-        summary = {
+        existing = self._load_summary_locked()
+        stats = {
             "user_id": self.user_id,
             "turn_count": int(event_count),
             "last_interaction_at": _now(),
@@ -404,13 +432,68 @@ class UserVoiceStorage:
             "audio_used_bytes": attachment_bytes,
             "over_quota": attachment_bytes > user_settings.audio_quota_bytes,
             "last_warning": warning,
-            "milestones": [],
-            "recent_topics": [],
+            "milestones": existing.get("milestones") or [],
         }
+        summary = merge_summary_with_stats(existing, stats)
+        if user_text.strip():
+            summary = apply_turn_to_summary(summary, user_text)
+        self._write_summary_locked(summary)
+
+    def _write_summary_locked(self, summary: dict[str, Any]) -> None:
         (self.summaries_dir / "shared_memory.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        sync_summary_json(self.user_id, summary)
+
+    def _recent_turns_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        limit: int = 15,
+    ) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT user_text, reply_text, created_at
+            FROM events
+            WHERE deleted_at IS NULL
+              AND datetime(created_at) >= datetime('now', ?)
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (f"-{SUMMARY_WINDOW_DAYS} days", limit),
+        ).fetchall()
+        return [
+            {"user_text": row[0], "reply_text": row[1], "created_at": row[2]}
+            for row in reversed(rows)
+        ]
+
+    async def maybe_merge_rolling_summary(
+        self,
+        device: DeviceConfig | None,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        async with self._lock:
+            summary = self._load_summary_locked()
+            if not should_merge_summary(summary, force=force):
+                return {"merged": False, "reason": "not_due"}
+            recent_turns = []
+            with self._connect() as conn:
+                recent_turns = self._recent_turns_locked(conn)
+            loop = asyncio.get_event_loop()
+            merged_text = await loop.run_in_executor(
+                None,
+                lambda: merge_summary_with_llm(
+                    device=device,
+                    existing_summary=str(summary.get("rolling_summary") or ""),
+                    recent_topics=list(summary.get("recent_topics") or []),
+                    recent_turns=recent_turns,
+                ),
+            )
+            summary = finalize_summary_after_merge(summary, merged_text)
+            self._write_summary_locked(summary)
+            return {"merged": True, "summary_updated_at": summary.get("summary_updated_at")}
 
     def _insert_warning(self, conn: sqlite3.Connection, message: str) -> None:
         """记录需要后台或人工关注的存储告警。"""
@@ -570,5 +653,5 @@ def _initial_summary(user_id: str) -> dict[str, Any]:
         "over_quota": False,
         "last_warning": "",
         "milestones": [],
-        "recent_topics": [],
+        **memory_field_defaults(),
     }

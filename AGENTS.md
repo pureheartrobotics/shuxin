@@ -99,6 +99,8 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 
 - Postgres 用户 `llm_config` 与设备 LLM 合并必须使用 [`merge_llm_device_config()`](src/shuxin/voice/config.py)：**空字符串不得覆盖**已有 `model`/`base_url`/`api_key`。
 - `/admin` 保存用户 LLM 时勿提交空的 `model`/`base_url`/`api_key`；否则可能让 WebSocket 路径退回全局默认模型（与 `devices.yaml` 不一致）。
-- Voice 专用限额：`SHUXIN_VOICE_MAX_HISTORY`（默认 8）、`SHUXIN_VOICE_MAX_TOKENS`（默认 384）；LLM 超时：`SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS`（默认 5）、`SHUXIN_LLM_TIMEOUT_SECONDS`（默认 60）。
+- Voice 专用限额：`SHUXIN_VOICE_MAX_HISTORY`（默认 8）、`SHUXIN_VOICE_MAX_TOKENS`（默认 384）；CLI 默认 `max_history=30`（可配置）。LLM 超时：`SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS`（默认 5）、`SHUXIN_LLM_TIMEOUT_SECONDS`（默认 60）。
+- **三层记忆（语音优先）**：短期 = `MemoryManager.short_term` 最近 N 轮原文；中期 = `shared_memory` 的 7 日 `rolling_summary` + 规则 `recent_topics`（每 `SHUXIN_SUMMARY_EVERY_N` 轮默认 5 + WebSocket 断线时异步小模型合并，见 `voice/memory_summary.py`）；长期 = `facts` + 陪伴插件状态。重连仅注入中期/长期，不回填最近原文。`compress_if_needed` 仍只压音频附件，不压对话。
+- 中期摘要环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`；合并后同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json` 供 `companion` `pre_llm_call` 读取。
 - WebSocket 一轮对话：`stt/final` → `agent/thinking` → 流式 `agent/delta`（失败时先发 `agent/error` + `error_kind`）→ 分句 `tts/sentence_*` → `agent/reply` → `tts/stop`（含 `llm_ttft_ms`）。
 - 语音故障排查：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。

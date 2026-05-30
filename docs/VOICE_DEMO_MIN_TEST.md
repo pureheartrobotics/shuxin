@@ -277,7 +277,18 @@ bash scripts/redeploy_docker.sh
 http://localhost:8765/voice-demo
 ```
 
-页面默认按真实硬件模式连接。先在后台确认 `demo-device-001` 已绑定到 `demo-user`，再填写：
+页面默认按真实硬件模式连接。多用户测试：
+
+```text
+1. 打开 http://localhost:8765/admin ，确认各用户已绑定设备。
+2. 打开 http://localhost:8765/voice-demo ，填写 Admin Token（与 SHUXIN_ADMIN_TOKEN 相同）。
+3. 点击「加载设备」，在下拉框选择「用户 · 设备」；会自动填入 device_code 与 device_secret。
+4. 点击连接，再按住说话测试。
+```
+
+若设备为 `per_device_secret` 且列表「查看」不到密钥，需先在 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`，再在后台对该设备「换密钥」一次。
+
+单设备手填示例（`demo-device-001` 已绑定 `demo-user`）：
 
 ```text
 device_code: demo-device-001
@@ -352,10 +363,46 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
   http://localhost:8765/admin/api/bindings
 ```
 
+### 设备 STT（腾讯实时识别）
+
+批量出厂设备（`SX-*` 等）入库时会写入 `stt_config.type = tencent-realtime`。服务启动时会执行迁移 `003_devices_stt_tencent_default.sql`，将**全部未删除设备**的 STT 设为腾讯实时识别；也可在后台「设备」Tab 点击 **全部应用腾讯 STT** 手动再执行一次。
+
+容器需配置（见 `docker-compose.yml` / `.env`）：
+
+- `TENCENT_ASR_APPID`
+- `TENCENTCLOUD_SECRET_ID`
+- `TENCENTCLOUD_SECRET_KEY`
+
+验收 STT 类型：
+
+```bash
+docker exec shuxin-postgres psql -U shuxin -d shuxin -c \
+  "SELECT device_id, stt_config->>'type' AS stt FROM devices WHERE deleted_at IS NULL LIMIT 5;"
+```
+
+或通过 API：
+
+```bash
+curl -s -X POST -H 'X-Admin-Token: dev-admin-token' \
+  http://localhost:8765/admin/api/devices/apply-stt-defaults
+```
+
+若 voice-demo 日志里 `stt/final` 的 `elapsed_ms` 达到上万毫秒，多半是仍在用本地 FunASR（`stt` 为空或 `local`）；应显示为 `tencent-realtime` 且凭证有效。
+
+### 按用户 API 配置测试（推荐）
+
+1. 打开 `http://localhost:8765/admin`，在「用户」Tab 找到目标用户，点击 **配置 LLM** 弹层填写 model、Base URL、API Key 并保存（API Key 留空表示不修改已有密钥）。
+2. **微信小程序用户**（`user_id` 以 `wx_` 开头）由登录自动创建，默认无 LLM 配置；必须在后台为该 `wx_` 用户单独配置 LLM 后，voice-demo 对话才不会出现 `connect_error` 或降级文案。
+3. 打开「绑定」Tab：左右列可独立搜索、翻页；点选用户与未绑定设备后「绑定所选」。
+4. 「当前绑定」表可查看绑定时间（active 行解绑时间为 `-`）。
+5. 打开 `http://localhost:8765/voice-demo`，填写 Admin Token →「加载设备」→ 选择条目；若「将使用 LLM」显示 key=未配置，请回后台配置后再连接。
+6. 连接后「绑定用户」与 hello 一致；对话使用该用户 LLM，而非仅设备默认配置。
+
 验收标准：
 
-- 列表出现 `demo-user -> demo-device-001` 的 active binding。
-- `/voice-demo` 使用 `demo-device-001 + dev-device-secret` 连接后，WebSocket hello 返回 `state: ok` 和 `user_id: demo-user`。
+- 列表出现 `demo-user -> demo-device-001` 的 active binding（或你的 `wx_... -> SX-...` 绑定）。
+- `/voice-demo` 使用对应 `device_code + device_secret` 连接后，hello 返回 `state: ok` 且 `user_id` 为绑定用户。
+- 绑定用户已在后台配置 API Key 后，WebSocket 日志不应再因缺 key 出现 `agent/error` + `connect_error`（网络正常时）；若 key 错误则为 `auth_error`。
 
 如果 WebSocket 返回 `invalid device secret`，确认容器环境变量已刷新；修改 compose 环境变量后需要重新创建服务：
 
@@ -471,7 +518,125 @@ WebSocket 日志里若出现 `{"type":"agent","state":"error","error_kind":"conn
 | `SHUXIN_VOICE_MAX_HISTORY` | 8 | 语音会话历史轮数 |
 | `SHUXIN_VOICE_MAX_TOKENS` | 384 | 语音回复 token 上限 |
 
-## 11. 打包测试
+## 11. 三层记忆与 voice-demo 验收
+
+语音路径采用**短期原文 + 7 日滚动摘要 + 长期 facts/陪伴状态**（见 [VOICE_ARCHITECTURE.md §3.2](VOICE_ARCHITECTURE.md)）。单元测试 `tests/test_voice_memory_summary.py` 不经过 Web 测试台；本节用 **voice-demo + curl** 验收「断线重连后回复仍能关联上次主题」。
+
+### 11.1 测试分层
+
+| 层 | 命令/入口 | 证明什么 |
+|----|-----------|----------|
+| L0 单元 | `pytest tests/test_voice_memory_summary.py -q` | 字段、每 N 轮触发、JSON 同步 |
+| L1 人工 | http://localhost:8765/voice-demo 固定剧本 | 重连后舒心回复关联上次主题 |
+| L2 快照 | `GET /voice/export` | `rolling_summary`、`recent_topics` 客观写入 |
+
+### 11.2 前置条件
+
+与 §9 相同，并确认：
+
+1. `curl -s http://localhost:8765/health` 中 `"storage":"postgres"`（Docker Compose + `DATABASE_URL`）。
+2. http://localhost:8765/admin 中绑定用户（如 `demo-user`）已配置 **LLM**（model/base_url/api_key）。摘要合并与对话共用该 LLM；无 key 时 `rolling_summary` 不会更新。
+3. voice-demo 填写 Admin Token（默认 `dev-admin-token`），加载设备并连接。
+
+可选加速（少按几次麦克风即触发摘要）：
+
+```bash
+# docker-compose.yml 的 shuxin-voice-demo 环境变量
+SHUXIN_SUMMARY_EVERY_N=2
+```
+
+相关变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SHUXIN_SUMMARY_EVERY_N` | 5 | 每 N 轮异步 LLM 合并摘要 |
+| `SHUXIN_SUMMARY_MODEL` | （空） | 摘要专用模型，空则用设备/用户 LLM |
+| `SHUXIN_SUMMARY_MAX_TOKENS` | 256 | 摘要输出 token 上限 |
+
+### 11.3 观测：curl 导出 shared_memory
+
+将 `demo-user` 换成 voice-demo 连接后 hello 返回的 `user_id`：
+
+```bash
+curl -s -H "X-Admin-Token: dev-admin-token" \
+  "http://localhost:8765/voice/export?user_id=demo-user" \
+  | jq '.shared_memory | {turn_count, turns_since_summary, recent_topics, rolling_summary, summary_updated_at}'
+```
+
+### 11.4 固定剧本（会话 A → 断开 → 会话 B）
+
+**会话 A**（同一 WebSocket，至少 5 轮）：连接 → 按住说话 → 中文一句 → 松手 → 等 STT、回复、TTS 完成。
+
+建议台词（须反复出现主题词 **「面试」**）：
+
+1. 「我下周有个很重要的面试，有点紧张。」
+2. 「面试是产品经理岗位。」
+3. 「我最近每晚都在准备面试。」
+4. 「面试公司是一家互联网公司。」
+5. 「如果面试过了我想请你帮我庆祝。」
+6. （可选）「面试前我还想去剪个头发。」
+
+**检查点 A1**（第 3 轮后）：执行 11.3 的 curl。期望 `turn_count >= 3`，`recent_topics` 非空；`rolling_summary` 可为空。
+
+**检查点 A2**（第 5 轮后，等待 5～15 秒再 curl）：期望 `rolling_summary` 非空且语义含面试/产品经理/紧张等；`turns_since_summary` 归零或明显小于 N。
+
+**断开**：voice-demo 点「断开」或关标签页（触发断线 `force=True` 摘要）。
+
+**检查点 A3**（断开后 curl）：`rolling_summary` 仍存在。
+
+**会话 B**（新连接）：重新打开 voice-demo 并连接（新 session，**不**恢复最近原文）。只说：
+
+「我上次跟你说的那件事，后来怎么样了？」
+
+**人工通过标准**：舒心回复中明确关联会话 A 的主题（如「面试」「产品经理」「准备」），而非像第一次见面。若完全泛化寒暄，判为失败。
+
+更直白可再问：「我们之前说的面试怎么样了？」
+
+### 11.5 失败分流（仍用 curl，不必查库）
+
+| 现象 | 可能原因 |
+|------|----------|
+| `rolling_summary` 始终为空 | 用户 LLM 未配置；摘要失败（容器日志 `rolling summary LLM merge failed`） |
+| 有 `rolling_summary` 但 B 不记得 | 核对容器内 JSON 与 export 一致：`docker exec shuxin-voice-demo-pg cat /root/.shuxin/users/demo-user/summaries/shared_memory.json` |
+| A 有摘要、B 仍不记得 | 换更直白追问；确认连接的是同一 `user_id` |
+
+容器内路径以 `SHUXIN_HOME` 为准（常见 `/root/.shuxin`）。
+
+### 11.6 自动化 E2E（无需麦克风）
+
+在 Docker voice 容器内一键跑固定剧本（直连 Postgres + Agent，与 voice-demo 共用用户记忆目录）：
+
+```bash
+docker exec shuxin-voice-demo-pg \
+  env PYTHONPATH=/app/src \
+  python /app/scripts/test_voice_memory_e2e.py
+```
+
+通过标准：脚本输出 `PASS`，且 `rolling_summary` 非空、会话 B 回复含「面试」等关键词。
+
+可选 WebSocket 模式（走真实 `/ws/voice`，需重启服务并开启开发开关）：
+
+```bash
+# docker-compose.yml 或 .env 增加后 redeploy：
+# SHUXIN_VOICE_DEV_TEXT_TURN=1
+# SHUXIN_VOICE_E2E_SKIP_TTS=1
+
+docker exec shuxin-voice-demo-pg \
+  env PYTHONPATH=/app/src SHUXIN_VOICE_DEV_TEXT_TURN=1 \
+  python /app/scripts/test_voice_memory_e2e.py --ws ws://127.0.0.1:8765/ws/voice
+```
+
+### 11.7 与 pytest 的关系
+
+发版前建议：
+
+```bash
+pytest tests/test_voice_memory_summary.py tests/test_voice_users_storage.py -q
+```
+
+通过 pytest **不能代替** §11.4 人工剧本；可用 `SHUXIN_RUN_VOICE_E2E=1 pytest tests/test_voice_memory_e2e.py` 在具备 `DATABASE_URL` 的环境跑 §11.6 自动化脚本。
+
+## 12. 打包测试
 
 ```bash
 bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
@@ -487,7 +652,7 @@ bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
 
 - 如果 `models/` 没有模型文件，会出现 warning，但不应该导致打包失败。
 
-## 12. 导入部署测试
+## 13. 导入部署测试
 
 建议先导入到临时目录：
 
@@ -503,7 +668,7 @@ bash scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shuxin_voice_bundle_
 - `docker compose build` 成功。
 - 最后的容器 CLI smoke test 成功。
 
-## 13. Docker 日常重部署
+## 14. Docker 日常重部署
 
 代码发生变化后，可以使用：
 
@@ -531,7 +696,7 @@ bash scripts/redeploy_docker.sh --no-build
 - 普通代码变更后，终端输出 `Code-only redeploy: skipping dependency build`。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
 
-## 14. 最终通过标准
+## 15. 最终通过标准
 
 最小可测试单元通过标准：
 
@@ -543,5 +708,6 @@ bash scripts/redeploy_docker.sh --no-build
 - 有 LLM 配置时，`chat-audio` 可以输出识别文本、Agent 回复和回复音频。
 - 有 LLM 配置时，`session` 可以输出初始化音频、回复音频和 transcript。
 - 有 LLM 配置和浏览器麦克风权限时，Web 测试台可以完成按住说话、松手识别、回复和播放。
+- 按 §11 固定剧本验收时，重连后回复能关联 `rolling_summary` 中的主题，且 `/voice/export` 在第五轮后与断线后含非空 `rolling_summary`。
 - `export_pack.sh` 可以打包。
 - `import_deploy.sh` 可以在新目录恢复并跑通容器 smoke test。

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from datetime import datetime, timezone
 import hmac
 import json
 import os
@@ -26,6 +28,16 @@ from shuxin.voice.config import (
     _merge_dict,
     default_device_tts_config,
     default_tencent_stt_config,
+)
+from shuxin.voice.memory_summary import (
+    SUMMARY_WINDOW_DAYS,
+    apply_turn_to_summary,
+    finalize_summary_after_merge,
+    merge_summary_with_llm,
+    merge_summary_with_stats,
+    memory_field_defaults,
+    should_merge_summary,
+    sync_summary_json,
 )
 from shuxin.voice.users import (
     DEFAULT_AUDIO_QUOTA_MB,
@@ -898,7 +910,12 @@ class VoicePostgresRepository:
                             compressed=compressed,
                         )
                 await self._upsert_facts_from_text(conn, user_settings.user_id, user_text)
-                await self._refresh_shared_memory(conn, user_settings, warning)
+                await self._refresh_shared_memory(
+                    conn,
+                    user_settings,
+                    warning,
+                    user_text=user_text,
+                )
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
@@ -923,6 +940,36 @@ class VoicePostgresRepository:
             user_settings.user_id,
         )
         return _json_obj(summary)
+
+    async def maybe_merge_rolling_summary(
+        self,
+        user_settings: UserSettings,
+        device: DeviceConfig | None,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        summary = await self.export_summary(user_settings)
+        if not summary:
+            summary = {"user_id": user_settings.user_id, **memory_field_defaults()}
+        if not should_merge_summary(summary, force=force):
+            return {"merged": False, "reason": "not_due"}
+        recent_turns = await self._fetch_recent_turns(user_settings.user_id)
+        loop = asyncio.get_event_loop()
+        merged_text = await loop.run_in_executor(
+            None,
+            lambda: merge_summary_with_llm(
+                device=device,
+                existing_summary=str(summary.get("rolling_summary") or ""),
+                recent_topics=list(summary.get("recent_topics") or []),
+                recent_turns=recent_turns,
+            ),
+        )
+        updated = finalize_summary_after_merge(summary, merged_text)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await self._persist_summary(conn, user_settings.user_id, updated)
+        sync_summary_json(user_settings.user_id, updated)
+        return {"merged": True, "summary_updated_at": updated.get("summary_updated_at")}
 
     async def compress_if_needed(self, user_settings: UserSettings) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
@@ -984,44 +1031,6 @@ class VoicePostgresRepository:
                     "over_quota": used > quota,
                 }
 
-    async def list_devices(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
-        search = _search_pattern(q)
-        rows = await self.pool.fetch(
-            """
-            SELECT d.device_id, d.auth_mode, d.device_secret_hash, d.stt_config,
-                   d.tts_config, d.llm_config, d.enabled, d.note, d.metadata,
-                   c.claim_code, c.status AS claim_status,
-                   s.online, s.last_seen, s.current_session_id, s.last_error
-            FROM devices d
-            LEFT JOIN device_status s ON s.device_id = d.device_id
-            LEFT JOIN LATERAL (
-                SELECT claim_code, status
-                FROM device_claim_codes
-                WHERE device_id = d.device_id
-                ORDER BY created_at DESC
-                LIMIT 1
-            ) c ON true
-            WHERE d.deleted_at IS NULL
-              AND ($1 = '' OR d.device_id > $1)
-              AND (
-                $3 = ''
-                OR d.device_id ILIKE $3
-                OR d.note ILIKE $3
-                OR d.status ILIKE $3
-                OR c.claim_code ILIKE $3
-                OR c.status ILIKE $3
-              )
-            ORDER BY d.device_id ASC
-            LIMIT $2
-            """,
-            cursor,
-            max(1, min(limit, 100)),
-            search,
-        )
-        items = [_device_row(row) for row in rows]
-        return {"items": items, "next_cursor": items[-1]["device_id"] if len(items) == limit else ""}
-
-
     async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
         selected_id = _validate_device_code(device_id)
         row = await self.pool.fetchrow(
@@ -1046,7 +1055,6 @@ class VoicePostgresRepository:
             "device_secret": secret,
             "hint": hint,
         }
-
 
     async def list_voice_demo_targets(self) -> dict[str, Any]:
         rows = await self.pool.fetch(
@@ -1088,6 +1096,46 @@ class VoicePostgresRepository:
             )
         return {"items": items}
 
+    async def list_devices(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
+        search = _search_pattern(q)
+        rows = await self.pool.fetch(
+            """
+            SELECT d.device_id, d.auth_mode, d.device_secret_hash,
+                   d.device_secret_encrypted, d.status AS lifecycle_status,
+                   d.stt_config, d.tts_config, d.llm_config, d.enabled, d.note, d.metadata,
+                   c.claim_code, c.status AS claim_status,
+                   b.user_id AS bound_user_id,
+                   s.online, s.last_seen, s.current_session_id, s.last_error
+            FROM devices d
+            LEFT JOIN device_status s ON s.device_id = d.device_id
+            LEFT JOIN device_bindings b
+                ON b.device_id = d.device_id AND b.status = 'active'
+            LEFT JOIN LATERAL (
+                SELECT claim_code, status
+                FROM device_claim_codes
+                WHERE device_id = d.device_id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) c ON true
+            WHERE d.deleted_at IS NULL
+              AND ($1 = '' OR d.device_id > $1)
+              AND (
+                $3 = ''
+                OR d.device_id ILIKE $3
+                OR d.note ILIKE $3
+                OR d.status ILIKE $3
+                OR c.claim_code ILIKE $3
+                OR c.status ILIKE $3
+              )
+            ORDER BY d.device_id ASC
+            LIMIT $2
+            """,
+            cursor,
+            max(1, min(limit, 100)),
+            search,
+        )
+        items = [_device_row(row) for row in rows]
+        return {"items": items, "next_cursor": items[-1]["device_id"] if len(items) == limit else ""}
 
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
         """Set tencent-realtime STT on all non-deleted devices (idempotent)."""
@@ -1199,11 +1247,13 @@ class VoicePostgresRepository:
             UPDATE devices
             SET auth_mode = 'per_device_secret',
                 device_secret_hash = $2,
+                device_secret_encrypted = $3,
                 updated_at = now()
             WHERE device_id = $1 AND deleted_at IS NULL
             """,
             selected_id,
             _hash_secret(device_secret),
+            encrypt_device_secret(device_secret),
         )
         if not result.endswith("1"):
             raise PermissionError("device is disabled or not found")
@@ -1525,11 +1575,61 @@ class VoicePostgresRepository:
         )
         return int(value or 0)
 
+    async def _load_summary(self, conn, user_id: str) -> dict[str, Any]:
+        row = await conn.fetchval(
+            "SELECT summary FROM shared_memory WHERE user_id = $1",
+            user_id,
+        )
+        loaded = _json_obj(row)
+        if loaded:
+            return loaded
+        return {"user_id": user_id, **memory_field_defaults()}
+
+    async def _persist_summary(self, conn, user_id: str, summary: dict[str, Any]) -> None:
+        await conn.execute(
+            """
+            INSERT INTO shared_memory (user_id, summary, updated_at)
+            VALUES ($1, $2::jsonb, now())
+            ON CONFLICT (user_id) DO UPDATE SET
+                summary = excluded.summary,
+                updated_at = now()
+            """,
+            user_id,
+            json.dumps(summary, ensure_ascii=False),
+        )
+
+    async def _fetch_recent_turns(self, user_id: str, *, limit: int = 15) -> list[dict[str, Any]]:
+        rows = await self.pool.fetch(
+            """
+            SELECT user_text, reply_text, created_at
+            FROM conversation_events
+            WHERE user_id = $1
+              AND deleted_at IS NULL
+              AND created_at >= now() - make_interval(days => $2)
+            ORDER BY created_at DESC
+            LIMIT $3
+            """,
+            user_id,
+            SUMMARY_WINDOW_DAYS,
+            limit,
+        )
+        items = [
+            {
+                "user_text": row["user_text"],
+                "reply_text": row["reply_text"],
+                "created_at": _dt(row["created_at"]),
+            }
+            for row in rows
+        ]
+        return list(reversed(items))
+
     async def _refresh_shared_memory(
         self,
         conn,
         user_settings: UserSettings,
         warning: str,
+        *,
+        user_text: str = "",
     ) -> None:
         event_count = await conn.fetchval(
             """
@@ -1540,25 +1640,22 @@ class VoicePostgresRepository:
             user_settings.user_id,
         )
         used = await self._attachment_total_bytes(conn, user_settings.user_id)
-        summary = {
+        existing = await self._load_summary(conn, user_settings.user_id)
+        stats = {
             "user_id": user_settings.user_id,
             "turn_count": int(event_count or 0),
+            "last_interaction_at": datetime.now(timezone.utc).isoformat(),
             "audio_quota_bytes": user_settings.audio_quota_bytes,
             "audio_used_bytes": used,
             "over_quota": used > user_settings.audio_quota_bytes,
             "last_warning": warning,
+            "milestones": existing.get("milestones") or [],
         }
-        await conn.execute(
-            """
-            INSERT INTO shared_memory (user_id, summary, updated_at)
-            VALUES ($1, $2::jsonb, now())
-            ON CONFLICT (user_id) DO UPDATE SET
-                summary = excluded.summary,
-                updated_at = now()
-            """,
-            user_settings.user_id,
-            json.dumps(summary, ensure_ascii=False),
-        )
+        summary = merge_summary_with_stats(existing, stats)
+        if user_text.strip():
+            summary = apply_turn_to_summary(summary, user_text)
+        await self._persist_summary(conn, user_settings.user_id, summary)
+        sync_summary_json(user_settings.user_id, summary)
 
     async def _upsert_facts_from_text(self, conn, user_id: str, text: str) -> None:
         for fact_key, fact_value, category in _extract_facts(text):
@@ -1731,6 +1828,19 @@ def _device_row(row) -> dict[str, Any]:
         },
     }
 
+
+def _secret_unavailable_message(hint: str) -> str:
+    messages = {
+        "rotate_to_store_secret": (
+            "device secret is not stored for retrieval; rotate secret after setting "
+            "SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY"
+        ),
+        "decrypt_failed": "device secret cannot be decrypted; check SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY",
+        "missing_SHUXIN_DEVICE_SHARED_SECRET": "SHUXIN_DEVICE_SHARED_SECRET is not configured",
+    }
+    return messages.get(hint, "device secret is not available")
+
+
 def _binding_row(row) -> dict[str, Any]:
     return {
         "binding_id": str(row["binding_id"]),
@@ -1739,6 +1849,7 @@ def _binding_row(row) -> dict[str, Any]:
         "device_code": str(row["device_id"]),
         "status": str(row["status"]),
         "bound_at": _dt(row["bound_at"]),
+        "unbound_at": "",
         "device": {
             "enabled": bool(row["enabled"]),
             "note": str(row["note"] or ""),

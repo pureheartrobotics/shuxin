@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from shuxin.voice.device_secret_crypto import mask_device_secret, resolve_stored_device_secret
 from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
+from shuxin.voice.memory_summary import should_merge_summary
 from shuxin.voice.storage import UserVoiceStorage
 from shuxin.voice.users import DEFAULT_USER_ID, UserConfigProvider, UserSettings
 
@@ -134,6 +134,23 @@ class VoiceLocalRepository:
             user_settings.user_id,
         ).compress_if_needed(user_settings)
 
+    async def maybe_merge_rolling_summary(
+        self,
+        user_settings: UserSettings,
+        device: DeviceConfig | None,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        storage = UserVoiceStorage(
+            self.shuxin_home,
+            self.out_dir,
+            user_settings.user_id,
+        )
+        summary = storage.export_summary()
+        if not should_merge_summary(summary, force=force):
+            return {"merged": False, "reason": "not_due"}
+        return await storage.maybe_merge_rolling_summary(device, force=force)
+
     async def provision_device(self, device_code: str) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for factory provisioning")
 
@@ -177,13 +194,21 @@ class VoiceLocalRepository:
 
     async def list_devices(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
         default = self.device_provider.get(None)
+        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
         return {
             "items": [
                 {
                     "device_id": default.device_id,
                     "device_code": default.device_id,
-                    "auth_mode": "yaml",
-                    "device_secret_configured": False,
+                    "auth_mode": "shared_secret",
+                    "device_secret_configured": bool(shared),
+                    "device_secret_masked": f"{shared[:4]}…{shared[-4:]}" if len(shared) > 8 else "****",
+                    "device_secret_retrievable": bool(shared),
+                    "device_secret_hint": "global_shared_secret",
+                    "lifecycle_status": "provisioned",
+                    "bound_user_id": DEFAULT_USER_ID,
+                    "claim_code": "",
+                    "claim_status": "",
                     "stt_config": default.stt.__dict__,
                     "tts_config": default.tts.__dict__,
                     "llm_config": default.llm.__dict__,
@@ -194,6 +219,36 @@ class VoiceLocalRepository:
                 }
             ],
             "next_cursor": "",
+        }
+
+    async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
+        default = self.device_provider.get(device_id)
+        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
+        return {
+            "device_id": default.device_id,
+            "device_secret": shared,
+            "hint": "global_shared_secret",
+        }
+
+    async def list_voice_demo_targets(self) -> dict[str, Any]:
+        default = self.device_provider.get(None)
+        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
+        settings = self.user_provider.get(DEFAULT_USER_ID)
+        llm = settings.llm_config or {}
+        return {
+            "items": [
+                {
+                    "user_id": settings.user_id,
+                    "device_id": default.device_id,
+                    "device_code": default.device_id,
+                    "device_secret": shared,
+                    "online": False,
+                    "secret_hint": "global_shared_secret",
+                    "llm_model": str(llm.get("model") or ""),
+                    "llm_base_url": str(llm.get("base_url") or ""),
+                    "llm_api_key_configured": bool(llm.get("api_key")),
+                }
+            ]
         }
 
     async def list_users(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
@@ -235,43 +290,8 @@ class VoiceLocalRepository:
     async def rotate_device_secret(self, device_id: str) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
-
-    async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
-        default = self.device_provider.get(device_id)
-        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
-        return {
-            "device_id": default.device_id,
-            "device_secret": shared,
-            "hint": "global_shared_secret",
-        }
-
-
-    async def list_voice_demo_targets(self) -> dict[str, Any]:
-        default = self.device_provider.get(None)
-        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
-        settings = self.user_provider.get(DEFAULT_USER_ID)
-        llm = settings.llm_config or {}
-        return {
-            "items": [
-                {
-                    "user_id": settings.user_id,
-                    "device_id": default.device_id,
-                    "device_code": default.device_id,
-                    "device_secret": shared,
-                    "online": False,
-                    "secret_hint": "global_shared_secret",
-                    "llm_model": str(llm.get("model") or ""),
-                    "llm_base_url": str(llm.get("base_url") or ""),
-                    "llm_api_key_configured": bool(llm.get("api_key")),
-                }
-            ]
-        }
-
-
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
-        if not os.environ.get("DATABASE_URL", "").strip():
-            raise RuntimeError("apply_default_stt requires DATABASE_URL (Postgres)")
-        raise RuntimeError("apply_default_stt requires Postgres repository")
+        raise RuntimeError("DATABASE_URL is required for apply_default_stt_to_all_devices")
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")

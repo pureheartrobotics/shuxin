@@ -576,6 +576,15 @@ class _VoiceWebSocketSession:
 
     async def shutdown(self, mark_offline: bool = True) -> None:
         """关闭连接时释放当前 Agent，避免插件状态和资源泄漏。"""
+        if self.user_settings is not None:
+            try:
+                await self.repo.maybe_merge_rolling_summary(
+                    self.user_settings,
+                    self.device,
+                    force=True,
+                )
+            except Exception:
+                pass
         if self.realtime_asr is not None:
             await self.realtime_asr.close()
             self.realtime_asr = None
@@ -669,6 +678,19 @@ class _VoiceWebSocketSession:
                 await self.realtime_asr.close()
                 self.realtime_asr = None
             await self._send_json({"type": "abort", "state": "ok"})
+            return
+
+        if message_type == "text_turn":
+            if os.environ.get("SHUXIN_VOICE_DEV_TEXT_TURN") != "1":
+                await self._send_json(
+                    {"type": "error", "message": "text_turn disabled (set SHUXIN_VOICE_DEV_TEXT_TURN=1)"}
+                )
+                return
+            text = str(data.get("text") or "").strip()
+            if not text:
+                await self._send_json({"type": "error", "message": "text_turn requires text"})
+                return
+            await self._process_text_turn(text)
             return
 
         if message_type == "ping":
@@ -846,6 +868,14 @@ class _VoiceWebSocketSession:
                 },
             )
             asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
+            if self.user_settings is not None:
+                asyncio.create_task(
+                    self.repo.maybe_merge_rolling_summary(
+                        self.user_settings,
+                        self.device,
+                        force=False,
+                    )
+                )
             await self._send_json(
                 {
                     "type": "tts",
@@ -862,6 +892,80 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "error", "message": str(exc)})
         finally:
             self.audio_chunks = []
+
+    async def _process_text_turn(self, text: str) -> None:
+        """E2E/开发用：跳过 STT，直接以文本触发一轮 Agent（需 SHUXIN_VOICE_DEV_TEXT_TURN=1）。"""
+        started = time.perf_counter()
+        skip_tts = os.environ.get("SHUXIN_VOICE_E2E_SKIP_TTS") == "1"
+        try:
+            await self._ensure_runtime()
+            assert self.audio_store is not None
+            assert self.user_settings is not None
+            assert self.agent is not None
+            paths = self.audio_store.new_turn_paths(self.device_id, self.session_id or None)
+            self.session_id = paths.session_id
+            paths.input_wav.parent.mkdir(parents=True, exist_ok=True)
+            paths.input_wav.write_bytes(b"")
+            await self._send_json({"type": "stt", "state": "final", "text": text, "elapsed_ms": 0})
+
+            agent_started = time.perf_counter()
+            await self._send_json({"type": "agent", "state": "thinking"})
+            loop = asyncio.get_event_loop()
+            reply = await loop.run_in_executor(None, lambda: self.agent.chat(text).strip())
+            agent_ms = _elapsed_ms(agent_started)
+            await self._send_json(
+                {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
+            )
+
+            tts_total_ms = 0
+            speech_path = paths.reply_mp3
+            if reply and not skip_tts:
+                await self._send_json({"type": "tts", "state": "start"})
+                tts_started = time.perf_counter()
+                speech_path = await self._synthesize_and_send_sentence(
+                    reply, paths.reply_mp3, 1, started
+                )
+                tts_total_ms = _elapsed_ms(tts_started)
+            else:
+                speech_path.parent.mkdir(parents=True, exist_ok=True)
+                speech_path.write_bytes(b"")
+
+            await self.repo.record_turn(
+                user_settings=self.user_settings,
+                device_id=self.device_id,
+                client_id=self.client_id,
+                session_id=self.session_id,
+                turn_id=paths.turn_id,
+                user_text=text,
+                reply_text=reply,
+                input_audio=paths.input_wav,
+                reply_audio=speech_path,
+                timings={
+                    "stt_ms": 0,
+                    "agent_ms": agent_ms,
+                    "tts_ms": tts_total_ms,
+                    "total_elapsed_ms": _elapsed_ms(started),
+                },
+            )
+            asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
+            if self.user_settings is not None:
+                asyncio.create_task(
+                    self.repo.maybe_merge_rolling_summary(
+                        self.user_settings,
+                        self.device,
+                        force=False,
+                    )
+                )
+            await self._send_json(
+                {
+                    "type": "tts",
+                    "state": "stop",
+                    "elapsed_ms": tts_total_ms,
+                    "total_elapsed_ms": _elapsed_ms(started),
+                }
+            )
+        except Exception as exc:
+            await self._send_json({"type": "error", "message": str(exc)})
 
     async def _reset_runtime(self) -> None:
         """切换用户或设备时重建运行态，确保配置和记忆目录重新绑定。"""
