@@ -19,6 +19,8 @@ from shuxin.voice.config import (
     ProviderConfig,
     _expand_env,
     _merge_dict,
+    default_device_tts_config,
+    default_tencent_stt_config,
 )
 from shuxin.voice.users import (
     DEFAULT_AUDIO_QUOTA_MB,
@@ -181,19 +183,23 @@ class VoicePostgresRepository:
         note: str,
         metadata: dict[str, Any],
     ) -> None:
+        stt_config = json.dumps(default_tencent_stt_config(), ensure_ascii=False)
+        tts_config = json.dumps(default_device_tts_config(), ensure_ascii=False)
         await conn.execute(
             """
             INSERT INTO devices (
-                device_id, auth_mode, device_secret_hash, status, enabled, note,
-                metadata, updated_at
+                device_id, auth_mode, device_secret_hash, stt_config, tts_config,
+                status, enabled, note, metadata, updated_at
             )
             VALUES (
-                $1, 'per_device_secret', $2, 'provisioned', true,
-                $3, $4::jsonb, now()
+                $1, 'per_device_secret', $2, $3::jsonb, $4::jsonb,
+                'provisioned', true, $5, $6::jsonb, now()
             )
             ON CONFLICT (device_id) DO UPDATE SET
                 auth_mode = 'per_device_secret',
                 device_secret_hash = excluded.device_secret_hash,
+                stt_config = excluded.stt_config,
+                tts_config = excluded.tts_config,
                 status = CASE
                     WHEN devices.status = 'disabled' THEN 'disabled'
                     ELSE devices.status
@@ -205,6 +211,8 @@ class VoicePostgresRepository:
             """,
             device_id,
             _hash_secret(device_secret),
+            stt_config,
+            tts_config,
             note,
             json.dumps(metadata, ensure_ascii=False),
         )
@@ -1006,6 +1014,27 @@ class VoicePostgresRepository:
         )
         items = [_device_row(row) for row in rows]
         return {"items": items, "next_cursor": items[-1]["device_id"] if len(items) == limit else ""}
+
+
+    async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
+        """Set tencent-realtime STT on all non-deleted devices (idempotent)."""
+        stt_config = json.dumps(default_tencent_stt_config(), ensure_ascii=False)
+        result = await self.pool.execute(
+            """
+            UPDATE devices
+            SET stt_config = $1::jsonb, updated_at = now()
+            WHERE deleted_at IS NULL
+            """,
+            stt_config,
+        )
+        updated_count = int(result.split()[-1]) if result else 0
+        await self.audit(
+            "apply_default_stt",
+            "device",
+            "*",
+            {"stt_type": "tencent-realtime", "updated_count": updated_count},
+        )
+        return {"updated_count": updated_count, "stt_type": "tencent-realtime"}
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         selected_id = _validate_device_code(device_id)

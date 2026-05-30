@@ -68,6 +68,25 @@ def _merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 _LLM_MERGE_KEYS = ("provider", "model", "base_url", "api_key")
 
 
+def default_tencent_stt_config() -> dict[str, Any]:
+    """Default STT for provisioned devices and bulk apply; appid may come from env at runtime."""
+    return {
+        "type": "tencent-realtime",
+        "appid": os.environ.get("TENCENT_ASR_APPID", ""),
+        "model": "16k_zh",
+        "output_dir": "outputs",
+    }
+
+
+def default_device_tts_config() -> dict[str, Any]:
+    """Default TTS for factory-provisioned devices (Edge TTS)."""
+    return {
+        "type": "local",
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "output_dir": "outputs",
+    }
+
+
 def merge_llm_device_config(
     base: LLMDeviceConfig,
     override: dict[str, Any],

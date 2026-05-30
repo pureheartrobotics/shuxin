@@ -2,8 +2,9 @@ default_device_id: demo-device-001
 
 defaults:
   stt:
-    type: local
-    model_dir: models/SenseVoiceSmall
+    type: tencent-realtime
+    appid: ${TENCENT_ASR_APPID}
+    model: 16k_zh
     output_dir: outputs
   tts:
     type: local

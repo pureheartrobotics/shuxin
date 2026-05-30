@@ -354,6 +354,15 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+
+    @app.post("/admin/api/devices/apply-stt-defaults")
+    async def admin_apply_stt_defaults(request: Request):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().apply_default_stt_to_all_devices())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.patch("/admin/api/devices/{device_id}")
     async def admin_update_device_label(request: Request, device_id: str):
         try:
@@ -1076,7 +1085,7 @@ def _admin_html(authenticated: bool) -> str:
             <div class="toolbar" style="margin-bottom:0">
               <input id="devicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
               <select id="devicesLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
-              <button class="secondary" onclick="resetList('devices')">查找</button>
+              <button class="secondary" onclick="applyTencentSttDefaults()">全部应用腾讯 STT</button><button class="secondary" onclick="resetList('devices')">查找</button>
             </div>
           </div>
           <div id="deviceList" class="table"></div>
@@ -1232,12 +1241,24 @@ def _admin_html(authenticated: bool) -> str:
         <button class="secondary" onclick="nextList('${{name}}')" ${{state.nextCursor ? '' : 'disabled'}}>下一页</button>`;
     }}
     async function loadAll() {{ await Promise.all([loadDevices(), loadUsers(), loadBindings(), loadAdapters()]); }}
+
+    async function applyTencentSttDefaults() {{
+      if (!confirm('将所有未删除设备的 STT 设为腾讯实时识别 (tencent-realtime)？')) return;
+      const res = await fetch('/admin/api/devices/apply-stt-defaults', {{method:'POST', headers:headers(), credentials:'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        alert(data.error || '操作失败');
+        return;
+      }}
+      alert(`已更新 ${{data.updated_count ?? 0}} 台设备为 tencent-realtime。`);
+      await loadDevices();
+    }}
     async function loadDevices() {{
       const data = await (await fetch(listUrl('devices', '/admin/api/devices'))).json();
       devices = data.items || [];
       listState.devices.nextCursor = data.next_cursor || '';
       $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>备注</div><div>操作</div></div>` + devices.map(d => `<div class="table-row">
-        <div><strong>${{esc(d.device_id)}}</strong><div class="meta">auth=${{esc(d.auth_mode || '')}} secret=${{d.device_secret_configured ? '已配置' : '未配置'}}</div></div>
+        <div><strong>${{esc(d.device_id)}}</strong><div class="meta">auth=${{esc(d.auth_mode || '')}} · stt=${{esc((d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local')}} · secret=${{d.device_secret_configured ? '已配置' : '未配置'}}</div></div>
         <input id="claim_${{esc(d.device_id)}}" value="${{esc(d.claim_code || '')}}" />
         <div><span class="badge ${{d.status.online ? '' : 'off'}}">${{d.status.online ? '在线' : '离线'}}</span><div class="meta">${{esc(d.claim_status || '')}}</div></div>
         <input id="note_${{esc(d.device_id)}}" value="${{esc(d.note || '')}}" />

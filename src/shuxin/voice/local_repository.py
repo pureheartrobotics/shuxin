@@ -234,6 +234,12 @@ class VoiceLocalRepository:
     async def rotate_device_secret(self, device_id: str) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
+
+    async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
+        if not os.environ.get("DATABASE_URL", "").strip():
+            raise RuntimeError("apply_default_stt requires DATABASE_URL (Postgres)")
+        raise RuntimeError("apply_default_stt requires Postgres repository")
+
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
