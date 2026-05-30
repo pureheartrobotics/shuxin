@@ -68,6 +68,10 @@ def test_admin_supports_batch_codes_and_label_updates() -> None:
     assert "next_device_id" in source
     assert "refreshBatchStart" in server
     assert "下一设备号" in server
+    assert "/admin/api/devices/{device_id}/secret" in server
+    assert "/admin/api/voice-demo/targets" in server
+    assert "device_secret_encrypted" in source
+    assert "list_voice_demo_targets" in source
 
 
 def test_admin_lists_support_server_search_and_pagination_controls() -> None:

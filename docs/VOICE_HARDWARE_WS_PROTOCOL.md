@@ -350,7 +350,7 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
   http://localhost:8765/admin/api/users
 ```
 
-新制码设备默认使用 `devices.auth_mode='per_device_secret'` 和 `device_secret_hash`。后台只允许轮换设备密钥并一次性展示新密钥，不提供直接编辑设备密钥明文的入口。
+新制码设备默认使用 `devices.auth_mode='per_device_secret'`、`device_secret_hash` 和加密列 `device_secret_encrypted`（密钥来自环境变量 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`）。后台可在设备列表「查看」已入库密钥；历史仅 hash 的设备需「换密钥」后才会写入加密列。轮换密钥仍会在响应中一次性返回明文。
 
 ## 9. 当前边界
 

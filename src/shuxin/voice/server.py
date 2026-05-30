@@ -354,7 +354,6 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
-
     @app.post("/admin/api/devices/apply-stt-defaults")
     async def admin_apply_stt_defaults(request: Request):
         try:
@@ -396,6 +395,22 @@ def create_app(
             return JSONResponse(await repo().reset_claim_code(device_id))
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/devices/{device_id}/secret")
+    async def admin_reveal_device_secret(request: Request, device_id: str):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().reveal_device_secret(device_id))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/voice-demo/targets")
+    async def admin_voice_demo_targets(request: Request):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().list_voice_demo_targets())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
 
     @app.get("/admin/api/users")
     async def admin_list_users(request: Request, limit: int = 50, cursor: str = "", q: str = ""):
@@ -1027,8 +1042,15 @@ def _admin_html(authenticated: bool) -> str:
     .form-row {{ display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; align-items: end; }}
     .form-row.compact {{ grid-template-columns: repeat(5, minmax(130px, 1fr)); }}
     .table {{ display: grid; gap: 6px; overflow-x: auto; }}
-    .table-row {{ display: grid; grid-template-columns: 140px 170px 90px 1fr 430px; gap: 8px; align-items: center; min-width: 960px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }}
-    .table-row.users {{ grid-template-columns: 130px 90px 100px 120px 120px 150px 1fr 150px 330px; min-width: 1330px; }}
+    .table-row {{ display: grid; grid-template-columns: minmax(140px, 0.7fr) 170px minmax(220px, 1fr) minmax(180px, 0.9fr) 1fr 430px; gap: 8px; align-items: center; min-width: 1100px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }}
+    .table-row > * {{ min-width: 0; }}
+    .badge-row {{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }}
+    .table-row.users {{ grid-template-columns: minmax(200px, 0.85fr) 90px 100px 120px 120px minmax(200px, 1fr) minmax(280px, 1.1fr); min-width: 1100px; }}
+    .llm-form {{ display: grid; gap: 12px; }}
+    .llm-form label {{ display: grid; gap: 4px; }}
+    .llm-form input {{ width: 100%; }}
+    .meta-line {{ color: #647083; font-size: 13px; margin-bottom: 4px; }}
+    .table-row.bindings {{ grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }}
     .table-head {{ color: #647083; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
     .login {{ max-width: 420px; margin: 80px auto 0; }}
     .list {{ display: grid; gap: 8px; }}
@@ -1041,6 +1063,23 @@ def _admin_html(authenticated: bool) -> str:
     .badge {{ display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; color: #245849; background: #e2eee7; }}
     .badge.warn {{ color: #8a4a18; background: #f4e4ce; }}
     .badge.off {{ color: #6b7280; background: #eceff1; }}
+    .badge.badge-click {{ cursor: pointer; max-width: 100%; }}
+    .badge.badge-click:hover {{ filter: brightness(0.96); }}
+    .cell-clip {{ min-width: 0; overflow: hidden; cursor: pointer; border-radius: 4px; padding: 2px 0; }}
+    .cell-clip strong {{ display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }}
+    .cell-clip:hover strong {{ color: #245849; text-decoration: underline; }}
+    .cell-clip.cell-secret {{ padding: 6px 8px; border: 1px dashed #b9c5ba; background: #f7f8f3; }}
+    .cell-clip.cell-secret:hover {{ border-color: #245849; background: #eef6f0; }}
+    .modal-backdrop {{ display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(30, 37, 36, .42); align-items: center; justify-content: center; padding: 24px; }}
+    .modal-backdrop.open {{ display: flex; animation: modalFade .18s ease; }}
+    .modal-panel {{ width: min(520px, 100%); max-height: min(80vh, 640px); overflow: auto; background: #fffef9; border: 1px solid #d8ddd5; border-radius: 10px; padding: 18px 20px; box-shadow: 0 18px 48px rgba(30, 37, 36, .18); transform: scale(.98); animation: modalScale .18s ease forwards; }}
+    .modal-header {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
+    .modal-header h3 {{ margin: 0; font-size: 16px; }}
+    .modal-body-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; white-space: pre-wrap; background: #f7f8f3; border: 1px solid #e3e7df; border-radius: 6px; padding: 12px; }}
+    .modal-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }}
+    .modal-close {{ height: 32px; }}
+    @keyframes modalFade {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+    @keyframes modalScale {{ to {{ transform: scale(1); }} }}
     .tabs {{ display: flex; gap: 8px; margin-bottom: 16px; }}
     .tabs button.active {{ background: #1e2524; }}
     .bind-board {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }}
@@ -1051,7 +1090,7 @@ def _admin_html(authenticated: bool) -> str:
   </style>
 </head>
 <body>
-  <header><h1>ShuXin 管理后台</h1><button class="secondary" onclick="loadAll()">刷新</button></header>
+  <header><h1>ShuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" style="color:#245849;text-decoration:none">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
   <main>
     <section id="login" class="panel login">
       <h2>管理员登录</h2>
@@ -1076,16 +1115,17 @@ def _admin_html(authenticated: bool) -> str:
             <label><span class="hint">数量</span><input id="batchQuantity" type="number" value="3" min="1" max="500" /></label>
             <button onclick="provisionBatch()">生成并入库</button>
           </div>
-          <div class="toolbar" style="margin-top:12px"><button class="secondary" onclick="downloadBatchCsv()">下载本批 CSV</button><span id="batchNextHint" class="hint">device_secret 只在本次生成结果里明文显示。</span></div>
+          <div class="toolbar" style="margin-top:12px"><button class="secondary" onclick="downloadBatchCsv()">下载本批 CSV</button><span id="batchNextHint" class="hint">批量结果会显示明文；入库后也可在设备列表「查看」密钥（需配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY）。</span></div>
           <div id="batchResult" class="table"></div>
         </div>
         <div class="panel">
           <div class="toolbar" style="justify-content:space-between">
             <h2>设备状态与配置</h2>
             <div class="toolbar" style="margin-bottom:0">
+              <button class="secondary" onclick="applyTencentSttDefaults()">全部应用腾讯 STT</button>
               <input id="devicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
               <select id="devicesLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
-              <button class="secondary" onclick="applyTencentSttDefaults()">全部应用腾讯 STT</button><button class="secondary" onclick="resetList('devices')">查找</button>
+              <button class="secondary" onclick="resetList('devices')">查找</button>
             </div>
           </div>
           <div id="deviceList" class="table"></div>
@@ -1126,7 +1166,13 @@ def _admin_html(authenticated: bool) -> str:
           <div class="bind-board">
             <section>
               <h2>选择用户</h2>
+              <div class="toolbar" style="margin-bottom:8px">
+                <input id="bindUsersSearch" placeholder="查找用户 / 模型" />
+                <select id="bindUsersLimit" class="page-size"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
+                <button class="secondary" onclick="resetList('bindUsers')">查找</button>
+              </div>
               <div id="bindUserList" class="list"></div>
+              <div id="bindUsersPager" class="pager"></div>
             </section>
             <section class="bind-action">
               <h2>绑定操作</h2>
@@ -1136,7 +1182,13 @@ def _admin_html(authenticated: bool) -> str:
             </section>
             <section>
               <h2>选择设备</h2>
+              <div class="toolbar" style="margin-bottom:8px">
+                <input id="bindDevicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
+                <select id="bindDevicesLimit" class="page-size"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
+                <button class="secondary" onclick="resetList('bindDevices')">查找</button>
+              </div>
               <div id="bindDeviceList" class="list"></div>
+              <div id="bindDevicesPager" class="pager"></div>
             </section>
           </div>
         </div>
@@ -1149,7 +1201,7 @@ def _admin_html(authenticated: bool) -> str:
               <button class="secondary" onclick="resetList('bindings')">查找</button>
             </div>
           </div>
-          <div id="bindingList" class="list"></div>
+          <div id="bindingList" class="table"></div>
           <div id="bindingsPager" class="pager"></div>
         </div>
         <div class="panel"><h2>说明</h2><div class="hint">后台只给管理端使用。删除用户或设备是软删除；解绑只解除设备访问权，不删除用户记忆。</div><pre id="bindingMsg"></pre></div>
@@ -1160,23 +1212,187 @@ def _admin_html(authenticated: bool) -> str:
       </div>
     </section>
   </main>
+  <div id="adminModal" class="modal-backdrop" onclick="if(event.target===this)closeAdminModal()">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+      <div class="modal-header">
+        <h3 id="adminModalTitle">详情</h3>
+        <button type="button" class="secondary modal-close" onclick="closeAdminModal()">关闭</button>
+      </div>
+      <div id="adminModalBody"></div>
+      <div id="adminModalActions" class="modal-actions"></div>
+      <div id="adminModalMsg" class="hint" style="margin-top:8px"></div>
+    </div>
+  </div>
   <script>
     let authenticated = {auth_state};
     let users = [];
     let devices = [];
+    let bindUsersPage = [];
+    let bindDevicesPage = [];
     let bindings = [];
     let lastBatch = [];
     let selectedUserId = '';
     let selectedDeviceId = '';
+    let adminModalCopyPayload = '';
     const listState = {{
       devices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       users: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindings: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
+      bindUsers: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
+      bindDevices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
     }};
     const headers = () => ({{'Content-Type': 'application/json'}});
     function $(id) {{ return document.getElementById(id); }}
     function esc(value) {{
       return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
+    }}
+    function jsQuote(value) {{
+      return String(value ?? '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/\\n/g, '\\\\n');
+    }}
+    function truncateId(text, head = 10, tail = 6) {{
+      const s = String(text ?? '');
+      if (s.length <= head + tail + 3) return s;
+      return s.slice(0, head) + '…' + s.slice(-tail);
+    }}
+    function closeAdminModal() {{
+      const el = $('adminModal');
+      if (!el) return;
+      el.classList.remove('open');
+      $('adminModalBody').innerHTML = '';
+      $('adminModalActions').innerHTML = '';
+      $('adminModalMsg').textContent = '';
+      adminModalCopyPayload = '';
+    }}
+    async function copyAdminText(text) {{
+      const msg = $('adminModalMsg');
+      try {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(text);
+        }} else {{
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }}
+        if (msg) msg.textContent = '已复制到剪贴板';
+      }} catch (err) {{
+        if (msg) msg.textContent = '复制失败，请手动选择复制';
+      }}
+    }}
+    function openAdminModal({{ title, bodyHtml, copyText, actionsHtml, autoCopy }}) {{
+      $('adminModalTitle').textContent = title || '详情';
+      $('adminModalBody').innerHTML = bodyHtml || '';
+      const actionsEl = $('adminModalActions');
+      actionsEl.innerHTML = actionsHtml || '';
+      adminModalCopyPayload = copyText || '';
+      if (copyText) {{
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = autoCopy ? '再次复制' : '复制';
+        btn.addEventListener('click', () => copyAdminText(copyText));
+        actionsEl.appendChild(btn);
+      }}
+      $('adminModalMsg').textContent = '';
+      $('adminModal').classList.add('open');
+      if (autoCopy && copyText) copyAdminText(copyText);
+    }}
+    function openCopyableDetail(title, fullText, autoCopy = true) {{
+      openAdminModal({{
+        title: title || '详情',
+        bodyHtml: `<pre class="modal-body-text">${{esc(fullText)}}</pre>`,
+        copyText: fullText,
+        autoCopy: autoCopy !== false,
+      }});
+    }}
+    function openIdDetail(label, fullId) {{
+      openCopyableDetail(label || 'ID', fullId, true);
+    }}
+    function llmApiKeyConfigured(llm) {{
+      const key = llm && llm.api_key;
+      return key === '***' || Boolean(key && String(key).trim());
+    }}
+    function renderUserLlmStatus(u) {{
+      const llm = u.llm_config || {{}};
+      const model = llm.model || '未配置';
+      const base = llm.base_url || '默认';
+      const keyOk = llmApiKeyConfigured(llm);
+      const keyBadge = keyOk
+        ? '<span class="badge">key=已配置</span>'
+        : '<span class="badge warn">key=未配置</span>';
+      const wxWarn = (String(u.user_id || '').startsWith('wx_') && !keyOk)
+        ? '<span class="badge warn">微信用户需配 LLM</span>' : '';
+      return `<div class="meta-line">${{esc(model)}} · base=${{esc(base)}}</div><div class="badge-row">${{keyBadge}}${{wxWarn}}</div>`;
+    }}
+    function openUserLlmModal(userId) {{
+      const u = users.find(item => item.user_id === userId);
+      if (!u) return;
+      const llm = u.llm_config || {{}};
+      const keyHint = llmApiKeyConfigured(llm) ? '已配置，留空则不修改' : '未配置，请填写';
+      const q = jsQuote(userId);
+      openAdminModal({{
+        title: `配置 LLM · ${{userId}}`,
+        bodyHtml: `<div class="llm-form">
+          <label><span class="hint">模型</span><input id="llmModalModel" value="${{esc(llm.model || '')}}" placeholder="deepseek-chat" /></label>
+          <label><span class="hint">Base URL</span><input id="llmModalBaseUrl" type="url" value="${{esc(llm.base_url || '')}}" placeholder="https://api.deepseek.com" /></label>
+          <label><span class="hint">API Key</span><input id="llmModalApiKey" type="password" placeholder="${{esc(keyHint)}}" autocomplete="off" /></label>
+        </div>`,
+        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="saveUserLlmModal('${{q}}')">保存</button>`,
+      }});
+    }}
+    async function saveUserLlmModal(userId) {{
+      const u = users.find(item => item.user_id === userId);
+      if (!u) return;
+      const llm = {{
+        model: ($('llmModalModel') && $('llmModalModel').value) || '',
+        base_url: ($('llmModalBaseUrl') && $('llmModalBaseUrl').value) || '',
+        api_key: ($('llmModalApiKey') && $('llmModalApiKey').value) || '',
+      }};
+      const payload = {{
+        user_id: userId,
+        token_quota_total: Number(u.token_quota_total || 0),
+        token_quota_used: Number(u.token_quota_used || 0),
+        audio_quota_mb: Number(u.audio_quota_mb || 512),
+        enabled: u.enabled !== false,
+        llm_config: llm,
+      }};
+      const res = await fetch('/admin/api/users', {{method:'POST', headers:headers(), body:JSON.stringify(payload), credentials:'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        $('adminModalMsg').textContent = data.error || '保存失败';
+        return;
+      }}
+      closeAdminModal();
+      await loadUsers();
+    }}
+    function renderClipCell(fullText, metaHtml, label, stopPropagation) {{
+      const lid = label || 'ID';
+      const q = jsQuote(fullText);
+      const lq = jsQuote(lid);
+      const stop = stopPropagation ? 'event.stopPropagation();' : '';
+      const meta = metaHtml ? `<div class="meta">${{metaHtml}}</div>` : '';
+      return `<div class="cell-clip" role="button" tabindex="0" title="${{esc(fullText)}}"
+        onclick="${{stop}}openIdDetail('${{lq}}', '${{q}}')"
+        onkeydown="if(event.key==='Enter'){{ event.preventDefault(); ${{stop}}openIdDetail('${{lq}}', '${{q}}'); }}">
+        <strong>${{esc(truncateId(fullText))}}</strong>${{meta}}
+      </div>`;
+    }}
+    function renderSecretCell(d) {{
+      const id = d.device_id;
+      const q = jsQuote(id);
+      const masked = d.device_secret_masked || '';
+      const display = masked || (d.device_secret_retrievable ? '已配置' : '需轮换密钥');
+      const hintParts = [];
+      if (!d.device_secret_retrievable && d.device_secret_hint) hintParts.push(String(d.device_secret_hint));
+      hintParts.push(d.device_secret_retrievable ? '点击查看并复制' : '点击了解如何查看');
+      const hintMeta = hintParts.join(' · ');
+      return `<div class="cell-clip cell-secret" role="button" tabindex="0" title="${{esc(id)}} 密钥"
+        onclick="revealDeviceSecret('${{q}}')"
+        onkeydown="if(event.key==='Enter'){{ event.preventDefault(); revealDeviceSecret('${{q}}'); }}">
+        <strong>${{esc(truncateId(display))}}</strong>
+        <div class="meta">${{esc(hintMeta)}}</div>
+      </div>`;
     }}
     function boot() {{
       $('login').style.display = authenticated ? 'none' : 'block';
@@ -1194,6 +1410,10 @@ def _admin_html(authenticated: bool) -> str:
       for (const id of ['devices','users','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
       for (const id of ['tabDevices','tabUsers','tabBindings','tabAdapters']) $(id).classList.remove('active');
       $('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
+      if (name === 'bindings' && authenticated) {{
+        loadBindUsers();
+        loadBindDevices();
+      }}
     }}
     function listUrl(name, path) {{
       const state = listState[name];
@@ -1229,6 +1449,8 @@ def _admin_html(authenticated: bool) -> str:
     function loadList(name) {{
       if (name === 'devices') return loadDevices();
       if (name === 'users') return loadUsers();
+      if (name === 'bindUsers') return loadBindUsers();
+      if (name === 'bindDevices') return loadBindDevices();
       return loadBindings();
     }}
     function renderPager(name, count) {{
@@ -1240,27 +1462,75 @@ def _admin_html(authenticated: bool) -> str:
         <button class="secondary" onclick="prevList('${{name}}')" ${{state.stack.length ? '' : 'disabled'}}>上一页</button>
         <button class="secondary" onclick="nextList('${{name}}')" ${{state.nextCursor ? '' : 'disabled'}}>下一页</button>`;
     }}
-    async function loadAll() {{ await Promise.all([loadDevices(), loadUsers(), loadBindings(), loadAdapters()]); }}
-
+    async function loadAll() {{
+      await Promise.all([
+        loadDevices(), loadUsers(), loadBindings(), loadAdapters(),
+        loadBindUsers(), loadBindDevices(),
+      ]);
+    }}
+    function deviceStatusBadges(d) {{
+      const badges = [];
+      badges.push(`<span class="badge ${{d.status.online ? '' : 'off'}}">${{d.status.online ? '在线' : '离线'}}</span>`);
+      if (d.bound_user_id) {{
+        const uid = d.bound_user_id;
+        const q = jsQuote(uid);
+        badges.push(`<span class="badge badge-click" role="button" tabindex="0" title="${{esc(uid)}}"
+          onclick="event.stopPropagation();openIdDetail('绑定用户', '${{q}}')"
+          onkeydown="if(event.key==='Enter'){{ event.stopPropagation(); event.preventDefault(); openIdDetail('绑定用户', '${{q}}'); }}">已绑定 ${{esc(truncateId(uid))}}</span>`);
+      }} else badges.push(`<span class="badge warn">未绑定</span>`);
+      if (d.claim_status) badges.push(`<span class="badge">认领:${{esc(d.claim_status)}}</span>`);
+      if (d.lifecycle_status) badges.push(`<span class="badge">${{esc(d.lifecycle_status)}}</span>`);
+      if (!d.enabled) badges.push(`<span class="badge off">已停用</span>`);
+      return `<div class="badge-row">${{badges.join('')}}</div>`;
+    }}
+    function showSecretRotateHint(id) {{
+      const q = jsQuote(id);
+      openAdminModal({{
+        title: '设备密钥',
+        bodyHtml: '<p class="hint">该设备尚未保存可解密的加密密钥。请先在设备行点击「换密钥」轮换一次；轮换后可在此弹层查看全文并自动复制（需已配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY）。</p>',
+        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal();rotateDeviceSecret('${{q}}')">轮换密钥</button>`,
+      }});
+    }}
+    async function revealDeviceSecret(id) {{
+      const d = devices.find(item => item.device_id === id);
+      if (d && !d.device_secret_retrievable) {{
+        showSecretRotateHint(id);
+        return;
+      }}
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/secret', {{headers: headers(), credentials: 'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        if (d && !d.device_secret_retrievable) showSecretRotateHint(id);
+        else openAdminModal({{title: '设备密钥', bodyHtml: `<p class="hint">${{esc(data.error || '查看失败')}}</p>`}});
+        return;
+      }}
+      openCopyableDetail(`设备 ${{id}} 密钥`, data.device_secret || '', true);
+    }}
     async function applyTencentSttDefaults() {{
       if (!confirm('将所有未删除设备的 STT 设为腾讯实时识别 (tencent-realtime)？')) return;
       const res = await fetch('/admin/api/devices/apply-stt-defaults', {{method:'POST', headers:headers(), credentials:'same-origin'}});
       const data = await res.json();
       if (!res.ok || data.error) {{
-        alert(data.error || '操作失败');
+        openAdminModal({{title: '应用 STT 失败', bodyHtml: `<p class="hint">${{esc(data.error || '操作失败')}}</p>`}});
         return;
       }}
-      alert(`已更新 ${{data.updated_count ?? 0}} 台设备为 tencent-realtime。`);
+      openAdminModal({{
+        title: '已应用腾讯 STT',
+        bodyHtml: `<p class="hint">已更新 ${{data.updated_count ?? 0}} 台设备为 tencent-realtime。</p>`,
+      }});
       await loadDevices();
     }}
     async function loadDevices() {{
       const data = await (await fetch(listUrl('devices', '/admin/api/devices'))).json();
       devices = data.items || [];
       listState.devices.nextCursor = data.next_cursor || '';
-      $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>备注</div><div>操作</div></div>` + devices.map(d => `<div class="table-row">
-        <div><strong>${{esc(d.device_id)}}</strong><div class="meta">auth=${{esc(d.auth_mode || '')}} · stt=${{esc((d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local')}} · secret=${{d.device_secret_configured ? '已配置' : '未配置'}}</div></div>
+      $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>密钥</div><div>备注</div><div>操作</div></div>` + devices.map(d => {{
+        const sttType = (d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local';
+        return `<div class="table-row">
+        ${{renderClipCell(d.device_id, `auth=${{esc(d.auth_mode || '')}} · stt=${{esc(sttType)}}`, '设备 ID')}}
         <input id="claim_${{esc(d.device_id)}}" value="${{esc(d.claim_code || '')}}" />
-        <div><span class="badge ${{d.status.online ? '' : 'off'}}">${{d.status.online ? '在线' : '离线'}}</span><div class="meta">${{esc(d.claim_status || '')}}</div></div>
+        <div>${{deviceStatusBadges(d)}}</div>
+        ${{renderSecretCell(d)}}
         <input id="note_${{esc(d.device_id)}}" value="${{esc(d.note || '')}}" />
         <div class="toolbar">
           <button class="secondary" onclick="saveDeviceRow('${{esc(d.device_id)}}')">更新</button>
@@ -1268,75 +1538,104 @@ def _admin_html(authenticated: bool) -> str:
           <button class="secondary" onclick="rotateDeviceSecret('${{esc(d.device_id)}}')">换密钥</button>
           <button class="danger" onclick="deleteDevice('${{esc(d.device_id)}}')">删除</button>
         </div>
-      </div>`).join('');
+      </div>`;
+      }}).join('');
       renderPager('devices', devices.length);
-      renderBindingBoard();
     }}
     async function loadUsers() {{
       const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
       users = data.items || [];
       listState.users.nextCursor = data.next_cursor || '';
-      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>启用</div><div>音频MB</div><div>Token额度</div><div>已用</div><div>模型</div><div>Base URL</div><div>API Key</div><div>操作</div></div>` + users.map(u => {{
-        const llm = u.llm_config || {{}};
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>启用</div><div>音频MB</div><div>Token额度</div><div>已用</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
+        const q = jsQuote(u.user_id);
         return `<div class="table-row users">
-          <div><strong>${{esc(u.user_id)}}</strong><div class="meta">token=${{u.token_configured ? '已配置' : '未配置'}}</div></div>
+          ${{renderClipCell(u.user_id, `token=${{u.token_configured ? '已配置' : '未配置'}}`, '用户 ID')}}
           <input id="userEnabled_${{esc(u.user_id)}}" value="${{u.enabled ? 'true' : 'false'}}" />
           <input id="audio_${{esc(u.user_id)}}" type="number" min="1" value="${{u.audio_quota_mb || 512}}" />
           <input id="quota_${{esc(u.user_id)}}" type="number" min="0" value="${{u.token_quota_total || 0}}" />
           <input id="used_${{esc(u.user_id)}}" type="number" min="0" value="${{u.token_quota_used || 0}}" />
-          <input id="model_${{esc(u.user_id)}}" value="${{esc(llm.model || '')}}" />
-          <input id="base_${{esc(u.user_id)}}" value="${{esc(llm.base_url || '')}}" />
-          <input id="apiKey_${{esc(u.user_id)}}" type="password" placeholder="${{llm.api_key ? '已配置' : '未配置'}}" />
+          <div>${{renderUserLlmStatus(u)}}</div>
           <div class="toolbar">
-            <button class="secondary" onclick="saveUserRow('${{esc(u.user_id)}}')">更新</button>
-            <button class="danger" onclick="deleteUser('${{esc(u.user_id)}}')">删除</button>
+            <button class="secondary" onclick="openUserLlmModal('${{q}}')">配置 LLM</button>
+            <button class="secondary" onclick="saveUserRow('${{q}}')">更新额度</button>
+            <button class="danger" onclick="deleteUser('${{q}}')">删除</button>
           </div>
         </div>`;
       }}).join('');
       renderPager('users', users.length);
+    }}
+    async function loadBindUsers() {{
+      const data = await (await fetch(listUrl('bindUsers', '/admin/api/users'))).json();
+      bindUsersPage = data.items || [];
+      listState.bindUsers.nextCursor = data.next_cursor || '';
       renderBindingBoard();
+      renderPager('bindUsers', bindUsersPage.length);
+    }}
+    async function loadBindDevices() {{
+      const data = await (await fetch(listUrl('bindDevices', '/admin/api/devices'))).json();
+      bindDevicesPage = data.items || [];
+      listState.bindDevices.nextCursor = data.next_cursor || '';
+      renderBindingBoard();
+      renderPager('bindDevices', bindDevicesPage.length);
     }}
     async function loadBindings() {{
       const data = await (await fetch(listUrl('bindings', '/admin/api/bindings'))).json();
       bindings = data.items || [];
       listState.bindings.nextCursor = data.next_cursor || '';
-      $('bindingList').innerHTML = bindings.length ? bindings.map(b => `<div class="item"><div><strong>${{esc(b.user_id)}}</strong><div class="meta">${{esc(b.device_id)}} online=${{b.online}} bound_at=${{esc(b.bound_at || '')}}</div></div><button class="danger" onclick="unbindBinding('${{esc(b.binding_id)}}')">解绑</button></div>`).join('') : '<div class="hint">暂无 active binding</div>';
+      $('bindingList').innerHTML = bindings.length
+        ? `<div class="table-row bindings table-head"><div>用户</div><div>设备</div><div>绑定时间</div><div>解绑时间</div><div>在线</div><div>操作</div></div>`
+          + bindings.map(b => `<div class="table-row bindings">
+          ${{renderClipCell(b.user_id, '', '用户 ID')}}
+          ${{renderClipCell(b.device_id, '', '设备 ID')}}
+          <div class="meta">${{esc(b.bound_at || '-')}}</div>
+          <div class="meta">${{esc(b.unbound_at || '-')}}</div>
+          <div><span class="badge ${{b.online ? '' : 'off'}}">${{b.online ? '在线' : '离线'}}</span></div>
+          <div><button class="danger" onclick="unbindBinding('${{esc(b.binding_id)}}')">解绑</button></div>
+        </div>`).join('')
+        : '<div class="hint">暂无 active binding</div>';
       renderPager('bindings', bindings.length);
-      renderBindingBoard();
     }}
     async function loadAdapters() {{
       const data = await (await fetch('/admin/api/adapters')).json();
       $('adapterList').innerHTML = (data.items || []).map(a => `<div class="item"><div><strong>${{a.name}}</strong><div class="meta">${{a.actions.join(', ')}}</div></div></div>`).join('');
     }}
-    function activeBindingForDevice(deviceId) {{
-      return bindings.find(b => b.device_id === deviceId && b.status === 'active');
+    function selectedBindUser() {{
+      return bindUsersPage.find(u => u.user_id === selectedUserId) || null;
     }}
     function renderBindingBoard() {{
       if (!$('bindUserList') || !$('bindDeviceList')) return;
-      $('bindUserList').innerHTML = users.length ? users.map(u => `
-        <div class="item selectable ${{selectedUserId === u.user_id ? 'selected' : ''}}" onclick="selectUser('${{esc(u.user_id)}}')">
+      $('bindUserList').innerHTML = bindUsersPage.length ? bindUsersPage.map(u => {{
+        const llm = u.llm_config || {{}};
+        const modelHint = llm.model ? ` · ${{esc(llm.model)}}` : '';
+        return `
+        <div class="item selectable ${{selectedUserId === u.user_id ? 'selected' : ''}}" onclick="selectUser('${{jsQuote(u.user_id)}}')">
           <div>
-            <strong>${{esc(u.user_id)}}</strong>
-            <div class="meta">音频 ${{u.audio_quota_mb}}MB · token ${{u.token_quota_used || 0}}/${{u.token_quota_total || 0}} · ${{u.enabled ? '启用' : '停用'}}</div>
+            ${{renderClipCell(u.user_id, `音频 ${{u.audio_quota_mb}}MB · token ${{u.token_quota_used || 0}}/${{u.token_quota_total || 0}}${{modelHint}}`, '用户 ID', true)}}
           </div>
           <span class="badge">${{bindings.filter(b => b.user_id === u.user_id && b.status === 'active').length}} 台</span>
-        </div>`).join('') : '<div class="hint">暂无用户</div>';
-      $('bindDeviceList').innerHTML = devices.length ? devices.map(d => {{
-        const binding = activeBindingForDevice(d.device_id);
-        const disabled = Boolean(binding);
+        </div>`;
+      }}).join('') : '<div class="hint">暂无用户</div>';
+      $('bindDeviceList').innerHTML = bindDevicesPage.length ? bindDevicesPage.map(d => {{
+        const boundTo = d.bound_user_id || '';
+        const disabled = Boolean(boundTo);
         const statusClass = d.status.online ? 'badge' : 'badge off';
         return `
-          <div class="item selectable ${{selectedDeviceId === d.device_id ? 'selected' : ''}} ${{disabled ? 'muted' : ''}}" onclick="${{disabled ? '' : `selectDevice('${{esc(d.device_id)}}')`}}">
+          <div class="item selectable ${{selectedDeviceId === d.device_id ? 'selected' : ''}} ${{disabled ? 'muted' : ''}}" onclick="${{disabled ? '' : `selectDevice('${{jsQuote(d.device_id)}}')`}}">
             <div>
-              <strong>${{esc(d.device_id)}}</strong>
-              <div class="meta">${{binding ? `已绑定 ${{esc(binding.user_id)}}` : '未绑定'}} · ${{esc(d.note || '')}}</div>
+              ${{renderClipCell(d.device_id, `${{esc(d.note || '')}}`, '设备 ID', true)}}
+              ${{boundTo ? renderClipCell(boundTo, '已绑定', '绑定用户', true) : '<div class="meta">未绑定</div>'}}
             </div>
             <span class="${{statusClass}}">${{d.status.online ? '在线' : '离线'}}</span>
           </div>`;
       }}).join('') : '<div class="hint">暂无设备</div>';
       const userLabel = selectedUserId || '未选择用户';
       const deviceLabel = selectedDeviceId || '未选择设备';
-      $('bindSummary').textContent = `${{userLabel}} -> ${{deviceLabel}}`;
+      const picked = selectedBindUser();
+      const llm = picked && picked.llm_config ? picked.llm_config : {{}};
+      const llmHint = picked
+        ? ` · LLM: ${{esc(llm.model || '未配置')}} / ${{esc(llm.base_url || '默认')}} / key=${{llm.api_key ? '已配置' : '未配置'}}`
+        : '';
+      $('bindSummary').textContent = `${{userLabel}} -> ${{deviceLabel}}${{llmHint}}`;
       $('bindSelectedBtn').disabled = !(selectedUserId && selectedDeviceId);
     }}
     function selectUser(userId) {{
@@ -1357,7 +1656,7 @@ def _admin_html(authenticated: bool) -> str:
       const data = await res.json();
       $('bindingMsg').textContent = JSON.stringify(data, null, 2);
       if (res.ok && !data.error) selectedDeviceId = '';
-      await Promise.all([loadBindings(), loadDevices()]);
+      await Promise.all([loadBindings(), loadBindDevices(), loadDevices()]);
     }}
     function renderBatch(items) {{
       lastBatch = items || [];
@@ -1434,7 +1733,6 @@ def _admin_html(authenticated: bool) -> str:
         token_quota_used:Number($('used_' + id).value || 0),
         audio_quota_mb:Number($('audio_' + id).value || 512),
         enabled:$('userEnabled_' + id).value !== 'false',
-        llm_config:{{model:$('model_' + id).value, base_url:$('base_' + id).value, api_key:$('apiKey_' + id).value}}
       }};
       const res = await fetch('/admin/api/users', {{method:'POST', headers:headers(), body:JSON.stringify(payload)}});
       const data = await res.json();
@@ -1442,14 +1740,25 @@ def _admin_html(authenticated: bool) -> str:
       await loadUsers();
     }}
     async function rotateDeviceSecret(id) {{
-      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/rotate-secret', {{method:'POST', headers:headers()}});
-      alert(JSON.stringify(await res.json(), null, 2));
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/rotate-secret', {{method:'POST', headers:headers(), credentials: 'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        openAdminModal({{title: '轮换密钥失败', bodyHtml: `<p class="hint">${{esc(data.error || '轮换失败')}}</p>`}});
+        return;
+      }}
       await loadDevices();
+      const code = data.device_code || id;
+      const secret = data.device_secret || '';
+      if (secret) {{
+        openCopyableDetail(`设备 ${{code}} 密钥（已轮换）`, secret, true);
+      }} else {{
+        openAdminModal({{title: '轮换完成', bodyHtml: `<p class="hint">${{esc(code)}} 密钥已更新，请刷新后查看。</p>`}});
+      }}
     }}
     async function unbindBinding(bindingId) {{
       const res = await fetch('/admin/api/bindings/unbind', {{method:'POST', headers:headers(), body:JSON.stringify({{binding_id: bindingId}})}});
       $('bindingMsg').textContent = JSON.stringify(await res.json(), null, 2);
-      await Promise.all([loadBindings(), loadDevices()]);
+      await Promise.all([loadBindings(), loadBindUsers(), loadBindDevices(), loadDevices()]);
     }}
     async function deleteDevice(id) {{ await fetch('/admin/api/devices/' + encodeURIComponent(id), {{method:'DELETE'}}); await loadDevices(); }}
     async function deleteUser(id) {{ await fetch('/admin/api/users/' + encodeURIComponent(id), {{method:'DELETE'}}); await loadUsers(); }}
@@ -1491,11 +1800,22 @@ def _web_demo_html(default_device_id: str) -> str:
     .row:last-child {{ border-bottom: 0; }}
     .label {{ color: #657080; }}
     #log {{ white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; max-height: 280px; overflow: auto; }}
+    .hint {{ color: #657080; font-size: 13px; }}
+    .llm-warn {{ color: #b8453f; font-weight: 600; }}
+    select {{ font: inherit; }}
   </style>
 </head>
 <body>
   <main>
     <h1>ShuXin 语音测试台</h1>
+    <p class="hint" style="margin:0 0 12px;color:#657080;font-size:14px">测试用户 API：在 /admin「用户」Tab 点击<strong>配置 LLM</strong>（微信 wx_ 用户也需单独配置）→ 绑定设备 → 本页 Admin Token → 加载设备 → 连接。</p>
+    <div class="toolbar">
+      <input id="adminToken" type="password" placeholder="Admin Token" aria-label="admin token" />
+      <button id="loadTargets" type="button">加载设备</button>
+      <select id="testTarget" aria-label="test target" style="min-width:280px;height:38px;padding:0 8px;border:1px solid #cfd6df;border-radius:6px">
+        <option value="">选择用户与设备…</option>
+      </select>
+    </div>
     <div class="toolbar">
       <input id="deviceCode" value="{default_device_id}" aria-label="device code" />
       <input id="deviceSecret" value="dev-device-secret" aria-label="device secret" placeholder="device secret" />
@@ -1506,6 +1826,7 @@ def _web_demo_html(default_device_id: str) -> str:
     <div class="panel">
       <div class="row"><div class="label">连接状态</div><div id="status">未连接</div></div>
       <div class="row"><div class="label">绑定用户</div><div id="boundUser">-</div></div>
+      <div class="row"><div class="label">将使用 LLM</div><div id="llmPreview">-</div></div>
       <div class="row"><div class="label">识别文本</div><div id="stt">-</div></div>
       <div class="row"><div class="label">舒心回复</div><div id="reply">-</div></div>
       <div class="row"><div class="label">耗时</div><div id="timing">-</div></div>
@@ -1518,12 +1839,17 @@ def _web_demo_html(default_device_id: str) -> str:
     const replyEl = document.getElementById('reply');
     const timingEl = document.getElementById('timing');
     const boundUserEl = document.getElementById('boundUser');
+    const llmPreviewEl = document.getElementById('llmPreview');
     const logEl = document.getElementById('log');
     const connectBtn = document.getElementById('connect');
     const recordBtn = document.getElementById('record');
+    const loadTargetsBtn = document.getElementById('loadTargets');
+    const adminTokenInput = document.getElementById('adminToken');
+    const testTargetSelect = document.getElementById('testTarget');
     const deviceInput = document.getElementById('deviceCode');
     const secretInput = document.getElementById('deviceSecret');
     const clientInput = document.getElementById('clientId');
+    let demoTargets = [];
     let ws, audioContext, source, processor, stream;
     let recording = false;
     let recordingRequested = false;
@@ -1535,6 +1861,78 @@ def _web_demo_html(default_device_id: str) -> str:
       logEl.textContent += `${{new Date().toLocaleTimeString()}} ${{line}}\\n`;
       logEl.scrollTop = logEl.scrollHeight;
     }}
+
+    const savedAdminToken = localStorage.getItem('shuxin_voice_demo_admin') || '';
+    if (savedAdminToken) adminTokenInput.value = savedAdminToken;
+
+    function formatLlmTarget(item) {{
+      if (!item) return '-';
+      const model = item.llm_model || '未配置';
+      const base = item.llm_base_url || '默认';
+      const key = item.llm_api_key_configured ? '已配置' : '未配置';
+      return `${{item.user_id}} · model=${{model}} · base=${{base}} · key=${{key}}`;
+    }}
+    function renderLlmPreview(item) {{
+      if (!item) return '-';
+      const base = formatLlmTarget(item);
+      if (!item.llm_api_key_configured) {{
+        return base + ' — 绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」';
+      }}
+      return base;
+    }}
+    function applyLlmPreviewStyle(item) {{
+      if (!item || item.llm_api_key_configured) {{
+        llmPreviewEl.className = '';
+        llmPreviewEl.style.color = '';
+        return;
+      }}
+      llmPreviewEl.className = 'llm-warn';
+      llmPreviewEl.style.color = '#b8453f';
+    }}
+
+    async function loadDemoTargets() {{
+      const token = adminTokenInput.value.trim();
+      if (!token) {{
+        log('请先填写 Admin Token');
+        return;
+      }}
+      localStorage.setItem('shuxin_voice_demo_admin', token);
+      const res = await fetch('/admin/api/voice-demo/targets', {{
+        headers: {{'X-Admin-Token': token}},
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        log(data.error || '加载设备失败');
+        return;
+      }}
+      demoTargets = data.items || [];
+      testTargetSelect.innerHTML = '<option value="">选择用户与设备…</option>' + demoTargets.map((item, idx) => {{
+        const online = item.online ? '在线' : '离线';
+        const model = item.llm_model || '未配置';
+        return `<option value="${{idx}}">${{item.user_id}} · ${{item.device_id}} · ${{model}} · ${{online}}</option>`;
+      }}).join('');
+      log(`已加载 ${{demoTargets.length}} 个可测试绑定`);
+      if (!demoTargets.length) log('没有 active 绑定或密钥不可读取，请在后台绑定设备并轮换密钥');
+    }}
+
+    testTargetSelect.onchange = () => {{
+      const item = demoTargets[Number(testTargetSelect.value)];
+      if (!item) {{
+        llmPreviewEl.textContent = '-';
+        applyLlmPreviewStyle(null);
+        return;
+      }}
+      deviceInput.value = item.device_code || item.device_id;
+      secretInput.value = item.device_secret || '';
+      llmPreviewEl.textContent = renderLlmPreview(item);
+      applyLlmPreviewStyle(item);
+      log(`已选择 ${{item.user_id}} -> ${{item.device_id}}`);
+      if (!item.llm_api_key_configured) {{
+        log('绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」后再对话');
+      }}
+    }};
+
+    loadTargetsBtn.onclick = () => loadDemoTargets();
 
     function wsUrl() {{
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1566,6 +1964,12 @@ def _web_demo_html(default_device_id: str) -> str:
 
     connectBtn.onclick = () => {{
       if (recording || startingRecording) return;
+      const picked = demoTargets[Number(testTargetSelect.value)];
+      if (picked && !picked.llm_api_key_configured) {{
+        log('警告：绑定用户未配置 API Key，对话将出现 connect_error/auth_error 或降级文案');
+        llmPreviewEl.textContent = renderLlmPreview(picked);
+        applyLlmPreviewStyle(picked);
+      }}
       if (ws && ws.readyState === WebSocket.OPEN) ws.close();
       ws = new WebSocket(wsUrl());
       ws.binaryType = 'arraybuffer';
@@ -1598,16 +2002,36 @@ def _web_demo_html(default_device_id: str) -> str:
         }}
         const msg = JSON.parse(event.data);
         log(JSON.stringify(msg));
-        if (msg.type === 'hello' && msg.state === 'ok') boundUserEl.textContent = `${{msg.user_id || '-'}} / ${{msg.device_id || '-'}}`;
+        if (msg.type === 'hello' && msg.state === 'ok') {{
+          boundUserEl.textContent = `${{msg.user_id || '-'}} / ${{msg.device_id || '-'}}`;
+          const picked = demoTargets[Number(testTargetSelect.value)];
+          if (picked) {{
+            llmPreviewEl.textContent = renderLlmPreview(picked);
+            applyLlmPreviewStyle(picked);
+          }} else {{
+            llmPreviewEl.textContent = '已连接';
+            applyLlmPreviewStyle(null);
+          }}
+        }}
+        if (msg.type === 'error') {{
+          const errText = String(msg.message || '');
+          if (errText.includes('api_key')) {{
+            log('LLM 未配置：请在 /admin 用户页为该绑定用户点击「配置 LLM」填写 API Key');
+          }}
+          recordBtn.disabled = false;
+          recordBtn.textContent = '按住说话';
+        }}
+        if (msg.type === 'agent' && msg.state === 'error' && msg.error_kind) {{
+          const picked = demoTargets[Number(testTargetSelect.value)];
+          if (picked && !picked.llm_api_key_configured) {{
+            log(`Agent 错误 (${{msg.error_kind}})：绑定用户可能未配置 API Key 或 Base URL 不可达`);
+          }}
+        }}
         if (msg.type === 'stt' && ['partial', 'sentence_final', 'stream_final', 'final'].includes(msg.state)) sttEl.textContent = msg.text || '-';
         if (msg.type === 'agent' && msg.state === 'delta') replyEl.textContent = (replyEl.textContent === '-' ? '' : replyEl.textContent) + (msg.text || '');
         if (msg.type === 'agent' && msg.state === 'reply') replyEl.textContent = msg.text || '-';
         if (msg.type === 'tts' && msg.state === 'stop') {{
           timingEl.textContent = `首字 ${{msg.first_agent_delta_ms || '-'}}ms · 首段语音 ${{msg.first_tts_audio_ms || '-'}}ms · 总耗时 ${{msg.total_elapsed_ms}}ms`;
-          recordBtn.disabled = false;
-          recordBtn.textContent = '按住说话';
-        }}
-        if (msg.type === 'error') {{
           recordBtn.disabled = false;
           recordBtn.textContent = '按住说话';
         }}

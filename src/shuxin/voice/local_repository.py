@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shuxin.voice.device_secret_crypto import mask_device_secret, resolve_stored_device_secret
 from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
 from shuxin.voice.storage import UserVoiceStorage
 from shuxin.voice.users import DEFAULT_USER_ID, UserConfigProvider, UserSettings
@@ -233,6 +234,38 @@ class VoiceLocalRepository:
 
     async def rotate_device_secret(self, device_id: str) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
+
+
+    async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
+        default = self.device_provider.get(device_id)
+        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
+        return {
+            "device_id": default.device_id,
+            "device_secret": shared,
+            "hint": "global_shared_secret",
+        }
+
+
+    async def list_voice_demo_targets(self) -> dict[str, Any]:
+        default = self.device_provider.get(None)
+        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
+        settings = self.user_provider.get(DEFAULT_USER_ID)
+        llm = settings.llm_config or {}
+        return {
+            "items": [
+                {
+                    "user_id": settings.user_id,
+                    "device_id": default.device_id,
+                    "device_code": default.device_id,
+                    "device_secret": shared,
+                    "online": False,
+                    "secret_hint": "global_shared_secret",
+                    "llm_model": str(llm.get("model") or ""),
+                    "llm_base_url": str(llm.get("base_url") or ""),
+                    "llm_api_key_configured": bool(llm.get("api_key")),
+                }
+            ]
+        }
 
 
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:

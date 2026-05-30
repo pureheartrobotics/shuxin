@@ -13,6 +13,11 @@ from typing import Any
 import yaml
 
 from shuxin.voice.audio_files import compress_wav_to_mp3, sha256_file
+from shuxin.voice.device_secret_crypto import (
+    encrypt_device_secret,
+    mask_device_secret,
+    resolve_stored_device_secret,
+)
 from shuxin.voice.config import (
     DeviceConfig,
     LLMDeviceConfig,
@@ -188,18 +193,18 @@ class VoicePostgresRepository:
         await conn.execute(
             """
             INSERT INTO devices (
-                device_id, auth_mode, device_secret_hash, stt_config, tts_config,
+                device_id, auth_mode, device_secret_hash, device_secret_encrypted,
+                stt_config, tts_config,
                 status, enabled, note, metadata, updated_at
             )
             VALUES (
-                $1, 'per_device_secret', $2, $3::jsonb, $4::jsonb,
-                'provisioned', true, $5, $6::jsonb, now()
+                $1, 'per_device_secret', $2, $3, $4::jsonb, $5::jsonb,
+                'provisioned', true, $6, $7::jsonb, now()
             )
             ON CONFLICT (device_id) DO UPDATE SET
                 auth_mode = 'per_device_secret',
                 device_secret_hash = excluded.device_secret_hash,
-                stt_config = excluded.stt_config,
-                tts_config = excluded.tts_config,
+                device_secret_encrypted = excluded.device_secret_encrypted,
                 status = CASE
                     WHEN devices.status = 'disabled' THEN 'disabled'
                     ELSE devices.status
@@ -211,6 +216,7 @@ class VoicePostgresRepository:
             """,
             device_id,
             _hash_secret(device_secret),
+            encrypt_device_secret(device_secret),
             stt_config,
             tts_config,
             note,
@@ -1016,6 +1022,73 @@ class VoicePostgresRepository:
         return {"items": items, "next_cursor": items[-1]["device_id"] if len(items) == limit else ""}
 
 
+    async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
+        selected_id = _validate_device_code(device_id)
+        row = await self.pool.fetchrow(
+            """
+            SELECT device_id, auth_mode, device_secret_encrypted
+            FROM devices
+            WHERE device_id = $1 AND deleted_at IS NULL
+            """,
+            selected_id,
+        )
+        if row is None:
+            raise PermissionError("device is disabled or not found")
+        secret, hint = resolve_stored_device_secret(
+            auth_mode=str(row["auth_mode"] or ""),
+            device_secret_encrypted=str(row["device_secret_encrypted"] or "") or None,
+        )
+        if not secret:
+            raise PermissionError(_secret_unavailable_message(hint))
+        await self.audit("reveal_device_secret", "device", selected_id, {"hint": hint})
+        return {
+            "device_id": selected_id,
+            "device_secret": secret,
+            "hint": hint,
+        }
+
+
+    async def list_voice_demo_targets(self) -> dict[str, Any]:
+        rows = await self.pool.fetch(
+            """
+            SELECT d.device_id, d.auth_mode, d.device_secret_encrypted,
+                   b.user_id, s.online, u.llm_config
+            FROM device_bindings b
+            JOIN devices d ON d.device_id = b.device_id
+            JOIN users u ON u.user_id = b.user_id
+            LEFT JOIN device_status s ON s.device_id = d.device_id
+            WHERE b.status = 'active'
+              AND d.enabled = true
+              AND d.deleted_at IS NULL
+              AND d.status <> 'disabled'
+            ORDER BY b.user_id ASC, d.device_id ASC
+            """
+        )
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            secret, hint = resolve_stored_device_secret(
+                auth_mode=str(row["auth_mode"] or ""),
+                device_secret_encrypted=str(row["device_secret_encrypted"] or "") or None,
+            )
+            if not secret:
+                continue
+            llm = _json_obj(row["llm_config"])
+            items.append(
+                {
+                    "user_id": str(row["user_id"]),
+                    "device_id": str(row["device_id"]),
+                    "device_code": str(row["device_id"]),
+                    "device_secret": secret,
+                    "online": bool(row["online"] or False),
+                    "secret_hint": hint,
+                    "llm_model": str(llm.get("model") or ""),
+                    "llm_base_url": str(llm.get("base_url") or ""),
+                    "llm_api_key_configured": bool(llm.get("api_key")),
+                }
+            )
+        return {"items": items}
+
+
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
         """Set tencent-realtime STT on all non-deleted devices (idempotent)."""
         stt_config = json.dumps(default_tencent_stt_config(), ensure_ascii=False)
@@ -1626,11 +1699,22 @@ def _dt(value: Any) -> str:
 
 
 def _device_row(row) -> dict[str, Any]:
+    auth_mode = str(row["auth_mode"] or "shared_secret")
+    secret, secret_hint = resolve_stored_device_secret(
+        auth_mode=auth_mode,
+        device_secret_encrypted=str(row.get("device_secret_encrypted") or "") or None,
+    )
     return {
         "device_id": str(row["device_id"]),
         "device_code": str(row["device_id"]),
-        "auth_mode": str(row["auth_mode"] or "shared_secret"),
-        "device_secret_configured": bool(row["device_secret_hash"]),
+        "auth_mode": auth_mode,
+        "device_secret_configured": bool(row["device_secret_hash"])
+        or auth_mode == "shared_secret",
+        "device_secret_masked": mask_device_secret(secret) if secret else "",
+        "device_secret_retrievable": bool(secret),
+        "device_secret_hint": secret_hint,
+        "lifecycle_status": str(row.get("lifecycle_status") or "provisioned"),
+        "bound_user_id": str(row.get("bound_user_id") or ""),
         "claim_code": str(row["claim_code"] or ""),
         "claim_status": str(row["claim_status"] or ""),
         "stt_config": _json_obj(row["stt_config"]),
@@ -1646,7 +1730,6 @@ def _device_row(row) -> dict[str, Any]:
             "last_error": str(row["last_error"] or ""),
         },
     }
-
 
 def _binding_row(row) -> dict[str, Any]:
     return {
