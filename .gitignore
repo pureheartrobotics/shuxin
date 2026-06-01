@@ -52,3 +52,8 @@ outputs/*
 !outputs/.gitkeep
 samples/*
 !samples/README.md
+
+# Local secrets / IDE noise (do not commit)
+apps/app.md
+/project.config.json
+/project.private.config.json
