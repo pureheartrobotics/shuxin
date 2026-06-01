@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Daily Docker redeploy/start for ShuXin voice demo.
 # Preserves mounted data: data/, models/, samples/, outputs/.
+#
+# Windows: requires Git for Windows (Git Bash) + Docker Desktop.
+# Run from the project root on a native drive path (e.g. C:/Users/.../shuxin):
+#   bash scripts/redeploy_docker.sh
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
   exec bash "$0" "$@"
@@ -44,6 +48,25 @@ fi
 
 info() { echo -e "\033[1;32m[redeploy]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[redeploy] WARN:\033[0m $*" >&2; }
+error() { echo -e "\033[1;31m[redeploy] ERROR:\033[0m $*" >&2; exit 1; }
+
+check_deps() {
+  command -v docker >/dev/null 2>&1 || error "'docker' not found; install Docker Desktop"
+  docker compose version >/dev/null 2>&1 || error "'docker compose' not found; install Docker Desktop with Compose v2"
+  docker info >/dev/null 2>&1 || error "Docker is not running; start Docker Desktop and retry"
+  command -v awk >/dev/null 2>&1 || error "'awk' not found; use a full Git for Windows install"
+  if ! command -v sha256sum >/dev/null 2>&1 \
+      && ! command -v shasum >/dev/null 2>&1 \
+      && ! command -v python >/dev/null 2>&1; then
+    error "Need sha256sum, shasum, or python to compute dependency hashes"
+  fi
+}
+
+if grep -q $'\r' "$0" 2>/dev/null; then
+  warn "Script has CRLF line endings. Fix: git checkout -- scripts/redeploy_docker.sh"
+fi
+
+check_deps
 
 mkdir -p data models samples outputs
 
@@ -60,12 +83,26 @@ fi
 info "Checking docker compose config ..."
 docker compose -p "$PROJECT_NAME" config >/dev/null
 
+hash_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    python - "$path" <<'PY'
+import hashlib, sys
+print(hashlib.file_digest(open(sys.argv[1], "rb"), "sha256").hexdigest())
+PY
+  fi
+}
+
 current_deps_hash() {
   local module path hash
   for entry in "${DEPS_MODULES[@]}"; do
     module="${entry%% *}"
     path="${entry#* }"
-    hash="$(sha256sum "$path" | awk '{print $1}')"
+    hash="$(hash_file "$path")"
     echo "$module $hash $path"
   done
 }
