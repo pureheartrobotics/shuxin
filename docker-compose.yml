@@ -43,6 +43,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      cache_from:
+        - shuxin-voice-demo:latest
     image: shuxin-voice-demo:latest
     container_name: shuxin-voice-demo-pg
     depends_on:
@@ -69,6 +71,12 @@ services:
       DEMO_LLM_MODEL: ${DEMO_LLM_MODEL:-deepseek-chat}
       DEMO_LLM_BASE_URL: ${DEMO_LLM_BASE_URL:-}
       DEMO_LLM_API_KEY: ${DEMO_LLM_API_KEY:-}
+      VOLCENGINE_TTS_API_KEY: ${VOLCENGINE_TTS_API_KEY:-}
+      VOLCENGINE_TTS_VOICE_TYPE: ${VOLCENGINE_TTS_VOICE_TYPE:-}
+      VOLCENGINE_TTS_API_URL: ${VOLCENGINE_TTS_API_URL:-https://openspeech.bytedance.com/api/v1/tts}
+      VOICE_TTS_PROFILES_CONFIG: ${VOICE_TTS_PROFILES_CONFIG:-/app/data/tts_profiles.yaml}
+      SHUXIN_TTS_TIMEOUT_SECONDS: ${SHUXIN_TTS_TIMEOUT_SECONDS:-30}
+      SHUXIN_TTS_CONNECT_TIMEOUT_SECONDS: ${SHUXIN_TTS_CONNECT_TIMEOUT_SECONDS:-5}
       SHUXIN_TTS_EFFECT: ${SHUXIN_TTS_EFFECT:-karen}
       TENCENT_ASR_APPID: ${TENCENT_ASR_APPID:-}
       TENCENTCLOUD_SECRET_ID: ${TENCENTCLOUD_SECRET_ID:-}
@@ -81,12 +89,15 @@ services:
       SHUXIN_EMBED_MODEL: ${SHUXIN_EMBED_MODEL:-text-embedding-3-small}
       SHUXIN_EMBED_DIMS: ${SHUXIN_EMBED_DIMS:-1536}
       SHUXIN_MEM0_SEARCH_TOP_K: ${SHUXIN_MEM0_SEARCH_TOP_K:-5}
+      SHUXIN_AUDIO_RETENTION_HOURS: ${SHUXIN_AUDIO_RETENTION_HOURS:-12}
+      SHUXIN_AUDIO_RETENTION_INTERVAL_SEC: ${SHUXIN_AUDIO_RETENTION_INTERVAL_SEC:-1800}
     ports:
       - "${VOICE_DEMO_PORT:-8765}:8765"
     volumes:
       - ./src:/app/src
       # 挂载脚本目录，便于容器内下载/更新语音模型。
       - ./scripts:/app/scripts
+      - ./tests:/app/tests
       - ./data:/app/data
       - ./models:/app/models
       - ./samples:/app/samples

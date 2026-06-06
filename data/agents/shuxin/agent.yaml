@@ -1,0 +1,10 @@
+agent_id: shuxin
+display_name: 舒心
+voice_type: "${VOLCENGINE_TTS_VOICE_TYPE}"
+cluster: volcano_icl
+speed_ratio: 1.0
+encoding: mp3
+uid: shuxin
+soul_path: data/agents/shuxin/SOUL.md
+metadata:
+  default_mbti: INFJ

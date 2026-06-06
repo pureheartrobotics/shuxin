@@ -5,8 +5,13 @@ import re
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 from shuxin.voice.audio_effects import is_karen_style_effect
 from shuxin.voice.config import ProviderConfig, resolve_tts_effect
+
+if TYPE_CHECKING:
+    from shuxin.voice.tts_config import ResolvedTtsConfig
 
 
 class STTProvider(ABC):
@@ -196,6 +201,7 @@ class EdgeTTSProvider(TTSProvider):
                 )
         return output_path
 
+
 def create_stt_provider(config: ProviderConfig) -> STTProvider:
     """根据设备配置创建 STT provider。"""
     provider_type = (config.type or "local").lower()
@@ -210,13 +216,37 @@ def create_stt_provider(config: ProviderConfig) -> STTProvider:
     raise ValueError(f"Unsupported STT provider type: {config.type}")
 
 
-def create_tts_provider(config: ProviderConfig) -> TTSProvider:
+def create_tts_provider(
+    config: ProviderConfig,
+    *,
+    resolved: "ResolvedTtsConfig | None" = None,
+) -> TTSProvider:
     """根据设备配置创建 TTS provider。"""
-    provider_type = (config.type or "local").lower()
+    from shuxin.voice.tts_config import ResolvedTtsConfig, resolve_tts_config
+
+    provider_type = (config.type or "volcengine-clone").lower()
+    if provider_type in {"volcengine-clone", "volcengine", "volc-clone"}:
+        from shuxin.voice.volcengine_tts import VolcengineCloneTTSProvider
+
+        cfg: ResolvedTtsConfig = resolved or resolve_tts_config(config)
+        return VolcengineCloneTTSProvider(cfg)
     if provider_type == "local":
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "TTS type=local (EdgeTTS) is deprecated for production; use volcengine-clone"
+        )
         return EdgeTTSProvider(config)
     if provider_type == "api":
-        return APITTSProvider(config)
+        from shuxin.voice.tts_config import resolve_tts_config as _resolve
+        from shuxin.voice.volcengine_tts import VolcengineCloneTTSProvider
+
+        cfg = resolved or _resolve(config)
+        if cfg.provider_type in {"volcengine-clone", "volcengine", "volc-clone"}:
+            return VolcengineCloneTTSProvider(cfg)
+        raise APIProviderNotImplemented(
+            "API TTS provider is reserved for future use in this demo."
+        )
     if provider_type == "fake":
         return FakeTTSProvider(config)
     raise ValueError(f"Unsupported TTS provider type: {config.type}")

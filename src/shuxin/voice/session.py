@@ -5,7 +5,8 @@ from datetime import datetime
 from pathlib import Path
 
 from shuxin.core.agent import Agent
-from shuxin.voice.providers import create_stt_provider, create_tts_provider
+from shuxin.voice.providers import create_stt_provider
+from shuxin.voice.tts_config import create_tts_provider_from_device
 from shuxin.voice.service import VoiceService
 from shuxin.voice.transport import (
     AudioInputTransport,
@@ -42,7 +43,7 @@ class VoiceSessionRunner:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         transcript_path = self.out_dir / "transcript.txt"
         stt = create_stt_provider(self.device.stt)
-        tts = create_tts_provider(self.device.tts)
+        tts = create_tts_provider_from_device(self.device.tts)
         agent = self.service.create_agent(self.device)
 
         agent.initialize()

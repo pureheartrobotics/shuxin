@@ -22,19 +22,24 @@ TTS_EFFECT_ENV = "SHUXIN_TTS_EFFECT"
 
 @dataclass
 class ProviderConfig:
-    type: str = "local"
+    type: str = "volcengine-clone"
     model: str = ""
     model_dir: str = "models/SenseVoiceSmall"
     appid: str = ""
     api_url: str = ""
     api_key: str = ""
-    voice: str = "zh-CN-XiaoxiaoNeural"
+    voice: str = ""
     output_dir: str = "outputs"
     rate: str = ""
     pitch: str = ""
     volume: str = ""
     effect: str = ""
     effect_strength: str = "medium"
+    profile_id: str = ""
+    cluster: str = ""
+    speed_ratio: float | None = None
+    encoding: str = ""
+    uid: str = ""
 
 
 def resolve_tts_effect(config: ProviderConfig) -> tuple[str, str]:
@@ -60,6 +65,7 @@ class DeviceConfig:
     llm: LLMDeviceConfig = field(default_factory=LLMDeviceConfig)
     stt: ProviderConfig = field(default_factory=ProviderConfig)
     tts: ProviderConfig = field(default_factory=ProviderConfig)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -104,10 +110,11 @@ def default_tencent_stt_config() -> dict[str, Any]:
 
 
 def default_device_tts_config() -> dict[str, Any]:
-    """Default TTS for factory-provisioned devices (Edge TTS)."""
+    """Default TTS for factory-provisioned devices (Volcengine voice clone)."""
     return {
-        "type": "local",
-        "voice": "zh-CN-XiaoxiaoNeural",
+        "type": "volcengine-clone",
+        "profile_id": "shuxin",
+        "encoding": "mp3",
         "output_dir": "outputs",
     }
 

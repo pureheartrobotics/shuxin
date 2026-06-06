@@ -25,6 +25,7 @@ class UserSettings:
     token: str = ""
     audio_quota_mb: int = DEFAULT_AUDIO_QUOTA_MB
     llm_config: dict[str, Any] | None = None
+    agent_id: str = ""
 
     @property
     def audio_quota_bytes(self) -> int:

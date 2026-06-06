@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hmac
 import json
 import os
+import random
 import re
 import secrets
 import uuid
@@ -14,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from shuxin.voice.audio_files import compress_wav_to_mp3, sha256_file
+from shuxin.voice.audio_files import compress_wav_to_mp3, purge_attachment_file, sha256_file
 from shuxin.voice.device_secret_crypto import (
     encrypt_device_secret,
     mask_device_secret,
@@ -38,6 +39,14 @@ from shuxin.voice.memory_summary import (
     memory_field_defaults,
     should_merge_summary,
     sync_summary_json,
+)
+from shuxin.core.identity import VALID_MBTI_TYPES
+from shuxin.voice.agents import (
+    DEFAULT_AGENT_ID,
+    AgentRecord,
+    cache_agent,
+    get_cached_agent,
+    invalidate_agent_cache,
 )
 from shuxin.voice.users import (
     DEFAULT_AUDIO_QUOTA_MB,
@@ -145,6 +154,7 @@ class VoicePostgresRepository:
                     if exists:
                         raise ValueError(f"device_id already exists: {device_id}")
                     device_secret = secrets.token_urlsafe(32)
+                    blind_mbti = random.choice(sorted(VALID_MBTI_TYPES))
                     await self._insert_provisioned_device(
                         conn,
                         device_id=device_id,
@@ -155,6 +165,7 @@ class VoicePostgresRepository:
                             "provisioned_by": "admin_batch",
                             "label_batch": label_batch,
                             "sequence": sequence,
+                            "mbti": blind_mbti,
                         },
                     )
                     items.append(
@@ -166,6 +177,7 @@ class VoicePostgresRepository:
                             "qr_payload": f"{qr_base}?claim_code={claim_code}",
                             "barcode_url": f"/admin/api/claim-codes/{claim_code}/barcode.png",
                             "auth_mode": "per_device_secret",
+                            "mbti": blind_mbti,
                         }
                     )
         return {"items": items}
@@ -486,7 +498,7 @@ class VoicePostgresRepository:
         row = await self.pool.fetchrow(
             """
             SELECT d.device_id, d.auth_mode, d.device_secret_hash, b.user_id,
-                   u.audio_quota_mb, u.llm_config
+                   u.audio_quota_mb, u.llm_config, u.agent_id
             FROM devices d
             JOIN device_bindings b ON b.device_id = d.device_id AND b.status = 'active'
             JOIN users u ON u.user_id = b.user_id AND u.enabled = true AND u.deleted_at IS NULL
@@ -509,6 +521,7 @@ class VoicePostgresRepository:
             token="",
             audio_quota_mb=int(row["audio_quota_mb"]),
             llm_config=_json_obj(row["llm_config"]),
+            agent_id=str(row["agent_id"] or ""),
         )
 
     async def unbind_device(self, *, user_id: str, device_code: str) -> dict[str, Any]:
@@ -769,11 +782,13 @@ class VoicePostgresRepository:
                             device["device_id"],
                         )
 
+        await self.ensure_default_agents()
+
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         selected_id = validate_user_id(user_id or DEFAULT_USER_ID)
         row = await self.pool.fetchrow(
             """
-            SELECT user_id, token, audio_quota_mb, llm_config
+            SELECT user_id, token, audio_quota_mb, llm_config, agent_id
             FROM users
             WHERE user_id = $1 AND enabled = true AND deleted_at IS NULL
             """,
@@ -791,13 +806,14 @@ class VoicePostgresRepository:
             token=expected,
             audio_quota_mb=int(row["audio_quota_mb"]),
             llm_config=_json_obj(row["llm_config"]),
+            agent_id=str(row["agent_id"] or ""),
         )
 
     async def get_device(self, device_id: str | None) -> DeviceConfig:
         selected_id = validate_user_id(device_id or "demo-device-001")
         row = await self.pool.fetchrow(
             """
-            SELECT device_id, stt_config, tts_config, llm_config
+            SELECT device_id, stt_config, tts_config, llm_config, metadata
             FROM devices
             WHERE device_id = $1 AND enabled = true AND deleted_at IS NULL
             """,
@@ -810,6 +826,7 @@ class VoicePostgresRepository:
             llm=LLMDeviceConfig(**_json_obj(row["llm_config"])),
             stt=ProviderConfig(**_json_obj(row["stt_config"])),
             tts=ProviderConfig(**_json_obj(row["tts_config"])),
+            metadata=_json_obj(row["metadata"]),
         )
 
     async def touch_device_status(
@@ -1031,6 +1048,37 @@ class VoicePostgresRepository:
                     "over_quota": used > quota,
                 }
 
+    async def purge_expired_audio_attachments(self, *, retention_hours: int) -> dict[str, int]:
+        if retention_hours <= 0:
+            return {"purged": 0, "bytes_freed": 0}
+        purged = 0
+        bytes_freed = 0
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                rows = await conn.fetch(
+                    """
+                    SELECT attachment_id, path, size_bytes, user_id
+                    FROM audio_attachments
+                    WHERE deleted_at IS NULL
+                      AND created_at < now() - make_interval(hours => $1)
+                    ORDER BY created_at ASC, attachment_id ASC
+                    """,
+                    retention_hours,
+                )
+                for row in rows:
+                    path = Path(str(row["path"]))
+                    stop_at = _user_outputs_root(path, str(row["user_id"]))
+                    if path.exists():
+                        bytes_freed += purge_attachment_file(path, stop_at=stop_at)
+                    else:
+                        bytes_freed += int(row["size_bytes"] or 0)
+                    await conn.execute(
+                        "UPDATE audio_attachments SET deleted_at = now() WHERE attachment_id = $1",
+                        row["attachment_id"],
+                    )
+                    purged += 1
+        return {"purged": purged, "bytes_freed": bytes_freed}
+
     async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
         selected_id = _validate_device_code(device_id)
         row = await self.pool.fetchrow(
@@ -1060,10 +1108,12 @@ class VoicePostgresRepository:
         rows = await self.pool.fetch(
             """
             SELECT d.device_id, d.auth_mode, d.device_secret_encrypted,
-                   b.user_id, s.online, u.llm_config
+                   b.user_id, s.online, u.llm_config, u.agent_id,
+                   a.display_name AS agent_display_name, a.voice_type AS agent_voice_type
             FROM device_bindings b
             JOIN devices d ON d.device_id = b.device_id
             JOIN users u ON u.user_id = b.user_id
+            LEFT JOIN agents a ON a.agent_id = u.agent_id AND a.deleted_at IS NULL
             LEFT JOIN device_status s ON s.device_id = d.device_id
             WHERE b.status = 'active'
               AND d.enabled = true
@@ -1081,6 +1131,8 @@ class VoicePostgresRepository:
             if not secret:
                 continue
             llm = _json_obj(row["llm_config"])
+            agent_id = str(row["agent_id"] or DEFAULT_AGENT_ID)
+            voice_type = str(row["agent_voice_type"] or "")
             items.append(
                 {
                     "user_id": str(row["user_id"]),
@@ -1092,6 +1144,12 @@ class VoicePostgresRepository:
                     "llm_model": str(llm.get("model") or ""),
                     "llm_base_url": str(llm.get("base_url") or ""),
                     "llm_api_key_configured": bool(llm.get("api_key")),
+                    "agent_id": agent_id,
+                    "agent_display_name": str(row["agent_display_name"] or agent_id),
+                    "tts_voice_type": AgentRecord(
+                        agent_id=agent_id,
+                        voice_type=voice_type,
+                    ).to_public_dict()["voice_type"],
                 }
             )
         return {"items": items}
@@ -1156,6 +1214,256 @@ class VoicePostgresRepository:
             {"stt_type": "tencent-realtime", "updated_count": updated_count},
         )
         return {"updated_count": updated_count, "stt_type": "tencent-realtime"}
+
+    async def apply_default_tts_to_all_devices(self) -> dict[str, Any]:
+        """Set volcengine-clone TTS on all non-deleted devices (idempotent)."""
+        tts_config = json.dumps(default_device_tts_config(), ensure_ascii=False)
+        result = await self.pool.execute(
+            """
+            UPDATE devices
+            SET tts_config = $1::jsonb, updated_at = now()
+            WHERE deleted_at IS NULL
+            """,
+            tts_config,
+        )
+        updated_count = int(result.split()[-1]) if result else 0
+        await self.audit(
+            "apply_default_tts",
+            "device",
+            "*",
+            {"tts_type": "volcengine-clone", "updated_count": updated_count},
+        )
+        return {"updated_count": updated_count, "tts_type": "volcengine-clone"}
+
+    async def ensure_default_agents(self) -> None:
+        """Seed default shuxin agent and backfill user.agent_id after migrations."""
+        voice_type = os.environ.get("VOLCENGINE_TTS_VOICE_TYPE", "")
+        await self.pool.execute(
+            """
+            INSERT INTO agents (
+                agent_id, display_name, voice_type, cluster, speed_ratio, encoding,
+                uid, soul_path, metadata
+            )
+            VALUES (
+                'shuxin', '舒心', $1, 'volcano_icl', 1.0, 'mp3', 'shuxin',
+                'data/agents/shuxin/SOUL.md', '{"default_mbti":"INFJ"}'::jsonb
+            )
+            ON CONFLICT (agent_id) DO UPDATE SET
+                voice_type = CASE
+                    WHEN agents.voice_type = '' AND EXCLUDED.voice_type <> ''
+                    THEN EXCLUDED.voice_type
+                    ELSE agents.voice_type
+                END,
+                updated_at = now()
+            """,
+            voice_type,
+        )
+        await self.pool.execute(
+            """
+            UPDATE users
+            SET agent_id = 'shuxin', updated_at = now()
+            WHERE agent_id IS NULL AND deleted_at IS NULL
+            """
+        )
+        invalidate_agent_cache()
+
+    async def list_agents(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str = "",
+        q: str = "",
+    ) -> dict[str, Any]:
+        search = _search_pattern(q)
+        rows = await self.pool.fetch(
+            """
+            SELECT agent_id, display_name, voice_type, cluster, speed_ratio, encoding,
+                   uid, soul_path, initial_state, metadata, enabled, created_at, updated_at
+            FROM agents
+            WHERE deleted_at IS NULL
+              AND ($1 = '' OR agent_id > $1)
+              AND (
+                $3 = ''
+                OR agent_id ILIKE $3
+                OR display_name ILIKE $3
+                OR voice_type ILIKE $3
+              )
+            ORDER BY agent_id ASC
+            LIMIT $2
+            """,
+            cursor,
+            max(1, min(limit, 100)),
+            search,
+        )
+        items = [AgentRecord.from_row(row).to_admin_dict() for row in rows]
+        return {"items": items, "next_cursor": items[-1]["agent_id"] if len(items) == limit else ""}
+
+    async def get_agent(self, agent_id: str) -> AgentRecord:
+        selected = validate_user_id(agent_id)
+        cached = get_cached_agent(selected)
+        if cached is not None:
+            return cached
+        row = await self.pool.fetchrow(
+            """
+            SELECT agent_id, display_name, voice_type, cluster, speed_ratio, encoding,
+                   uid, soul_path, initial_state, metadata, enabled
+            FROM agents
+            WHERE agent_id = $1 AND deleted_at IS NULL AND enabled = true
+            """,
+            selected,
+        )
+        if row is None:
+            raise ValueError(f"agent not found: {selected}")
+        record = AgentRecord.from_row(row)
+        cache_agent(record)
+        return record
+
+    async def get_user_agent_id(self, user_id: str) -> str:
+        selected = validate_user_id(user_id)
+        row = await self.pool.fetchrow(
+            """
+            SELECT agent_id
+            FROM users
+            WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+            """,
+            selected,
+        )
+        if row is None:
+            raise PermissionError("user is disabled or not found")
+        agent_id = str(row["agent_id"] or "").strip()
+        return agent_id or DEFAULT_AGENT_ID
+
+    async def create_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        agent_id = validate_user_id(str(payload.get("agent_id") or ""))
+        voice_type = str(payload.get("voice_type") or "").strip()
+        if not voice_type:
+            raise ValueError("voice_type is required")
+        metadata = dict(payload.get("metadata") or {})
+        await self.pool.execute(
+            """
+            INSERT INTO agents (
+                agent_id, display_name, voice_type, cluster, speed_ratio, encoding,
+                uid, soul_path, initial_state, metadata, enabled, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, now())
+            ON CONFLICT (agent_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                voice_type = excluded.voice_type,
+                cluster = excluded.cluster,
+                speed_ratio = excluded.speed_ratio,
+                encoding = excluded.encoding,
+                uid = excluded.uid,
+                soul_path = excluded.soul_path,
+                initial_state = excluded.initial_state,
+                metadata = excluded.metadata,
+                enabled = excluded.enabled,
+                deleted_at = NULL,
+                updated_at = now()
+            """,
+            agent_id,
+            str(payload.get("display_name") or agent_id),
+            voice_type,
+            str(payload.get("cluster") or "volcano_icl"),
+            float(payload.get("speed_ratio") or 1.0),
+            str(payload.get("encoding") or "mp3"),
+            str(payload.get("uid") or agent_id),
+            str(payload.get("soul_path") or ""),
+            json.dumps(payload.get("initial_state") or {}, ensure_ascii=False),
+            json.dumps(metadata, ensure_ascii=False),
+            bool(payload.get("enabled", True)),
+        )
+        invalidate_agent_cache(agent_id)
+        await self.audit("create_agent", "agent", agent_id, {"display_name": payload.get("display_name")})
+        record = await self.get_agent(agent_id)
+        return record.to_admin_dict()
+
+    async def update_agent(self, agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        selected = validate_user_id(agent_id)
+        existing = await self.pool.fetchrow(
+            "SELECT * FROM agents WHERE agent_id = $1 AND deleted_at IS NULL",
+            selected,
+        )
+        if existing is None:
+            raise ValueError(f"agent not found: {selected}")
+        fields: list[str] = []
+        values: list[Any] = []
+        index = 1
+        mapping = {
+            "display_name": str,
+            "voice_type": str,
+            "cluster": str,
+            "encoding": str,
+            "uid": str,
+            "soul_path": str,
+        }
+        for key, caster in mapping.items():
+            if key not in payload:
+                continue
+            fields.append(f"{key} = ${index}")
+            values.append(caster(payload.get(key) or ""))
+            index += 1
+        if "speed_ratio" in payload:
+            fields.append(f"speed_ratio = ${index}")
+            values.append(float(payload["speed_ratio"]))
+            index += 1
+        if "enabled" in payload:
+            fields.append(f"enabled = ${index}")
+            values.append(bool(payload["enabled"]))
+            index += 1
+        if "initial_state" in payload:
+            fields.append(f"initial_state = ${index}::jsonb")
+            values.append(json.dumps(payload.get("initial_state") or {}, ensure_ascii=False))
+            index += 1
+        if "metadata" in payload:
+            fields.append(f"metadata = ${index}::jsonb")
+            values.append(json.dumps(payload.get("metadata") or {}, ensure_ascii=False))
+            index += 1
+        if not fields:
+            record = AgentRecord.from_row(existing)
+            return record.to_admin_dict()
+        fields.append("updated_at = now()")
+        values.append(selected)
+        await self.pool.execute(
+            f"UPDATE agents SET {', '.join(fields)} WHERE agent_id = ${index}",
+            *values,
+        )
+        invalidate_agent_cache(selected)
+        await self.audit("update_agent", "agent", selected, _mask_secrets(payload))
+        record = await self.get_agent(selected)
+        return record.to_admin_dict()
+
+    async def soft_delete_agent(self, agent_id: str) -> None:
+        selected = validate_user_id(agent_id)
+        if selected == DEFAULT_AGENT_ID:
+            raise ValueError("default agent shuxin cannot be deleted")
+        await self.pool.execute(
+            """
+            UPDATE agents
+            SET deleted_at = now(), enabled = false, updated_at = now()
+            WHERE agent_id = $1
+            """,
+            selected,
+        )
+        invalidate_agent_cache(selected)
+        await self.audit("soft_delete_agent", "agent", selected, {})
+
+    async def patch_user(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        selected = validate_user_id(user_id)
+        if "agent_id" in payload:
+            agent_id = str(payload.get("agent_id") or "").strip()
+            if agent_id:
+                await self.get_agent(agent_id)
+            await self.pool.execute(
+                """
+                UPDATE users
+                SET agent_id = $2, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                selected,
+                agent_id or None,
+            )
+            await self.audit("patch_user_agent", "user", selected, {"agent_id": agent_id})
+        return {"user_id": selected, "agent_id": payload.get("agent_id", "")}
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         selected_id = _validate_device_code(device_id)
@@ -1316,7 +1624,7 @@ class VoicePostgresRepository:
             """
             SELECT user_id, token <> '' AS token_configured, audio_quota_mb,
                    token_quota_total, token_quota_used, quota_note, llm_config,
-                   enabled, metadata, created_at, updated_at
+                   enabled, metadata, agent_id, created_at, updated_at
             FROM users
             WHERE deleted_at IS NULL
               AND ($1 = '' OR user_id > $1)
@@ -1344,6 +1652,7 @@ class VoicePostgresRepository:
                 "quota_note": str(row["quota_note"] or ""),
                 "llm_config": _mask_secrets(_json_obj(row["llm_config"])),
                 "enabled": bool(row["enabled"]),
+                "agent_id": str(row["agent_id"] or ""),
                 "metadata": _json_obj(row["metadata"]),
                 "created_at": _dt(row["created_at"]),
                 "updated_at": _dt(row["updated_at"]),
@@ -1361,15 +1670,22 @@ class VoicePostgresRepository:
                 user_id,
             )
             llm_config = _merge_dict(_json_obj(existing_llm), llm_config)
-            if not llm_config.get("api_key"):
-                llm_config.pop("api_key", None)
+        if not llm_config.get("api_key"):
+            llm_config.pop("api_key", None)
+        agent_id = payload.get("agent_id")
+        if agent_id is not None:
+            agent_id = str(agent_id).strip() or None
+            if agent_id:
+                await self.get_agent(agent_id)
+        else:
+            agent_id = None
         await self.pool.execute(
             """
             INSERT INTO users (
                 user_id, token, audio_quota_mb, token_quota_total, token_quota_used,
-                quota_note, llm_config, enabled, metadata, updated_at
+                quota_note, llm_config, enabled, metadata, agent_id, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, now())
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, now())
             ON CONFLICT (user_id) DO UPDATE SET
                 token = excluded.token,
                 audio_quota_mb = excluded.audio_quota_mb,
@@ -1379,6 +1695,7 @@ class VoicePostgresRepository:
                 llm_config = excluded.llm_config,
                 enabled = excluded.enabled,
                 metadata = excluded.metadata,
+                agent_id = COALESCE(excluded.agent_id, users.agent_id),
                 updated_at = now(),
                 deleted_at = NULL
             """,
@@ -1391,6 +1708,7 @@ class VoicePostgresRepository:
             json.dumps(llm_config, ensure_ascii=False),
             bool(payload.get("enabled", True)),
             json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+            agent_id,
         )
         await self.audit("upsert_user", "user", user_id, _mask_secrets({**payload, "token": "***"}))
         return {"user_id": user_id}
@@ -1745,8 +2063,8 @@ def _load_devices(path: str | None, default_device_id: str) -> list[dict[str, An
             {
                 "device_id": validate_user_id(default_device_id),
                 "llm": {},
-                "stt": {"type": "local"},
-                "tts": {"type": "local"},
+                "stt": default_tencent_stt_config(),
+                "tts": default_device_tts_config(),
             }
         )
     return selected
@@ -1898,6 +2216,13 @@ def _validate_claim_code(claim_code: str) -> str:
 def _search_pattern(q: str) -> str:
     selected = str(q or "").strip()
     return f"%{selected}%" if selected else ""
+
+
+def _user_outputs_root(path: Path, user_id: str) -> Path | None:
+    for parent in path.parents:
+        if parent.name == user_id and parent.parent.name == "users":
+            return parent
+    return None
 
 
 def _validate_code_prefix(value: str) -> str:

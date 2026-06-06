@@ -5,8 +5,11 @@ from pathlib import Path
 
 from shuxin.core.agent import Agent
 from shuxin.core.config import Config
+from shuxin.core.identity import VALID_MBTI_TYPES
+from shuxin.voice.agents import AgentRecord
 from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
-from shuxin.voice.providers import create_stt_provider, create_tts_provider
+from shuxin.voice.providers import create_stt_provider
+from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
 
 
 def _voice_max_history() -> int:
@@ -46,7 +49,7 @@ class VoiceService:
     ) -> Path:
         """按设备配置执行一次语音合成。"""
         device = self.device_provider.get(device_id)
-        provider = create_tts_provider(device.tts)
+        provider = create_tts_provider_from_device(device.tts)
         return await provider.synthesize(text, output_path)
 
     async def chat_audio(
@@ -59,7 +62,7 @@ class VoiceService:
         device = self.device_provider.get(device_id)
         text = await create_stt_provider(device.stt).transcribe(audio_path)
         reply = self.chat_text(text, device)
-        speech_path = await create_tts_provider(device.tts).synthesize(reply, output_path)
+        speech_path = await create_tts_provider_from_device(device.tts).synthesize(reply, output_path)
         return text, reply, speech_path
 
     def chat_text(self, text: str, device: DeviceConfig, user_home: Path | None = None) -> str:
@@ -74,21 +77,43 @@ class VoiceService:
         finally:
             agent.shutdown()
 
-    def create_agent(self, device: DeviceConfig, user_home: Path | None = None) -> Agent:
+    def create_agent(
+        self,
+        device: DeviceConfig,
+        user_home: Path | None = None,
+        *,
+        agent: AgentRecord | None = None,
+    ) -> Agent:
         """根据设备和用户目录创建 Agent 实例。"""
-        return Agent(config=self.build_agent_config(device, user_home=user_home))
+        return Agent(
+            config=self._build_agent_config(device, user_home=user_home, agent=agent)
+        )
 
-    def build_agent_config(self, device: DeviceConfig, user_home: Path | None = None) -> Config:
+    def build_agent_config(
+        self,
+        device: DeviceConfig,
+        user_home: Path | None = None,
+        *,
+        agent: AgentRecord | None = None,
+    ) -> Config:
         """构建 Agent 配置，保留给测试直接断言配置合成结果。"""
-        return self._build_agent_config(device, user_home=user_home)
+        return self._build_agent_config(device, user_home=user_home, agent=agent)
 
-    def _build_agent_config(self, device: DeviceConfig, user_home: Path | None = None) -> Config:
+    def _build_agent_config(
+        self,
+        device: DeviceConfig,
+        user_home: Path | None = None,
+        *,
+        agent: AgentRecord | None = None,
+    ) -> Config:
         """把设备级 LLM 配置覆盖到全局配置上。"""
         config = Config.load(self.config_path)
         if user_home is not None:
             # Web 多用户场景必须隔离 shuxin_home，否则长期记忆和陪伴状态会串用户。
             config.shuxin_home = str(user_home)
             config.companion.data_dir = str(user_home / "companion")
+        if agent is not None and agent.soul_path.strip():
+            config.soul.soul_path = agent.soul_path.strip()
         if device.llm.provider:
             config.llm.provider = device.llm.provider
         if device.llm.model:
@@ -100,3 +125,14 @@ class VoiceService:
         config.max_history = _voice_max_history()
         config.llm.max_tokens = _voice_max_tokens()
         return config
+
+    @staticmethod
+    def apply_device_mbti(agent: Agent, device: DeviceConfig, agent_record: AgentRecord | None) -> None:
+        """Apply blind-box device MBTI after Agent.initialize()."""
+        device_mbti = str(device.metadata.get("mbti") or "").strip().upper()
+        if not device_mbti and agent_record is not None:
+            device_mbti = str(agent_record.metadata.get("default_mbti") or "").strip().upper()
+        if device_mbti and device_mbti in VALID_MBTI_TYPES:
+            agent.identity.set_mbti(device_mbti)
+            if agent._initialized:
+                agent._build_system_prompt()
