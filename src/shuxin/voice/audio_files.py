@@ -104,3 +104,19 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def purge_attachment_file(path: Path, *, stop_at: Path | None = None) -> int:
+    """Delete an attachment file and best-effort empty parent dirs. Returns bytes freed."""
+    size = path.stat().st_size if path.exists() else 0
+    path.unlink(missing_ok=True)
+    if stop_at is None:
+        return size
+    current = path.parent
+    while current != stop_at and stop_at in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+    return size

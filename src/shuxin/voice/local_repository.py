@@ -134,6 +134,26 @@ class VoiceLocalRepository:
             user_settings.user_id,
         ).compress_if_needed(user_settings)
 
+    async def purge_expired_audio_attachments(self, *, retention_hours: int) -> dict[str, int]:
+        purged = 0
+        bytes_freed = 0
+        users_root = self.out_dir / "users"
+        if not users_root.exists():
+            return {"purged": 0, "bytes_freed": 0}
+        for user_dir in users_root.iterdir():
+            if not user_dir.is_dir():
+                continue
+            try:
+                storage = UserVoiceStorage(self.shuxin_home, self.out_dir, user_dir.name)
+            except ValueError:
+                continue
+            result = await storage.purge_expired_audio_attachments(
+                retention_hours=retention_hours
+            )
+            purged += int(result.get("purged", 0))
+            bytes_freed += int(result.get("bytes_freed", 0))
+        return {"purged": purged, "bytes_freed": bytes_freed}
+
     async def maybe_merge_rolling_summary(
         self,
         user_settings: UserSettings,
@@ -264,6 +284,7 @@ class VoiceLocalRepository:
                     "quota_note": "",
                     "llm_config": settings.llm_config or {},
                     "enabled": True,
+                    "agent_id": "",
                     "metadata": {},
                     "created_at": "",
                     "updated_at": "",
@@ -292,6 +313,55 @@ class VoiceLocalRepository:
 
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for apply_default_stt_to_all_devices")
+
+    async def apply_default_tts_to_all_devices(self) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for apply_default_tts_to_all_devices")
+
+    async def ensure_default_agents(self) -> None:
+        return None
+
+    async def list_agents(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
+        import os
+
+        from shuxin.voice.agents import AgentRecord
+
+        record = AgentRecord(
+            agent_id="shuxin",
+            display_name="舒心",
+            voice_type=os.environ.get("VOLCENGINE_TTS_VOICE_TYPE", ""),
+            soul_path="data/agents/shuxin/SOUL.md",
+        )
+        return {"items": [record.to_admin_dict()], "next_cursor": ""}
+
+    async def get_agent(self, agent_id: str) -> AgentRecord:
+        import os
+
+        from shuxin.voice.agents import AgentRecord, DEFAULT_AGENT_ID
+
+        selected = agent_id.strip() or DEFAULT_AGENT_ID
+        return AgentRecord(
+            agent_id=selected,
+            display_name=selected,
+            voice_type=os.environ.get("VOLCENGINE_TTS_VOICE_TYPE", ""),
+            soul_path="data/agents/shuxin/SOUL.md",
+        )
+
+    async def get_user_agent_id(self, user_id: str) -> str:
+        from shuxin.voice.agents import DEFAULT_AGENT_ID
+
+        return DEFAULT_AGENT_ID
+
+    async def create_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for agent writes")
+
+    async def update_agent(self, agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for agent writes")
+
+    async def soft_delete_agent(self, agent_id: str) -> None:
+        raise RuntimeError("DATABASE_URL is required for agent writes")
+
+    async def patch_user(self, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for patch_user")
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")

@@ -10,7 +10,7 @@ import subprocess
 import uuid
 import wave
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ from shuxin.voice.memory_summary import (
     should_merge_summary,
     sync_summary_json,
 )
+from shuxin.voice.audio_files import purge_attachment_file
 from shuxin.voice.config import DeviceConfig
 from shuxin.voice.users import UserSettings, validate_user_id
 
@@ -196,6 +197,16 @@ class UserVoiceStorage:
         """如果超过用户音频额度，把旧输入 wav 压缩为 mp3。"""
         async with self._lock:
             return self._compress_if_needed_locked(user_settings)
+
+    async def purge_expired_audio_attachments(self, *, retention_hours: int) -> dict[str, int]:
+        """Delete audio files older than retention_hours and soft-delete attachment rows."""
+        if retention_hours <= 0:
+            return {"purged": 0, "bytes_freed": 0}
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).replace(
+            tzinfo=None
+        ).isoformat(timespec="seconds")
+        async with self._lock:
+            return self._purge_expired_attachments_locked(cutoff)
 
     def export_summary(self) -> dict[str, Any]:
         """导出用户共享记忆摘要，供调试页或后台接口查看。"""
@@ -392,6 +403,34 @@ class UserVoiceStorage:
                 "used_bytes": used,
                 "over_quota": over_quota,
             }
+
+    def _purge_expired_attachments_locked(self, cutoff: str) -> dict[str, int]:
+        purged = 0
+        bytes_freed = 0
+        now = _now()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT attachment_id, path, size_bytes
+                FROM attachments
+                WHERE deleted_at IS NULL
+                  AND created_at < ?
+                ORDER BY created_at ASC, attachment_id ASC
+                """,
+                (cutoff,),
+            ).fetchall()
+            for attachment_id, raw_path, size_bytes in rows:
+                path = Path(str(raw_path))
+                if path.exists():
+                    bytes_freed += purge_attachment_file(path, stop_at=self.outputs_root)
+                else:
+                    bytes_freed += int(size_bytes or 0)
+                conn.execute(
+                    "UPDATE attachments SET deleted_at = ? WHERE attachment_id = ?",
+                    (now, attachment_id),
+                )
+                purged += 1
+        return {"purged": purged, "bytes_freed": bytes_freed}
 
     def _attachment_total_bytes(self, conn: sqlite3.Connection) -> int:
         """统计未删除附件的总字节数，用于额度判断。"""
