@@ -16,6 +16,29 @@ services:
     networks:
       - shuxin_backend
 
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    container_name: shuxin-qdrant
+    volumes:
+      - shuxin_qdrant_data:/qdrant/storage
+    healthcheck:
+      # qdrant/qdrant 镜像无 wget/curl；用 bash /dev/tcp 探测 /readyz
+      test:
+        - CMD-SHELL
+        - >
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333
+          && printf "GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3
+          && head -c 256 <&3 | grep -q "all shards are ready"'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # 本地默认 6335 避免与本机已有 Qdrant(6333) 冲突；生产部署见 docs/DEPLOY_SERVER.md
+    ports:
+      - "${QDRANT_HTTP_PORT:-6335}:6333"
+    networks:
+      - shuxin_backend
+
   shuxin-voice-demo:
     build:
       context: .
@@ -24,6 +47,8 @@ services:
     container_name: shuxin-voice-demo-pg
     depends_on:
       postgres:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     environment:
       SHUXIN_HOME: /app/data/shuxin_home
@@ -47,6 +72,14 @@ services:
       TENCENT_ASR_APPID: ${TENCENT_ASR_APPID:-}
       TENCENTCLOUD_SECRET_ID: ${TENCENTCLOUD_SECRET_ID:-}
       TENCENTCLOUD_SECRET_KEY: ${TENCENTCLOUD_SECRET_KEY:-}
+      SHUXIN_MEM0_ENABLED: ${SHUXIN_MEM0_ENABLED:-1}
+      SHUXIN_QDRANT_HOST: ${SHUXIN_QDRANT_HOST:-qdrant}
+      SHUXIN_QDRANT_PORT: ${SHUXIN_QDRANT_PORT:-6333}
+      SHUXIN_QDRANT_COLLECTION: ${SHUXIN_QDRANT_COLLECTION:-shuxin_memories}
+      SHUXIN_QDRANT_API_KEY: ${SHUXIN_QDRANT_API_KEY:-}
+      SHUXIN_EMBED_MODEL: ${SHUXIN_EMBED_MODEL:-text-embedding-3-small}
+      SHUXIN_EMBED_DIMS: ${SHUXIN_EMBED_DIMS:-1536}
+      SHUXIN_MEM0_SEARCH_TOP_K: ${SHUXIN_MEM0_SEARCH_TOP_K:-5}
     ports:
       - "${VOICE_DEMO_PORT:-8765}:8765"
     volumes:
@@ -64,6 +97,7 @@ services:
 
 volumes:
   shuxin_postgres_data:
+  shuxin_qdrant_data:
 
 networks:
   shuxin_backend:

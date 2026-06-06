@@ -201,7 +201,20 @@ else
   fi
 fi
 
-info "重建并启动 voice 服务 ..."
-docker compose -p "$PROJECT_NAME" up -d --force-recreate "$SERVICE"
+info "启动依赖服务（postgres、qdrant）..."
+docker compose -p "$PROJECT_NAME" up -d postgres qdrant
+
+info "重建并启动 voice 服务（--no-deps: 保持 postgres/qdrant 健康）..."
+docker compose -p "$PROJECT_NAME" up -d --force-recreate --no-deps "$SERVICE"
+
+QDRANT_PORT="${QDRANT_HTTP_PORT:-6335}"
+if [[ -f .env ]]; then
+  _env_port="$(grep -E '^QDRANT_HTTP_PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' || true)"
+  [[ -n "$_env_port" ]] && QDRANT_PORT="$_env_port"
+fi
+if [[ "$QDRANT_PORT" == "6335" ]]; then
+  warn "生产部署前请将 .env 中 QDRANT_HTTP_PORT 改为 6333（见 docs/DEPLOY_SERVER.md）"
+fi
 
 info "重部署完成，挂载的运行时数据已保留。"
+info "Qdrant 控制台（若已映射端口）: http://localhost:${QDRANT_PORT}/dashboard"
