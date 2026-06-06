@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Restore and deploy a ShuXin voice demo bundle on a target host.
+# 在目标主机恢复并部署舒心语音 demo 迁移包。
 #
-# Usage:
-#   bash scripts/import_deploy.sh <bundle.tar.gz>
+# 用法:
+#   bash scripts/import_deploy.sh <bundle.tar.gz> [安装目录]
+#
+# 安装目录默认为当前目录，可用 INSTALL_DIR 环境变量覆盖。
+# 优先级: 第二参数 > INSTALL_DIR > $(pwd)
+#
+# 恢复代码、bind mount、Postgres（pg_restore）、Qdrant 存储卷，
+# 然后执行 redeploy_docker.sh --build 启动全栈。
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
   exec bash "$0" "$@"
@@ -10,19 +16,23 @@ fi
 
 set -euo pipefail
 
-BUNDLE="${1:-}"
-[[ -n "$BUNDLE" ]] || { echo "Usage: bash scripts/import_deploy.sh <bundle.tar.gz>" >&2; exit 1; }
-[[ -f "$BUNDLE" ]] || { echo "[deploy] ERROR: bundle not found: $BUNDLE" >&2; exit 1; }
+info() { echo -e "\033[1;32m[deploy]\033[0m $*"; }
+warn() { echo -e "\033[1;33m[deploy] 警告:\033[0m $*" >&2; }
+error() { echo -e "\033[1;31m[deploy] 错误:\033[0m $*" >&2; exit 1; }
 
-PROJECT_NAME="${PROJECT_NAME:-shuxin_voice_demo}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/shuxin-voice-demo}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+BUNDLE="${1:-}"
+[[ -n "$BUNDLE" ]] || {
+  echo "用法: bash scripts/import_deploy.sh <bundle.tar.gz> [安装目录]" >&2
+  exit 1
+}
+[[ -f "$BUNDLE" ]] || error "未找到迁移包: $BUNDLE"
+[[ -z "${3:-}" ]] || error "参数过多"
+
+TARGET_DIR="${2:-${INSTALL_DIR:-$(pwd)}}"
+INSTALL_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd)" || error "无效的安装目录: $TARGET_DIR"
+
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 EXTRACT_DIR="/tmp/shuxin_voice_import_${TIMESTAMP}"
-
-info() { echo -e "\033[1;32m[deploy]\033[0m $*"; }
-warn() { echo -e "\033[1;33m[deploy] WARN:\033[0m $*" >&2; }
-error() { echo -e "\033[1;31m[deploy] ERROR:\033[0m $*" >&2; exit 1; }
 
 cleanup() {
   rm -rf "$EXTRACT_DIR"
@@ -31,13 +41,20 @@ trap cleanup EXIT
 
 check_deps() {
   for cmd in docker tar; do
-    command -v "$cmd" >/dev/null 2>&1 || error "'$cmd' not found"
+    command -v "$cmd" >/dev/null 2>&1 || error "未找到命令 '$cmd'"
   done
-  docker compose version >/dev/null 2>&1 || error "docker compose v2 not found"
+  docker compose version >/dev/null 2>&1 || error "未找到 docker compose v2"
+  docker info >/dev/null 2>&1 || error "Docker 未运行"
+}
+
+warn_existing_install() {
+  if [[ -f "${INSTALL_DIR}/docker-compose.yml" ]]; then
+    warn "安装目录已有 docker-compose.yml，导入将覆盖项目文件"
+  fi
 }
 
 extract_bundle() {
-  info "Step 1/6  Extracting bundle ..."
+  info "步骤 1/8  解包 ..."
   mkdir -p "$EXTRACT_DIR"
   tar xzf "$BUNDLE" -C "$EXTRACT_DIR"
   if [[ -f "${EXTRACT_DIR}/BUNDLE_INFO.txt" ]]; then
@@ -46,62 +63,132 @@ extract_bundle() {
 }
 
 restore_code() {
-  info "Step 2/6  Restoring code to ${INSTALL_DIR} ..."
-  [[ -f "${EXTRACT_DIR}/code.tar.gz" ]] || error "code.tar.gz missing from bundle"
+  info "步骤 2/8  恢复代码到 ${INSTALL_DIR} ..."
+  [[ -f "${EXTRACT_DIR}/code.tar.gz" ]] || error "迁移包中缺少 code.tar.gz"
   mkdir -p "$INSTALL_DIR"
   tar xzf "${EXTRACT_DIR}/code.tar.gz" -C "$INSTALL_DIR" --strip-components=1
   cd "$INSTALL_DIR"
+  # shellcheck source=lib/docker_compose.sh
+  source "${INSTALL_DIR}/scripts/lib/docker_compose.sh"
 }
 
 restore_volumes() {
-  info "Step 3/6  Restoring data/models/samples ..."
+  info "步骤 3/8  恢复 data/models/samples/outputs ..."
   mkdir -p data models samples outputs
 
   [[ -f "${EXTRACT_DIR}/data.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/data.tar.gz" -C "$INSTALL_DIR"
-  [[ -f "${EXTRACT_DIR}/models.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/models.tar.gz" -C "$INSTALL_DIR" || warn "models.tar.gz missing; add model files before STT"
+  [[ -f "${EXTRACT_DIR}/models.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/models.tar.gz" -C "$INSTALL_DIR" \
+    || warn "缺少 models.tar.gz，STT 前需自行准备模型"
   [[ -f "${EXTRACT_DIR}/samples.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/samples.tar.gz" -C "$INSTALL_DIR"
+  [[ -f "${EXTRACT_DIR}/outputs.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/outputs.tar.gz" -C "$INSTALL_DIR"
 
   if [[ ! -f data/devices.yaml && -f data/devices.yaml.example ]]; then
     cp data/devices.yaml.example data/devices.yaml
-    warn "Created data/devices.yaml from example; fill real API values before chat-audio"
+    warn "已从示例创建 data/devices.yaml，chat-audio 前请填写真实 API 配置"
   fi
 }
 
 init_env() {
-  info "Step 4/6  Initializing .env ..."
+  info "步骤 4/8  初始化 .env ..."
   if [[ ! -f .env ]]; then
     cp .env.example .env
-    warn "Created .env from .env.example; fill real API values before chat-audio"
+    warn "已从 .env.example 创建 .env，chat-audio 前请填写 DEMO_LLM_API_KEY 等密钥"
   else
-    info "  .env already exists"
+    info "  .env 已存在"
   fi
 }
 
-build_image() {
-  info "Step 5/6  Building Docker image ..."
-  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" build
+restore_postgres() {
+  [[ -f "${EXTRACT_DIR}/postgres.dump" ]] || {
+    warn "缺少 postgres.dump，已跳过 DB 恢复（redeploy 将使用全新 Postgres）"
+    return 0
+  }
+
+  info "步骤 5/8  从 dump 恢复 Postgres ..."
+  compose_cmd up -d postgres
+  load_postgres_env
+  if ! wait_postgres_healthy 60; then
+    error "postgres 未就绪，无法 pg_restore"
+  fi
+
+  compose_cmd exec -T postgres pg_restore \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-acl \
+    < "${EXTRACT_DIR}/postgres.dump" || warn "pg_restore 有警告（空库首次恢复时可能正常）"
+  info "  Postgres 恢复完成"
 }
 
-smoke_test() {
-  info "Step 6/6  Running smoke test ..."
-  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm \
-    shuxin-voice-demo python -m shuxin.voice.cli --help
+restore_qdrant() {
+  [[ -f "${EXTRACT_DIR}/qdrant_storage.tar.gz" ]] || {
+    warn "缺少 qdrant_storage.tar.gz，已跳过 Qdrant 恢复（redeploy 将使用全新向量库）"
+    return 0
+  }
+
+  info "步骤 6/8  恢复 Qdrant 存储卷 ..."
+  local vol
+  vol="$(compose_volume shuxin_qdrant_data)"
+  compose_cmd up -d qdrant
+  compose_cmd stop qdrant
+  docker run --rm \
+    -v "${vol}:/dest" \
+    -v "${EXTRACT_DIR}:/backup:ro" \
+    alpine sh -c 'rm -rf /dest/* /dest/.[!.]* 2>/dev/null; tar xzf /backup/qdrant_storage.tar.gz -C /dest'
+  compose_cmd up -d qdrant
+  info "  Qdrant 存储恢复完成"
+}
+
+redeploy_stack() {
+  info "步骤 7/8  构建镜像并启动全栈 ..."
+  bash scripts/redeploy_docker.sh --build
+}
+
+verify_health() {
+  info "步骤 8/8  检查语音服务健康状态 ..."
+  load_voice_port
+  local url="http://127.0.0.1:${VOICE_DEMO_PORT}/health"
+  local max=30 i=0
+
+  while [[ "$i" -lt "$max" ]]; do
+    if command -v curl >/dev/null 2>&1 && curl -sf "$url" >/dev/null 2>&1; then
+      info "  健康检查通过: ${url}"
+      return 0
+    fi
+    if docker exec shuxin-voice-demo-pg python -c \
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)" \
+        >/dev/null 2>&1; then
+      info "  健康检查通过: ${url}"
+      return 0
+    fi
+    sleep 2
+    i=$((i + 1))
+  done
+
+  warn "健康检查超时: ${url}，服务可能仍在启动"
+  warn "请检查: docker compose -p ${PROJECT_NAME} ps"
+}
+
+finish() {
+  load_voice_port
   info ""
-  info "Deploy complete."
-  info "Try:"
-  info "  cd ${INSTALL_DIR}"
-  info "  docker compose run --rm shuxin-voice-demo python -m shuxin.voice.cli tts \"hello\" --out outputs/hello.mp3"
+  info "部署完成。"
+  info "  安装目录 : ${INSTALL_DIR}"
+  info "  语音测试台: http://localhost:${VOICE_DEMO_PORT}/voice-demo"
+  warn "请编辑 .env 填入真实 API 密钥，然后在安装目录执行: bash scripts/redeploy_docker.sh"
 }
 
 main() {
-  info "ShuXin voice demo deploy (${TIMESTAMP})"
+  info "舒心语音 demo 部署 (${TIMESTAMP})"
+  info "安装目录: ${INSTALL_DIR}"
   check_deps
+  warn_existing_install
   extract_bundle
   restore_code
   restore_volumes
   init_env
-  build_image
-  smoke_test
+  restore_postgres
+  restore_qdrant
+  redeploy_stack
+  verify_health
+  finish
 }
 
 main "$@"
