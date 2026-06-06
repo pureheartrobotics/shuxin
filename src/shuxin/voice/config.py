@@ -17,6 +17,9 @@ class LLMDeviceConfig:
     api_key: str = ""
 
 
+TTS_EFFECT_ENV = "SHUXIN_TTS_EFFECT"
+
+
 @dataclass
 class ProviderConfig:
     type: str = "local"
@@ -27,6 +30,28 @@ class ProviderConfig:
     api_key: str = ""
     voice: str = "zh-CN-XiaoxiaoNeural"
     output_dir: str = "outputs"
+    rate: str = ""
+    pitch: str = ""
+    volume: str = ""
+    effect: str = ""
+    effect_strength: str = "medium"
+
+
+def resolve_tts_effect(config: ProviderConfig) -> tuple[str, str]:
+    """Device tts.effect overrides env SHUXIN_TTS_EFFECT when set."""
+    device_effect = (config.effect or "").strip().lower()
+    env_effect = os.environ.get(TTS_EFFECT_ENV, "").strip().lower()
+    selected = device_effect or env_effect or "none"
+    if selected in {"", "none", "off", "false", "0"}:
+        return "none", _normalize_effect_strength(config.effect_strength)
+    return selected, _normalize_effect_strength(config.effect_strength)
+
+
+def _normalize_effect_strength(strength: str | None) -> str:
+    value = (strength or "medium").strip().lower()
+    if value in {"low", "medium", "high"}:
+        return value
+    return "medium"
 
 
 @dataclass

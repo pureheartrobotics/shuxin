@@ -5,8 +5,8 @@ import re
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-
-from shuxin.voice.config import ProviderConfig
+from shuxin.voice.audio_effects import is_karen_style_effect
+from shuxin.voice.config import ProviderConfig, resolve_tts_effect
 
 
 class STTProvider(ABC):
@@ -93,7 +93,7 @@ class FunASRLocalProvider(STTProvider):
             from funasr import AutoModel
         except ImportError as exc:
             raise RuntimeError(
-                "FunASR is not installed. Install requirements-voice-demo.txt "
+                "FunASR is not installed. Install requirements-voice-stack.txt "
                 "or build the Docker image."
             ) from exc
 
@@ -142,7 +142,18 @@ class EdgeTTSProvider(TTSProvider):
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
-        self.voice = config.voice or "zh-CN-XiaoxiaoNeural"
+        self.voice = config.voice or "zh-CN-XiaoyiNeural"
+        self.rate = config.rate or "-8%"
+        self.pitch = config.pitch or "-2Hz"
+        self.volume = config.volume or "+0%"
+        self._effect, self._effect_strength = resolve_tts_effect(config)
+
+    def _communicate_kwargs(self) -> dict[str, str]:
+        return {
+            "rate": self.rate,
+            "pitch": self.pitch,
+            "volume": self.volume,
+        }
 
     async def synthesize(self, text: str, output_path: Path) -> Path:
         """调用 edge-tts 生成 mp3；如果目标是 wav，则再转码一次。"""
@@ -153,21 +164,37 @@ class EdgeTTSProvider(TTSProvider):
             import edge_tts
         except ImportError as exc:
             raise RuntimeError(
-                "edge-tts is not installed. Install requirements-voice-demo.txt "
+                "edge-tts is not installed. Install requirements-voice-stack.txt "
                 "or build the Docker image."
             ) from exc
 
         output_path = output_path.expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        communicate = edge_tts.Communicate(
+            text,
+            self.voice,
+            **self._communicate_kwargs(),
+        )
 
         if output_path.suffix.lower() == ".wav":
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=True) as tmp:
-                await edge_tts.Communicate(text, self.voice).save(tmp.name)
-                await asyncio.to_thread(_convert_to_wav, Path(tmp.name), output_path)
+                await communicate.save(tmp.name)
+                await asyncio.to_thread(
+                    _finalize_tts_file,
+                    Path(tmp.name),
+                    output_path,
+                    self._effect,
+                    self._effect_strength,
+                )
         else:
-            await edge_tts.Communicate(text, self.voice).save(str(output_path))
+            await communicate.save(str(output_path))
+            if is_karen_style_effect(self._effect):
+                await asyncio.to_thread(
+                    _apply_karen_to_file,
+                    output_path,
+                    self._effect_strength,
+                )
         return output_path
-
 
 def create_stt_provider(config: ProviderConfig) -> STTProvider:
     """根据设备配置创建 STT provider。"""
@@ -212,8 +239,24 @@ def _extract_funasr_text(result) -> str:
     return text.strip()
 
 
-def _convert_to_wav(input_path: Path, output_path: Path) -> None:
-    """使用 pydub 把临时 mp3 转为 wav。"""
+def _apply_karen_to_file(path: Path, strength: str) -> None:
+    from pydub import AudioSegment
+
+    from shuxin.voice.audio_effects import apply_karen_voice
+
+    fmt = path.suffix.lower().lstrip(".") or "mp3"
+    audio = AudioSegment.from_file(str(path))
+    audio = apply_karen_voice(audio, strength=strength)
+    audio.export(str(path), format=fmt)
+
+
+def _finalize_tts_file(
+    input_path: Path,
+    output_path: Path,
+    effect: str,
+    effect_strength: str,
+) -> None:
+    """Convert mp3 to wav and optionally apply electric post-processing."""
     try:
         from pydub import AudioSegment
     except ImportError as exc:
@@ -221,4 +264,13 @@ def _convert_to_wav(input_path: Path, output_path: Path) -> None:
             "pydub is required when the output path ends with .wav."
         ) from exc
     audio = AudioSegment.from_file(str(input_path))
+    if is_karen_style_effect(effect):
+        from shuxin.voice.audio_effects import apply_karen_voice
+
+        audio = apply_karen_voice(audio, strength=effect_strength)
     audio.export(str(output_path), format="wav")
+
+
+def _convert_to_wav(input_path: Path, output_path: Path) -> None:
+    """使用 pydub 把临时 mp3 转为 wav。"""
+    _finalize_tts_file(input_path, output_path, "none", "medium")
