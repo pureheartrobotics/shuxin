@@ -331,6 +331,22 @@ docker compose up -d postgres shuxin-voice-demo
 curl -s http://localhost:8765/health
 ```
 
+日常重部署与环境迁移：
+
+```bash
+# 代码变更后重部署（依赖未变则跳过 build）
+bash scripts/redeploy_docker.sh
+
+# 源机打包（Docker 运行时会含 Postgres + Qdrant）
+bash scripts/export_pack.sh ~/shuxin_export
+
+# 目标机：cd 到安装目录后导入（.env 需手动填 API key）
+mkdir ~/shuxin && cd ~/shuxin
+bash /path/to/scripts/import_deploy.sh ~/shuxin_export/shuxin_voice_bundle_*.tar.gz
+```
+
+详见 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §12–14。
+
 常用入口：
 
 | 入口 | 说明 |

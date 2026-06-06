@@ -128,13 +128,13 @@ http://localhost:8765/voice-demo
 
 当前默认 provider：
 
-- STT：本地 FunASR `models/SenseVoiceSmall`。
-- TTS：EdgeTTS。
+- STT：腾讯云实时识别 `tencent-realtime`（生产默认）；本地 FunASR 为开发 fallback。
+- TTS：火山语音复刻 `volcengine-clone`（生产默认）；EdgeTTS 仅脚本试听。
 
 准实时测试 provider：
 
-- STT：FunASR `models/paraformer-zh-streaming`，配置类型为 `streaming-local`。
-- TTS：第一版仍然使用 EdgeTTS 整段 mp3 返回。
+- STT：`tencent-realtime` 或 FunASR streaming-local。
+- TTS：火山复刻，按用户绑定的 `agents` 记录解析 `voice_type`。
 
 低延时实时 STT provider：
 
@@ -147,17 +147,12 @@ http://localhost:8765/voice-demo
 
 ## 3.1 后续：STT/TTS API 化路线
 
-当前 STT/TTS 仍是 demo 优先的组合：
+当前 STT/TTS 生产组合：
 
-- STT 默认依赖本地 FunASR 模型，适合离线验证，但会增加模型下载、镜像体积和部署成本。
-- TTS 默认使用 EdgeTTS，属于在线语音合成封装，但不是我们自己的稳定生产级 API 能力。
+- STT 默认腾讯云实时识别（`tencent-realtime`），适合低延迟 turn-based 对话。
+- TTS 默认火山语音复刻（`volcengine-clone`），音色由 Postgres `agents` 表与用户 `agent_id` 绑定管理。
 
-后续目标是把 STT 和 TTS 都切到可配置的 API provider：
-
-- 实现 `ProviderConfig.type = "api"` 对应的真实 STT/TTS 调用，不再停留在占位异常。
-- 继续复用现有配置字段：`api_url`、`api_key`、`model`、`voice`。
-- 本地 FunASR 和 EdgeTTS 保留为开发 fallback，避免 API 不可用时完全阻塞 demo。
-- 早期优先选择免费额度、免费试用或低成本 API 方案验证链路；具体服务商不写死在架构里，落地前按当时免费额度、中文效果、延迟、稳定性和合规要求重新评估。
+本地 FunASR 与 EdgeTTS 保留为开发 fallback（`type=local` 会打 deprecation 日志）。
 
 阶段计划：
 
@@ -189,6 +184,33 @@ http://localhost:8765/voice-demo
 CLI 默认 `max_history=30`（全局配置），与语音短期窗口独立。
 
 voice-demo 人工验收步骤见 [VOICE_DEMO_MIN_TEST.md §11](VOICE_DEMO_MIN_TEST.md)。
+
+## 3.3 TTS 火山语音复刻（Volcengine OpenSpeech）
+
+生产默认使用火山引擎 **语音复刻** 合成 API（`POST https://openspeech.bytedance.com/api/v1/tts`），复刻音色在控制台完成一次即可长期使用。合成链路 **无 karen/FFmpeg 后处理**，直出 mp3。
+
+配置分层（横切 resolver，见 `src/shuxin/voice/tts_config.py`）：
+
+| 层 | 说明 |
+|------|------|
+| Postgres `agents` | 运行时主数据源：`voice_type`、`cluster`、`soul_path`、人格 metadata |
+| `users.agent_id` | 用户绑定的 Agent（管理员配置）；WebSocket TTS 据此选音色 |
+| `devices.metadata.mbti` | 盲盒设备 MBTI，注入 Identity（语气差异，音色同 user.agent） |
+| env | 共享 `VOLCENGINE_TTS_API_KEY`、`VOLCENGINE_TTS_API_URL`；可选 env 兜底 `VOLCENGINE_TTS_VOICE_TYPE` |
+| `data/tts_profiles.yaml` | 无 DATABASE_URL 时的 YAML fallback |
+| Admin API | `GET/POST/PATCH/DELETE /admin/api/agents`；`POST /admin/api/tts/preview`；`PATCH /admin/api/users/{id}` |
+
+| 配置 | 说明 |
+|------|------|
+| `tts.type` | `volcengine-clone`（生产默认；迁移 `004_*` + 「全部应用火山 TTS」） |
+| `users.agent_id` | 引用 `agents.agent_id`（默认 `shuxin`） |
+| `SHUXIN_TTS_TIMEOUT_SECONDS` | HTTP 合成超时（默认 30） |
+
+试听：`python -m shuxin.voice.cli tts "你好，我是舒心。" --out outputs/volc-demo.mp3`（需配置 `VOLCENGINE_TTS_API_KEY` 与 `VOLCENGINE_TTS_VOICE_TYPE`）。
+
+Edge TTS + karen FX 仅保留于 `scripts/generate_voiceover_candidates.py` 等试听脚本，不再用于生产 WebSocket 路径。
+
+**历史参考**：`outputs/voiceover-candidates/` 与 `scripts/generate_voiceover_candidates.py` 用于 Edge 音色候选对比。
 
 ## 4. Transport 预留接口
 
@@ -358,6 +380,8 @@ tts audio frame bytes
 | `GET/POST /admin/api/bindings` | 后台查看和手动创建用户设备绑定 |
 | `POST /admin/api/bindings/unbind` | 后台解绑 active binding |
 
+固件侧如何经 WebSocket 间接使用 STT/TTS、鉴权前置条件与常见错误，见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
+
 ## 6.2 Web 多用户记忆与附件存储
 
 Web 测试台现在区分三类数据：
@@ -374,7 +398,12 @@ Web 测试台现在区分三类数据：
 
 浏览器测试台默认模拟真实硬件，使用 `device_code + device_secret + client_id`。服务端仍兼容旧的 `user_id + token + device_id` 形式，但不作为推荐测试路径。
 
-同一个用户的多台设备共享用户记忆和人格成长；设备只决定语音、模型配置和访问入口。音频附件按用户额度管理，超过额度后优先把旧输入 wav 压缩为 32kbps mono mp3，并保留事件索引。长期陪伴记忆不依赖热存音频无限增长，而依赖事件、摘要、用户画像和人格成长状态。
+同一个用户的多台设备共享用户记忆和人格成长；设备只决定语音、模型配置和访问入口。音频附件 retention 分两层：
+
+1. **TTL（主策略）**：`SHUXIN_AUDIO_RETENTION_HOURS` 默认 12；voice server 周期任务（`SHUXIN_AUDIO_RETENTION_INTERVAL_SEC` 默认 1800）删除过期 input/reply 磁盘文件，并软删 `audio_attachments` 索引；`conversation_events` 文字保留。
+2. **Quota（兜底）**：`users.audio_quota_mb` 默认 512；12 小时内若异常堆积仍触发 `compress_if_needed`，把最旧未压缩 input wav 压成 32kbps mono mp3。
+
+长期陪伴记忆不依赖热存音频无限增长，而依赖事件、摘要、用户画像和人格成长状态。
 
 ## 7. 成功标准
 
@@ -384,7 +413,7 @@ Web 测试台现在区分三类数据：
 - `tts "你好"` 可用。
 - `chat-audio samples/demo.wav` 可用。
 - `session` 可以生成 `init.mp3`、`reply-001.mp3` 和 `transcript.txt`。
-- Docker 常驻容器可以通过 `scripts/redeploy_docker.sh` 重启。
+- Docker 常驻容器可通过 `scripts/redeploy_docker.sh` 重启；跨主机迁移见 `export_pack.sh` / `import_deploy.sh`（[`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §12–13）。
 
 后续硬件阶段成功标准：
 

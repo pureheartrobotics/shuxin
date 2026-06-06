@@ -100,7 +100,16 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - Postgres 用户 `llm_config` 与设备 LLM 合并必须使用 [`merge_llm_device_config()`](src/shuxin/voice/config.py)：**空字符串不得覆盖**已有 `model`/`base_url`/`api_key`。
 - `/admin` 保存用户 LLM 时勿提交空的 `model`/`base_url`/`api_key`；否则可能让 WebSocket 路径退回全局默认模型（与 `devices.yaml` 不一致）。
 - Voice 专用限额：`SHUXIN_VOICE_MAX_HISTORY`（默认 8）、`SHUXIN_VOICE_MAX_TOKENS`（默认 384）；CLI 默认 `max_history=30`（可配置）。LLM 超时：`SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS`（默认 5）、`SHUXIN_LLM_TIMEOUT_SECONDS`（默认 60）。
-- **三层记忆（语音优先）**：短期 = `MemoryManager.short_term` 最近 N 轮原文；中期 = `shared_memory` 的 7 日 `rolling_summary` + 规则 `recent_topics`（每 `SHUXIN_SUMMARY_EVERY_N` 轮默认 5 + WebSocket 断线时异步小模型合并，见 `voice/memory_summary.py`）；长期 = `facts` + 陪伴插件状态。重连仅注入中期/长期，不回填最近原文。`compress_if_needed` 仍只压音频附件，不压对话。
+- Voice 生产 TTS 为**火山复刻**（`volcengine-clone`）；`VOLCENGINE_TTS_API_KEY` / `VOLCENGINE_TTS_VOICE_TYPE` 经 compose 透传，改 `.env` 后须 `bash scripts/redeploy_docker.sh`。音色与人格由 Postgres `agents` 表 + `users.agent_id` 决定；设备 `metadata.mbti` 为盲盒语气差异。Admin：`/admin/api/agents`、`POST /admin/api/tts/preview`、设备 Tab「全部应用火山 TTS」。验收见 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §16；架构见 [`docs/VOICE_ARCHITECTURE.md`](docs/VOICE_ARCHITECTURE.md) §3.3。Edge/karen 仅 `scripts/generate_voiceover_candidates.py` 试听。
+- **三层记忆（语音优先）**：短期 = `MemoryManager.short_term` 最近 N 轮原文；中期 = `shared_memory` 的 7 日 `rolling_summary` + 规则 `recent_topics`（每 `SHUXIN_SUMMARY_EVERY_N` 轮默认 5 + WebSocket 断线时异步小模型合并，见 `voice/memory_summary.py`）；长期 = Mem0+Qdrant（`SHUXIN_MEM0_ENABLED=1`，`core/memory.py` 每轮 `search`/`add`，`user_id` 从 `users/{id}/memory` 解析）或 legacy `facts.json`；陪伴插件状态仍在 Slot4。Docker：`requirements-voice-app.txt` + compose 服务 `qdrant`（本地 `QDRANT_HTTP_PORT` 默认 **6335**；**生产改回 6333** 见 [`docs/DEPLOY_SERVER.md`](docs/DEPLOY_SERVER.md)）。重连仅注入中期/长期，不回填最近原文。**音频附件**：`SHUXIN_AUDIO_RETENTION_HOURS`（默认 12）TTL 删磁盘 wav/mp3 并软删索引，文字事件保留；`compress_if_needed` 作 12h 内 quota 兜底，只压 input wav，不压对话。
 - 中期摘要环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`；合并后同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json` 供 `companion` `pre_llm_call` 读取。
 - WebSocket 一轮对话：`stt/final` → `agent/thinking` → 流式 `agent/delta`（失败时先发 `agent/error` + `error_kind`）→ 分句 `tts/sentence_*` → `agent/reply` → `tts/stop`（含 `llm_ttft_ms`）。
-- 语音故障排查：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。
+- 硬件接入（鉴权、STT/TTS 代理）：[`docs/VOICE_HARDWARE_QUICKSTART.md`](docs/VOICE_HARDWARE_QUICKSTART.md)、[`docs/VOICE_HARDWARE_INTEGRATION.md`](docs/VOICE_HARDWARE_INTEGRATION.md)；设备 Flash 提示音：`data/device_assets/strings.zh-CN.json` + `scripts/generate_device_prompt_assets.py`；语音故障排查：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。
+
+### 语音 Docker 运维脚本
+
+- **Docker 内开发与 TTS 试听**（不在宿主机 pip 装包；新依赖须先批准）：[`docs/VOICE_DOCKER_WORKFLOW.md`](docs/VOICE_DOCKER_WORKFLOW.md)。
+- `scripts/redeploy_docker.sh`：日常重部署；Compose 项目名固定为 `shuxin`（`docker compose -p shuxin`）。
+- `scripts/export_pack.sh` / `scripts/import_deploy.sh`：环境迁移（代码、bind mount、`pg_dump`、Qdrant 卷；**不含** `.env` 与 Docker 镜像）。`import` 默认安装到**当前目录**，可用第二参数或 `INSTALL_DIR` 覆盖。
+- 共用函数：`scripts/lib/docker_compose.sh`。
+- 打包/导入验收：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §12–14。

@@ -2,6 +2,8 @@
 
 本文档面向后续硬件接入方。当前协议用于无硬件 Web 测试台，也作为后续真实硬件的最小接入边界。
 
+**STT/TTS 由舒心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权，且设备已被用户绑定后，才能进入语音识别与合成流程。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
+
 ## 1. 服务地址
 
 默认地址：
@@ -24,7 +26,43 @@ http://localhost:8765/voice-demo
 
 ## 2. 音频格式
 
-上行音频帧格式：
+硬件推荐在 `hello` 中声明 `audio_params.format=opus`；浏览器测试台不传 `audio_params`，默认走 PCM/mp3 兼容路径。
+
+### 2.1 Opus（硬件推荐）
+
+在 `hello` 携带：
+
+```json
+"audio_params": {
+  "format": "opus",
+  "sample_rate": 16000,
+  "channels": 1,
+  "frame_duration": 60
+}
+```
+
+服务端 `hello ok` 回应协商结果：
+
+```json
+"audio_params": {
+  "format": "opus",
+  "uplink_sample_rate": 16000,
+  "downlink_sample_rate": 24000,
+  "channels": 1,
+  "frame_duration": 60
+}
+```
+
+| 方向 | 格式 | 采样率 | 帧长 |
+|------|------|--------|------|
+| 上行 | raw Opus packet（无 Ogg 头） | 16 kHz mono | 60 ms |
+| 下行 | raw Opus packet | 24 kHz mono | 60 ms |
+
+不要发送整段 Ogg/wav/mp3 文件；每个 WebSocket binary 消息 = **一帧 Opus**。服务端内部仍落盘 wav/mp3，与 wire format 无关。
+
+服务端需已安装 `opuslib_next`（[`requirements-voice-app.txt`](../requirements-voice-app.txt)，见 [VOICE_DEMO_MIN_TEST.md §17](VOICE_DEMO_MIN_TEST.md)）；未安装时 `hello` 返回 redeploy 提示。
+
+### 2.2 PCM16（浏览器 / 兼容）
 
 ```text
 sample_rate: 16000 Hz
@@ -34,7 +72,7 @@ byte_order: little-endian
 container: none
 ```
 
-硬件不要发送 wav/mp3/opus 文件。`listen start` 后直接发送 PCM16 二进制帧，`listen stop` 表示一句话结束。
+`listen start` 后直接发送 PCM16 二进制帧，`listen stop` 表示一句话结束。
 
 ## 3. 设备上行文本消息
 
@@ -43,7 +81,7 @@ container: none
 真实硬件接入推荐使用设备身份，而不是让设备携带用户身份：
 
 ```json
-{"type":"hello","device_code":"ESP32_MAC_OR_EFUSE_CODE","device_secret":"shared-secret-for-prototype","client_id":"device-001","session_id":"optional-session-id"}
+{"type":"hello","device_code":"ESP32_MAC_OR_EFUSE_CODE","device_secret":"shared-secret-for-prototype","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
 ```
 
 当前内部原型阶段，`device_secret` 可以先使用服务端环境变量
@@ -87,11 +125,15 @@ container: none
 
 在 `listen start` 和 `listen stop` 之间发送音频二进制帧：
 
+- **Opus 模式**（`hello` 已协商）：每消息一帧 raw Opus packet（16 kHz / 60 ms）
+- **PCM 模式**（默认）：裸 PCM16 小端字节
+
 ```text
-<pcm16 audio frame bytes>
+<opus packet bytes>   # format=opus
+<pcm16 frame bytes>   # format=pcm 或未声明 audio_params
 ```
 
-建议每帧 20ms 到 100ms。默认本地 STT 会把一轮音频暂存在内存中，收到 `listen stop` 后再进入识别；当设备 STT 配置为 `tencent-realtime` 时，服务端会在 `listen start` 后把 PCM 持续转发到腾讯云实时语音识别。
+建议 PCM 每帧 20ms 到 100ms。Opus 建议 60ms 一帧。服务端收到 `listen stop` 后进入识别；`tencent-realtime` 模式下服务端在 `listen start` 后持续转发 **解码后的 PCM** 到腾讯云。
 
 ## 5. 服务端下行文本消息
 
@@ -101,10 +143,16 @@ container: none
 {"type":"hello","state":"ready","device_id":"demo-device-001"}
 ```
 
-设备 hello 确认：
+设备 hello 确认（PCM 默认）：
 
 ```json
 {"type":"hello","state":"ok","user_id":"demo-user","device_id":"demo-device-001","client_id":"device-001","session_id":"optional-session-id"}
+```
+
+设备 hello 确认（Opus 协商）：
+
+```json
+{"type":"hello","state":"ok","user_id":"demo-user","device_id":"demo-device-001","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","uplink_sample_rate":16000,"downlink_sample_rate":24000,"channels":1,"frame_duration":60}}
 ```
 
 开始识别：
@@ -196,13 +244,17 @@ Agent 完整回复：
 
 ## 6. 服务端下行二进制消息
 
-当前 demo 在 `tts start` 后按句发送 mp3 二进制（每句一对 `sentence_start` / `sentence_stop`），并在本轮完成后发送 `tts stop`：
+每句 TTS 在 `tts/sentence_start` 与 `tts/sentence_stop` 之间发送音频：
+
+- **Opus 模式**：多帧 raw Opus packet（24 kHz / 60 ms），每帧一条 binary 消息
+- **PCM 兼容模式**：整段 mp3 字节（单条 binary）
 
 ```text
-<mp3 audio bytes>
+<opus packet bytes> ...   # format=opus，sentence_start/stop 之间
+<mp3 audio bytes>         # format=pcm 或未声明 audio_params
 ```
 
-硬件第一版可以把该 mp3 缓存完整后播放。后续如需低延迟播放，再扩展为分句 TTS 或流式 TTS。
+Opus 模式下固件应逐帧解码播放；mp3 模式可缓存整段后播放。
 
 ## 7. 微信小程序绑定
 
@@ -357,11 +409,12 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 当前 demo 暂不支持：
 
 - 自动 VAD。
-- Opus 音频上行。
-- 流式 TTS。
+- 流式 TTS（下行仍按句分帧，非 token 级流）。
 - 中途打断播放。
 - MQTT。
 - OTA。
 - 后台一键生成和轮换每设备独立密钥。
+
+已支持：**Opus 上行 16 kHz / 下行 24 kHz**（`hello` 声明 `audio_params.format=opus`）；浏览器测试台仍用 PCM/mp3。
 
 当前目标是先跑通准实时 turn-based 对话：用户说完一句，硬件发送 `listen stop`，服务端返回识别文本、Agent 回复和回复音频。

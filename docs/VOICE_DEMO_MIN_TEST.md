@@ -9,11 +9,13 @@
 - 在准备 LLM 配置后，可以跑通 `语音 -> 文本 -> Agent 回复 -> 回复语音`。
 - 在准备 Web 依赖和准实时模型后，可以用浏览器麦克风测试 WebSocket 语音对话。
 - 在 Docker Postgres 模式下，可以测试后台设备绑定、小程序绑定接口和硬件身份鉴权。
-- 打包和导入脚本可用于迁移 demo 环境。
+- 打包和导入脚本可用于完整迁移 demo 环境（含 Postgres/Qdrant；不含 `.env` 与镜像）。
 
 当前 demo 不测试真实量产硬件、WebSocket 流式打断、OTA、MQTT 和生产级并发。
 
 语音闭环和硬件接口设计见：[舒心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md)。
+
+硬件接入总览（三码、鉴权、STT/TTS 不由固件直连）：[硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
 
 ## 0. 进入项目目录
 
@@ -78,6 +80,8 @@ docker compose config
 - 所有命令正常结束。
 - `docker compose config` 能输出 compose 配置。
 
+Docker 内命令、依赖分层与新包批准流程见 [`VOICE_DOCKER_WORKFLOW.md`](VOICE_DOCKER_WORKFLOW.md)。
+
 ## 4. Docker 构建测试
 
 ```bash
@@ -97,6 +101,10 @@ docker compose run --rm shuxin-voice-demo \
 bash scripts/redeploy_docker.sh
 ```
 
+Qdrant 宿主机端口：本地默认 **6335**（`.env` 中 `QDRANT_HTTP_PORT`，避免与本机 6333 冲突）。生产部署见 [`DEPLOY_SERVER.md`](DEPLOY_SERVER.md)。
+
+若 `redeploy` 报 `shuxin-qdrant is unhealthy`，且 `docker inspect shuxin-qdrant` 健康日志含 `wget: not found`：更新 `docker-compose.yml` 后执行 `docker compose -p shuxin up -d qdrant` 重建容器，再重跑 redeploy。
+
 默认 Web 测试台端口：
 
 ```text
@@ -109,35 +117,36 @@ http://localhost:8765/voice-demo
 - 容器里能看到 CLI help。
 - 常驻容器启动后，浏览器能打开 Web 测试台页面。
 
-如果构建失败，优先检查网络、pip 镜像源和 `requirements-voice-demo.txt` 里的依赖下载。
+如果构建失败，优先检查网络、pip 镜像源和 `requirements-voice-heavy.txt` / `requirements-voice-app.txt` 里的依赖下载。
 
 ## 5. TTS 最小测试
 
-TTS 使用 EdgeTTS，先测它，因为它不需要 FunASR 模型。
+生产 TTS 使用**火山语音复刻**（`volcengine-clone`）。需在 `.env` 配置 `VOLCENGINE_TTS_API_KEY` 与 `VOLCENGINE_TTS_VOICE_TYPE`，修改后执行 `bash scripts/redeploy_docker.sh`。
 
 Docker 方式：
 
 ```bash
-docker compose run --rm shuxin-voice-demo \
-  python -m shuxin.voice.cli tts "你好，我是舒心001号 华人牌" \
-  --out outputs/hello.mp3
+docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
+  python -m shuxin.voice.cli tts "你好，我是舒心" -o /tmp/volc-demo.mp3
+docker cp shuxin-voice-demo-pg:/tmp/volc-demo.mp3 ./outputs/volc-demo.mp3
 ```
 
-本机方式：
+本机方式（需已 export 火山 env）：
 
 ```bash
-PYTHONPATH=src python3 -m shuxin.voice.cli tts "你好，我是舒心001号 华人牌" --out outputs/hello.mp3
+PYTHONPATH=src python3 -m shuxin.voice.cli tts "你好，我是舒心" --out outputs/volc-demo.mp3
 ```
 
 验收标准：
 
-- 生成 `outputs/hello.mp3`。
-- 音频文件可以播放。
+- 生成 `outputs/volc-demo.mp3`（或上述路径）。
+- 音频文件可以播放，音色为火山复刻。
 
 常见失败原因：
 
-- `edge-tts is not installed`：本机没有安装语音 demo 依赖，改用 Docker 或安装 `requirements-voice-demo.txt`。
-- 网络错误：EdgeTTS 需要访问外部服务，检查服务器网络。
+- `voice_type` / `api_key` ValueError：容器未透传 `.env` → 运行 `bash scripts/redeploy_docker.sh`。
+- 网络/API 错误：检查火山密钥与 `VOLCENGINE_TTS_API_URL`。
+- EdgeTTS 相关错误：说明设备 `tts_config.type` 仍为 `local` → 后台「全部应用火山 TTS」或迁移 `004_devices_tts_volcengine_default.sql`。
 
 ## 6. STT 最小测试
 
@@ -167,7 +176,7 @@ PYTHONPATH=src python3 -m shuxin.voice.cli stt samples/demo.wav --device-id demo
 常见失败原因：
 
 - `FunASR model directory not found`：`models/SenseVoiceSmall` 没有放好。
-- `FunASR is not installed`：本机没有安装语音 demo 依赖，改用 Docker 或安装 `requirements-voice-demo.txt`。
+- `FunASR is not installed`：本机没有安装语音 demo 依赖，改用 Docker 或安装 `requirements-voice-stack.txt`。
 - 识别结果为空：检查音频是否有人声、格式是否被 FunASR 支持。
 
 ## 7. 完整 chat-audio 测试
@@ -327,6 +336,8 @@ demo-device-streaming-001
 - TTS 第一版是整段 mp3 返回，不是流式 TTS。
 
 ## 9.1 后台绑定和硬件鉴权测试
+
+前置概念与固件调用链见 [VOICE_HARDWARE_INTEGRATION.md](VOICE_HARDWARE_INTEGRATION.md)。
 
 启动本地 Postgres 与 voice 服务：
 
@@ -642,6 +653,14 @@ pytest tests/test_voice_memory_summary.py tests/test_voice_users_storage.py -q
 bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
 ```
 
+脚本会先 `docker compose up -d postgres qdrant`（若 Docker 可用），再打包：
+
+- `code.tar.gz` — 代码（不含 `.env`、不含 `models/`）
+- `data.tar.gz` — `data/`（含 `shuxin_home`、devices 等；`devices.yaml.example` 除外）
+- `models.tar.gz` / `samples.tar.gz` / `outputs.tar.gz` — 有内容才打
+- `postgres.dump` — Postgres 逻辑备份（`pg_dump -Fc`）
+- `qdrant_storage.tar.gz` — Qdrant named volume
+
 验收标准：
 
 - 生成类似文件：
@@ -650,23 +669,31 @@ bash scripts/export_pack.sh /tmp/shuxin_voice_export_test
 /tmp/shuxin_voice_export_test/shuxin_voice_bundle_YYYYMMDD_HHMMSS.tar.gz
 ```
 
-- 如果 `models/` 没有模型文件，会出现 warning，但不应该导致打包失败。
+- `BUNDLE_INFO.txt` 中 `包含 Postgres: 是`、`包含 Qdrant: 是`（Docker 在跑时）。
+- 如果 `models/` 没有模型文件，会出现警告，但不应该导致打包失败。
+- Docker 未运行时仅打文件层，会警告并跳过数据库备份。
 
 ## 13. 导入部署测试
 
-建议先导入到临时目录：
+建议先导入到临时目录（默认安装到**当前目录**）：
 
 ```bash
-INSTALL_DIR=/tmp/shuxin-voice-demo-import \
-bash scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shuxin_voice_bundle_YYYYMMDD_HHMMSS.tar.gz
+mkdir -p /tmp/shuxin-voice-demo-import && cd /tmp/shuxin-voice-demo-import
+bash /path/to/shuxin/scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shuxin_voice_bundle_YYYYMMDD_HHMMSS.tar.gz
 ```
+
+也可指定安装目录：`bash scripts/import_deploy.sh <bundle> /other/path`，或 `INSTALL_DIR=/other/path bash scripts/import_deploy.sh <bundle>`。
+
+导入顺序：解包 → 恢复 bind mount → 从 `.env.example` 生成 `.env`（**不含密钥，需手动填**）→ `pg_restore` + Qdrant 卷 → `redeploy_docker.sh --build` 全栈启动。
 
 验收标准：
 
 - bundle 解包成功。
-- 自动创建 `.env` 和 `data/devices.yaml`。
-- `docker compose build` 成功。
-- 最后的容器 CLI smoke test 成功。
+- 自动创建 `.env`（若不存在）和 `data/devices.yaml`（若 bundle 未带）。
+- `docker compose build` 成功（由 redeploy 触发）。
+- Postgres / Qdrant 数据已恢复（有 dump 时：`docker exec shuxin-postgres psql -U shuxin -d shuxin -c 'SELECT COUNT(*) FROM users;'` 与源环境一致）。
+- `http://localhost:8765/health` 可达（或 import 脚本 health check 通过）。
+- 填好 `.env` 中 `DEMO_LLM_API_KEY` 后，Web 测试台可对话。
 
 ## 14. Docker 日常重部署
 
@@ -679,10 +706,10 @@ bash scripts/redeploy_docker.sh
 这个命令默认是日常重启，不会重新安装 `torch`、`funasr`、`modelscope` 等大包。只有以下情况会触发 Docker build：
 
 - 本地没有 `shuxin-voice-demo:latest` 镜像。
-- `requirements-voice-demo.txt`、`requirements-voice-extra.txt`、`requirements-voice-dev-extra.txt` 或 `pyproject.toml` 的依赖 hash 变化。
+- `requirements-voice-heavy.txt` 或 `requirements-voice-app.txt` 的依赖 hash 变化。
 - 显式执行 `bash scripts/redeploy_docker.sh --build`。
 
-`requirements-voice-dev-extra.txt` 会在 Dockerfile 最后一个依赖层安装，用来承载条形码识别这类变动较频繁的 voice Web 兜底能力，避免反复下载前面的语音和 Web 基础依赖层。
+日常小包（Opus、websockets、设备绑定等）写入 `requirements-voice-app.txt`，只会 rebuild app 层，不会重下 torch。
 
 如果只想强制跳过 build，可以使用：
 
@@ -693,8 +720,146 @@ bash scripts/redeploy_docker.sh --no-build
 验收标准：
 
 - Docker Desktop 中 `shuxin-voice-demo-pg` 显示 Running。
-- 普通代码变更后，终端输出 `Code-only redeploy: skipping dependency build`。
+- 普通代码变更后，终端输出「仅代码变更，跳过依赖层构建」。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
+
+## 16. 火山 TTS + Agent 切换实时验收
+
+本节验收 **Admin Agent API**、**用户绑定 Agent** 与 **WebSocket 全链路 TTS**。
+
+### 16.1 环境与重部署
+
+```bash
+# .env（勿提交）
+VOLCENGINE_TTS_API_KEY=...
+VOLCENGINE_TTS_VOICE_TYPE=S_xxx
+
+bash scripts/redeploy_docker.sh
+curl -s http://localhost:8765/health
+docker exec shuxin-voice-demo-pg sh -c 'test -n "$VOLCENGINE_TTS_API_KEY" && echo ok'
+```
+
+### 16.2 Admin API 试听（不经过 LLM）
+
+```bash
+export ADMIN_TOKEN=dev-admin-token   # 与 SHUXIN_ADMIN_TOKEN 一致
+
+curl -s -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8765/admin/api/agents
+
+curl -s -X POST -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id":"shuxin","text":"你好，试听火山复刻"}' \
+  http://localhost:8765/admin/api/tts/preview
+```
+
+返回 JSON 含 `audio_url`，浏览器或 `curl -O` 下载播放。
+
+### 16.3 用户切换 Agent
+
+1. 打开 `http://localhost:8765/admin` → **Agent** Tab 确认 `shuxin` 存在且 `voice_type` 已填。
+2. **用户** Tab 下拉为 `demo-user` 选择 Agent → 自动 `PATCH /admin/api/users/{id}`。
+3. 或使用 curl：
+
+```bash
+curl -s -X PATCH -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id":"shuxin"}' \
+  http://localhost:8765/admin/api/users/demo-user
+```
+
+### 16.4 WebSocket 准实时全链路
+
+按 §9 流程；额外验收：
+
+1. voice-demo「加载设备」条目应显示 `Agent=…` 与 masked 音色。
+2. 对话完成后听到火山复刻音色（非 Edge 默认女声）。
+3. **切换 Agent 后必须断开并重连** WebSocket，同一句台词应变为新音色。
+4. 两台设备若 `metadata.mbti` 不同（批量制码随机写入），对话语气应不同、音色相同（同一 `users.agent_id`）。
+
+### 16.5 故障对照
+
+| 现象 | 排查 |
+|------|------|
+| `voice_type` ValueError | compose 未透传 env → `redeploy_docker.sh` |
+| TTS 成功但仍是旧音色 | 未重连 WS；或 `users.agent_id` 未更新 |
+| 仍走 Edge/local | Postgres `tts_config.type=local` → 「全部应用火山 TTS」 |
+| `agent/error connect_error` | 用户 LLM 未配 key（与 TTS 无关） |
+
+## 17. Opus 硬件路径冒烟测试
+
+硬件联调使用 **Opus wire format**（上行 16 kHz / 下行 24 kHz / 60 ms 帧），与浏览器 PCM/mp3 路径分离。
+
+**全程在 Docker 容器内执行**（与 [`VOICE_DOCKER_WORKFLOW.md`](VOICE_DOCKER_WORKFLOW.md) 一致）。`opuslib_next` 写在 **`requirements-voice-app.txt`**（app tier，§ voice-cloud）；改 app 层 **不会** 重下 torch。
+
+### 17.1 依赖与重部署
+
+```bash
+bash scripts/redeploy_docker.sh
+# 预期：依赖 tier 变更: app(voice-app)（若 app 层有变更）
+docker exec shuxin-voice-demo-pg python -c "import opuslib_next; print('ok')"
+```
+
+迁移环境时 `export_pack.sh` / `import_deploy.sh` + 上述 redeploy 会自动带上 Opus，无需手工 `pip install`。
+
+### 17.1b 单元测试（容器内）
+
+```bash
+docker exec shuxin-voice-demo-pg pip install pytest
+docker exec -w /app shuxin-voice-demo-pg env PYTHONPATH=src \
+  python -m pytest tests/test_opus_codec.py -q
+```
+
+镜像已含 `opuslib_next` 时应 6 passed；旧镜像未 redeploy 时 opus 相关用例 skip。
+
+### 17.2 参考客户端（无硬件）
+
+使用 [`data/test/activation.ogg`](../data/test/activation.ogg)（Ogg 封装 Opus）模拟固件上行；脚本会拆成 raw Opus 帧再发送（固件应直接发帧，不要发 Ogg 文件）。
+
+前置：设备已绑定、用户 LLM 与 STT/TTS 凭证有效（同 §9 / §16）。
+
+```bash
+# 设备密钥与 compose 中 SHUXIN_DEVICE_SHARED_SECRET 一致（默认 dev-device-secret）
+docker exec shuxin-voice-demo-pg python scripts/ws_opus_smoke_test.py \
+  --url ws://127.0.0.1:8765/ws/voice \
+  --device-code demo-device-001 \
+  --device-secret dev-device-secret \
+  --input /app/data/test/activation.ogg \
+  --output /app/outputs/opus-smoke-reply.wav
+```
+
+验收：
+
+- 终端打印 `hello ok` 且含 `audio_params.format=opus`
+- 有 `stt/final` 文本、`agent/reply` 文本
+- 下行收到多帧 Opus（非 mp3 魔数）
+- `outputs/opus-smoke-reply.wav` 可播放
+
+协议细节见 [`VOICE_HARDWARE_WS_PROTOCOL.md`](VOICE_HARDWARE_WS_PROTOCOL.md) §2 Opus。
+
+### 17.3 故障对照
+
+| 现象 | 排查 |
+|------|------|
+| `opus support requires opuslib_next` | `bash scripts/redeploy_docker.sh`（检查 `requirements-voice-app.txt`） |
+| `invalid device secret` / 未绑定 | §9 设备绑定与 `SHUXIN_DEVICE_SHARED_SECRET` |
+| 下行仍是 mp3 | `hello` 未带 `audio_params.format=opus` |
+| `no stt/final` | 腾讯 STT 凭证或 `activation.ogg` 内容过短 |
+
+## 18. 设备 Flash 提示音资产生成
+
+固件 UI 固定文案（非 WebSocket 对话）使用预生成 Opus，源文件 [`data/device_assets/strings.zh-CN.json`](../data/device_assets/strings.zh-CN.json)。
+
+```bash
+# 需 .env 中 VOLCENGINE_TTS_* 已配置且容器已 redeploy
+docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
+  python /app/scripts/generate_device_prompt_assets.py \
+  --out /app/data/device_assets/zh-CN
+
+# 抽查
+ls data/device_assets/zh-CN/*.ogg | head
+ffplay data/device_assets/zh-CN/STANDBY.ogg
+ffplay data/device_assets/zh-CN/CHECK_NEW_VERSION_FAILED.ogg
+```
+
+验收：`manifest.json` 含全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
 
 ## 15. 最终通过标准
 
@@ -709,5 +874,5 @@ bash scripts/redeploy_docker.sh --no-build
 - 有 LLM 配置时，`session` 可以输出初始化音频、回复音频和 transcript。
 - 有 LLM 配置和浏览器麦克风权限时，Web 测试台可以完成按住说话、松手识别、回复和播放。
 - 按 §11 固定剧本验收时，重连后回复能关联 `rolling_summary` 中的主题，且 `/voice/export` 在第五轮后与断线后含非空 `rolling_summary`。
-- `export_pack.sh` 可以打包。
-- `import_deploy.sh` 可以在新目录恢复并跑通容器 smoke test。
+- `export_pack.sh` 可以打包（含 Postgres + Qdrant 时可完整迁移）。
+- `import_deploy.sh` 可以在新目录恢复并跑通全栈（health + voice server）。
