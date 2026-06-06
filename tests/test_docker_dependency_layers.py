@@ -4,58 +4,75 @@ from pathlib import Path
 
 
 def test_voice_dependencies_are_grouped_by_capability() -> None:
-    local = Path("requirements-voice-local.txt").read_text(encoding="utf-8")
-    web = Path("requirements-voice-web.txt").read_text(encoding="utf-8")
-    integrations = Path("requirements-voice-integrations.txt").read_text(encoding="utf-8")
-    barcode = Path("requirements-voice-barcode.txt").read_text(encoding="utf-8")
+    heavy = Path("requirements-voice-heavy.txt").read_text(encoding="utf-8")
+    app = Path("requirements-voice-app.txt").read_text(encoding="utf-8")
 
-    assert "numpy==1.26.4" in local
-    assert "torch==2.2.2" in local
-    assert "funasr==1.2.7" in local
-    assert "fastapi==0.115.6" in web
-    assert "uvicorn[standard]==0.34.0" in web
-    assert "asyncpg==0.30.0" in web
-    assert "websockets==13.1" in integrations
-    assert "Pillow==10.4.0" in barcode
-    assert "zxing-cpp==2.2.0" in barcode
+    assert "numpy==1.26.4" in heavy
+    assert "pydub==0.25.1" in heavy
+    assert "torch==2.2.2" in heavy
+    assert "funasr==1.2.7" in heavy
+    assert "edge-tts==7.2.6" in app
+    assert "fastapi==0.115.6" in app
+    assert "websockets==13.1" in app
+    assert "opuslib_next" in app
+    assert "Pillow==10.4.0" in app
+    assert "mem0ai>=" in app
+    assert "librosa==0.10.2" in app
 
-    assert "Pillow" not in local + web + integrations
-    assert "zxing-cpp" not in local + web + integrations
-    assert "websockets" not in local + web + barcode
+    assert "torch" not in app
+    assert "edge-tts" not in heavy
+
+
+def test_voice_stack_includes_heavy_and_app() -> None:
+    stack = Path("requirements-voice-stack.txt").read_text(encoding="utf-8")
+    assert "-r requirements-voice-heavy.txt" in stack
+    assert "-r requirements-voice-app.txt" in stack
 
 
 def test_dockerfile_installs_dependency_modules_in_cache_friendly_order() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
-    assert "docker/dockerfile:" not in dockerfile
     assert "--mount=type=cache,target=/root/.cache/pip" in dockerfile
-    assert "pip install -r requirements-voice-barcode.txt" in dockerfile
-    assert "pip install --no-cache-dir -r requirements-voice-barcode.txt" not in dockerfile
-    assert dockerfile.index("requirements-voice-local.txt") < dockerfile.index(
-        "requirements-shuxin-core.txt"
-    )
-    assert dockerfile.index("requirements-shuxin-core.txt") < dockerfile.index(
-        "requirements-voice-web.txt"
-    )
-    assert dockerfile.index("requirements-voice-web.txt") < dockerfile.index(
-        "requirements-voice-integrations.txt"
-    )
-    assert dockerfile.index("requirements-voice-integrations.txt") < dockerfile.index(
-        "requirements-voice-barcode.txt"
-    )
-    assert dockerfile.index("requirements-voice-barcode.txt") < dockerfile.index("COPY src ./src")
+    assert "requirements-voice-heavy.txt" in dockerfile
+    assert "requirements-voice-app.txt" in dockerfile
+
+    heavy_marker = "pip install -r requirements-voice-heavy.txt"
+    app_marker = "pip install -r requirements-voice-app.txt"
+    src_marker = "COPY src ./src"
+
+    heavy_idx = dockerfile.index(heavy_marker)
+    app_idx = dockerfile.index(app_marker)
+    src_idx = dockerfile.index(src_marker)
+    assert heavy_idx < app_idx < src_idx
 
 
 def test_redeploy_hash_tracks_dependency_modules() -> None:
     script = Path("scripts/redeploy_docker.sh").read_text(encoding="utf-8")
 
-    assert "requirements-voice-local.txt" in script
-    assert "requirements-shuxin-core.txt" in script
-    assert "requirements-voice-web.txt" in script
-    assert "requirements-voice-integrations.txt" in script
-    assert "requirements-voice-barcode.txt" in script
-    assert "dependency modules changed:" in script
-    assert 'PROJECT_NAME="${PROJECT_NAME:-shuxin}"' in script
+    assert "requirements-voice-heavy.txt" in script
+    assert "requirements-voice-app.txt" in script
+    assert "依赖 tier 变更" in script
+    assert "tier_for_module" in script
+    assert "voice-heavy" in script
+    assert "voice-app" in script
+
+
+def test_legacy_requirements_aliases_removed() -> None:
+    legacy = (
+        "requirements-voice-audio.txt",
+        "requirements-voice-asr.txt",
+        "requirements-voice-memory.txt",
+        "requirements-voice-fx.txt",
+        "requirements-voice-tts.txt",
+        "requirements-shuxin-core.txt",
+        "requirements-voice-server.txt",
+        "requirements-voice-cloud.txt",
+        "requirements-voice-device.txt",
+        "requirements-voice-web.txt",
+        "requirements-voice-dsp.txt",
+    )
+    for name in legacy:
+        assert not Path(name).exists(), f"legacy alias should be removed: {name}"
 
 
 def test_dockerignore_excludes_runtime_mounts_from_build_context() -> None:

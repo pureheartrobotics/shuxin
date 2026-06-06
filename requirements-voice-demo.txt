@@ -1,3 +1,0 @@
-# Compatibility placeholder.
-# Docker builds now install local voice dependencies from requirements-voice-local.txt.
--r requirements-voice-local.txt

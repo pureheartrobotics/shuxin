@@ -1,5 +1,0 @@
-# Compatibility placeholder.
-# Docker builds now install web dependencies from requirements-voice-web.txt
-# and third-party integration dependencies from requirements-voice-integrations.txt.
--r requirements-voice-web.txt
--r requirements-voice-integrations.txt

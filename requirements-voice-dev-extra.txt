@@ -1,3 +1,0 @@
-# Compatibility placeholder.
-# Docker builds now install barcode dependencies from requirements-voice-barcode.txt.
--r requirements-voice-barcode.txt

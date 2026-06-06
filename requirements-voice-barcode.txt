@@ -1,4 +1,0 @@
-# Device binding and barcode/QR decoding dependencies.
-# Put image and barcode decoder packages here.
-Pillow==10.4.0
-zxing-cpp==2.2.0

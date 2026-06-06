@@ -25,42 +25,26 @@ ENV LANG=zh_CN.UTF-8 \
 
 WORKDIR /app
 
-COPY requirements-voice-local.txt ./
-
-# Install the large local voice stack first so Docker can reuse this layer.
+# Tier 1 — heavy: torch / ASR stack (change rarely).
+COPY requirements-voice-heavy.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements-voice-local.txt
+    pip install -r requirements-voice-heavy.txt && \
+    find /usr/local/lib/python3.11/site-packages -type d -name tests -prune -exec rm -rf {} + && \
+    find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
-COPY requirements-shuxin-core.txt ./
-
-# Core ShuXin runtime dependencies are separate from voice feature packages.
+# Tier 2 — app: server, memory, TTS, integrations (day-to-day changes).
+COPY requirements-voice-app.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-shuxin-core.txt
-
-COPY requirements-voice-web.txt ./
-
-# Voice server and database dependencies.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-voice-web.txt
-
-COPY requirements-voice-integrations.txt ./
-
-# External provider dependencies change more often than the local voice stack.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-voice-integrations.txt
-
-COPY requirements-voice-barcode.txt ./
-
-# Device binding barcode dependencies are isolated in the final dependency layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements-voice-barcode.txt
+    pip install -r requirements-voice-app.txt && \
+    find /usr/local/lib/python3.11/site-packages -type d -name tests -prune -exec rm -rf {} + && \
+    find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
 COPY pyproject.toml README.md SOUL.md ./
 COPY src ./src
 COPY scripts ./scripts
 
-RUN pip install --no-cache-dir --no-deps -e .
-RUN mkdir -p /app/data /app/models /app/samples /app/outputs
+RUN pip install --no-cache-dir --no-deps -e . \
+ && mkdir -p /app/data /app/models /app/samples /app/outputs
 
 CMD ["python", "-m", "shuxin.voice.cli", "--help"]
