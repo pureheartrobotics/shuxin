@@ -1,0 +1,540 @@
+{
+  "generated_at": "2026-06-06T23:44:10.501146+00:00",
+  "agent_id": "shuxin",
+  "voice_type": "S_gt4hvQ552",
+  "sample_rate": 24000,
+  "frame_duration_ms": 60,
+  "opus_bin_format": "uint16_be_length_prefix + raw_packet (matches WebSocket downlink packets)",
+  "entries": [
+    {
+      "key": "WARNING",
+      "text": "警告",
+      "files": {
+        "ogg": "WARNING.ogg",
+        "opus_bin": "WARNING.opus.bin"
+      },
+      "opus_frame_count": 22,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "INFO",
+      "text": "信息",
+      "files": {
+        "ogg": "INFO.ogg",
+        "opus_bin": "INFO.opus.bin"
+      },
+      "opus_frame_count": 22,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "ERROR",
+      "text": "错误",
+      "files": {
+        "ogg": "ERROR.ogg",
+        "opus_bin": "ERROR.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "VERSION",
+      "text": "版本 ",
+      "files": {
+        "ogg": "VERSION.ogg",
+        "opus_bin": "VERSION.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "LOADING_PROTOCOL",
+      "text": "登录服务器...",
+      "files": {
+        "ogg": "LOADING_PROTOCOL.ogg",
+        "opus_bin": "LOADING_PROTOCOL.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "INITIALIZING",
+      "text": "正在初始化...",
+      "files": {
+        "ogg": "INITIALIZING.ogg",
+        "opus_bin": "INITIALIZING.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "PIN_ERROR",
+      "text": "请插入 SIM 卡",
+      "files": {
+        "ogg": "PIN_ERROR.ogg",
+        "opus_bin": "PIN_ERROR.opus.bin"
+      },
+      "opus_frame_count": 38,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "REG_ERROR",
+      "text": "无法接入网络，请检查流量卡状态",
+      "files": {
+        "ogg": "REG_ERROR.ogg",
+        "opus_bin": "REG_ERROR.opus.bin"
+      },
+      "opus_frame_count": 55,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "DETECTING_MODULE",
+      "text": "检测模组...",
+      "files": {
+        "ogg": "DETECTING_MODULE.ogg",
+        "opus_bin": "DETECTING_MODULE.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "REGISTERING_NETWORK",
+      "text": "等待网络...",
+      "files": {
+        "ogg": "REGISTERING_NETWORK.ogg",
+        "opus_bin": "REGISTERING_NETWORK.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CHECKING_NEW_VERSION",
+      "text": "检查新版本...",
+      "files": {
+        "ogg": "CHECKING_NEW_VERSION.ogg",
+        "opus_bin": "CHECKING_NEW_VERSION.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CHECK_NEW_VERSION_FAILED",
+      "text": "检查新版本失败，将在30 秒后重试！",
+      "files": {
+        "ogg": "CHECK_NEW_VERSION_FAILED.ogg",
+        "opus_bin": "CHECK_NEW_VERSION_FAILED.opus.bin"
+      },
+      "opus_frame_count": 61,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SWITCH_TO_WIFI_NETWORK",
+      "text": "切换到 Wi-Fi...",
+      "files": {
+        "ogg": "SWITCH_TO_WIFI_NETWORK.ogg",
+        "opus_bin": "SWITCH_TO_WIFI_NETWORK.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SWITCH_TO_4G_NETWORK",
+      "text": "切换到 4G...",
+      "files": {
+        "ogg": "SWITCH_TO_4G_NETWORK.ogg",
+        "opus_bin": "SWITCH_TO_4G_NETWORK.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "STANDBY",
+      "text": "待命",
+      "files": {
+        "ogg": "STANDBY.ogg",
+        "opus_bin": "STANDBY.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CONNECT_TO",
+      "text": "连接 ",
+      "files": {
+        "ogg": "CONNECT_TO.ogg",
+        "opus_bin": "CONNECT_TO.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CONNECTING",
+      "text": "连接中...",
+      "files": {
+        "ogg": "CONNECTING.ogg",
+        "opus_bin": "CONNECTING.opus.bin"
+      },
+      "opus_frame_count": 21,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CONNECTED_TO",
+      "text": "已连接 ",
+      "files": {
+        "ogg": "CONNECTED_TO.ogg",
+        "opus_bin": "CONNECTED_TO.opus.bin"
+      },
+      "opus_frame_count": 21,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "LISTENING",
+      "text": "聆听中...",
+      "files": {
+        "ogg": "LISTENING.ogg",
+        "opus_bin": "LISTENING.opus.bin"
+      },
+      "opus_frame_count": 21,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SPEAKING",
+      "text": "说话中...",
+      "files": {
+        "ogg": "SPEAKING.ogg",
+        "opus_bin": "SPEAKING.opus.bin"
+      },
+      "opus_frame_count": 22,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SERVER_NOT_FOUND",
+      "text": "正在寻找可用服务",
+      "files": {
+        "ogg": "SERVER_NOT_FOUND.ogg",
+        "opus_bin": "SERVER_NOT_FOUND.opus.bin"
+      },
+      "opus_frame_count": 35,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SERVER_NOT_CONNECTED",
+      "text": "无法连接服务，请稍后再试",
+      "files": {
+        "ogg": "SERVER_NOT_CONNECTED.ogg",
+        "opus_bin": "SERVER_NOT_CONNECTED.opus.bin"
+      },
+      "opus_frame_count": 52,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SERVER_TIMEOUT",
+      "text": "等待响应超时",
+      "files": {
+        "ogg": "SERVER_TIMEOUT.ogg",
+        "opus_bin": "SERVER_TIMEOUT.opus.bin"
+      },
+      "opus_frame_count": 32,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SERVER_ERROR",
+      "text": "发送失败，请检查网络",
+      "files": {
+        "ogg": "SERVER_ERROR.ogg",
+        "opus_bin": "SERVER_ERROR.opus.bin"
+      },
+      "opus_frame_count": 45,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "CONNECT_TO_HOTSPOT",
+      "text": "手机连接热点 ",
+      "files": {
+        "ogg": "CONNECT_TO_HOTSPOT.ogg",
+        "opus_bin": "CONNECT_TO_HOTSPOT.opus.bin"
+      },
+      "opus_frame_count": 32,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "ACCESS_VIA_BROWSER",
+      "text": "，浏览器访问 ",
+      "files": {
+        "ogg": "ACCESS_VIA_BROWSER.ogg",
+        "opus_bin": "ACCESS_VIA_BROWSER.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "WIFI_CONFIG_MODE",
+      "text": "配网模式",
+      "files": {
+        "ogg": "WIFI_CONFIG_MODE.ogg",
+        "opus_bin": "WIFI_CONFIG_MODE.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "ENTERING_WIFI_CONFIG_MODE",
+      "text": "进入配网模式...",
+      "files": {
+        "ogg": "ENTERING_WIFI_CONFIG_MODE.ogg",
+        "opus_bin": "ENTERING_WIFI_CONFIG_MODE.opus.bin"
+      },
+      "opus_frame_count": 32,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "SCANNING_WIFI",
+      "text": "扫描 Wi-Fi...",
+      "files": {
+        "ogg": "SCANNING_WIFI.ogg",
+        "opus_bin": "SCANNING_WIFI.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "NEW_VERSION",
+      "text": "新版本 ",
+      "files": {
+        "ogg": "NEW_VERSION.ogg",
+        "opus_bin": "NEW_VERSION.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "OTA_UPGRADE",
+      "text": "OTA 升级",
+      "files": {
+        "ogg": "OTA_UPGRADE.ogg",
+        "opus_bin": "OTA_UPGRADE.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "UPGRADING",
+      "text": "正在升级系统...",
+      "files": {
+        "ogg": "UPGRADING.ogg",
+        "opus_bin": "UPGRADING.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "UPGRADE_FAILED",
+      "text": "升级失败",
+      "files": {
+        "ogg": "UPGRADE_FAILED.ogg",
+        "opus_bin": "UPGRADE_FAILED.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "ACTIVATION",
+      "text": "激活设备",
+      "files": {
+        "ogg": "ACTIVATION.ogg",
+        "opus_bin": "ACTIVATION.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "BATTERY_LOW",
+      "text": "电量不足",
+      "files": {
+        "ogg": "BATTERY_LOW.ogg",
+        "opus_bin": "BATTERY_LOW.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "BATTERY_CHARGING",
+      "text": "正在充电",
+      "files": {
+        "ogg": "BATTERY_CHARGING.ogg",
+        "opus_bin": "BATTERY_CHARGING.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "BATTERY_FULL",
+      "text": "电量已满",
+      "files": {
+        "ogg": "BATTERY_FULL.ogg",
+        "opus_bin": "BATTERY_FULL.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "BATTERY_NEED_CHARGE",
+      "text": "电量低，请充电",
+      "files": {
+        "ogg": "BATTERY_NEED_CHARGE.ogg",
+        "opus_bin": "BATTERY_NEED_CHARGE.opus.bin"
+      },
+      "opus_frame_count": 35,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "VOLUME",
+      "text": "音量 ",
+      "files": {
+        "ogg": "VOLUME.ogg",
+        "opus_bin": "VOLUME.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "MUTED",
+      "text": "已静音",
+      "files": {
+        "ogg": "MUTED.ogg",
+        "opus_bin": "MUTED.opus.bin"
+      },
+      "opus_frame_count": 18,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "MAX_VOLUME",
+      "text": "最大音量",
+      "files": {
+        "ogg": "MAX_VOLUME.ogg",
+        "opus_bin": "MAX_VOLUME.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "RTC_MODE_OFF",
+      "text": "AEC 关闭",
+      "files": {
+        "ogg": "RTC_MODE_OFF.ogg",
+        "opus_bin": "RTC_MODE_OFF.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "RTC_MODE_ON",
+      "text": "AEC 开启",
+      "files": {
+        "ogg": "RTC_MODE_ON.ogg",
+        "opus_bin": "RTC_MODE_ON.opus.bin"
+      },
+      "opus_frame_count": 32,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "DOWNLOAD_ASSETS_FAILED",
+      "text": "下载资源失败",
+      "files": {
+        "ogg": "DOWNLOAD_ASSETS_FAILED.ogg",
+        "opus_bin": "DOWNLOAD_ASSETS_FAILED.opus.bin"
+      },
+      "opus_frame_count": 28,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "LOADING_ASSETS",
+      "text": "加载资源...",
+      "files": {
+        "ogg": "LOADING_ASSETS.ogg",
+        "opus_bin": "LOADING_ASSETS.opus.bin"
+      },
+      "opus_frame_count": 25,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "PLEASE_WAIT",
+      "text": "请稍候...",
+      "files": {
+        "ogg": "PLEASE_WAIT.ogg",
+        "opus_bin": "PLEASE_WAIT.opus.bin"
+      },
+      "opus_frame_count": 21,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "FOUND_NEW_ASSETS",
+      "text": "发现新资源 2",
+      "files": {
+        "ogg": "FOUND_NEW_ASSETS.ogg",
+        "opus_bin": "FOUND_NEW_ASSETS.opus.bin"
+      },
+      "opus_frame_count": 38,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    },
+    {
+      "key": "HELLO_MY_FRIEND",
+      "text": "你好，我的朋友！",
+      "files": {
+        "ogg": "HELLO_MY_FRIEND.ogg",
+        "opus_bin": "HELLO_MY_FRIEND.opus.bin"
+      },
+      "opus_frame_count": 32,
+      "sample_rate": 24000,
+      "frame_duration_ms": 60
+    }
+  ],
+  "skipped": [],
+  "language": "zh-CN"
+}

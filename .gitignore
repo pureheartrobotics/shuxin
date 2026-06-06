@@ -46,6 +46,7 @@ apps/wechat-miniprogram/dist/
 data/devices.yaml
 data/docker_deps.hash
 data/shuxin_home/
+data/device_assets/**/_tmp/
 models/*
 !models/.gitkeep
 outputs/*
