@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -17,7 +18,18 @@ from shuxin.voice.config import DeviceConfigProvider, LLMDeviceConfig, merge_llm
 from shuxin.voice.db import PostgresDatabase
 from shuxin.voice.local_repository import VoiceLocalRepository
 from shuxin.voice.postgres_repository import VoicePostgresRepository
-from shuxin.voice.providers import create_stt_provider, create_tts_provider
+from shuxin.voice.opus_codec import (
+    DEFAULT_CHANNELS,
+    DEFAULT_FRAME_DURATION_MS,
+    DOWNLINK_SAMPLE_RATE,
+    OpusStreamDecoder,
+    UPLINK_SAMPLE_RATE,
+    opus_available,
+    transcode_mp3_to_opus_frames,
+)
+from shuxin.voice.providers import create_stt_provider
+from shuxin.voice.agents import DEFAULT_AGENT_ID
+from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
 from shuxin.voice.service import VoiceService
 from shuxin.voice.tencent_realtime_asr import (
     TencentRealtimeASRResult,
@@ -34,6 +46,74 @@ CHANNELS = 1
 SENTENCE_DELIMITERS = "。！？!?；;\n"
 FIRST_SEGMENT_WEAK_DELIMITERS = "，,、"
 MAX_STREAMING_TTS_CHARS = 48
+
+DEFAULT_AUDIO_RETENTION_HOURS = 12
+DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
+logger = logging.getLogger("shuxin.voice.server")
+
+
+def _negotiate_audio_params(client_params: dict | None) -> dict[str, int | str]:
+    params = client_params if isinstance(client_params, dict) else {}
+    fmt = str(params.get("format") or "pcm").strip().lower()
+    if fmt not in {"pcm", "opus"}:
+        fmt = "pcm"
+    frame_duration = int(params.get("frame_duration") or DEFAULT_FRAME_DURATION_MS)
+    if frame_duration <= 0:
+        frame_duration = DEFAULT_FRAME_DURATION_MS
+    if fmt == "opus":
+        return {
+            "format": "opus",
+            "uplink_sample_rate": UPLINK_SAMPLE_RATE,
+            "downlink_sample_rate": DOWNLINK_SAMPLE_RATE,
+            "channels": DEFAULT_CHANNELS,
+            "frame_duration": frame_duration,
+        }
+    return {
+        "format": "pcm",
+        "uplink_sample_rate": UPLINK_SAMPLE_RATE,
+        "downlink_sample_rate": UPLINK_SAMPLE_RATE,
+        "channels": DEFAULT_CHANNELS,
+        "frame_duration": frame_duration,
+    }
+
+
+def _audio_retention_hours() -> int:
+    raw = os.environ.get("SHUXIN_AUDIO_RETENTION_HOURS", str(DEFAULT_AUDIO_RETENTION_HOURS)).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_AUDIO_RETENTION_HOURS
+
+
+def _audio_retention_interval_sec() -> int:
+    raw = os.environ.get(
+        "SHUXIN_AUDIO_RETENTION_INTERVAL_SEC",
+        str(DEFAULT_AUDIO_RETENTION_INTERVAL_SEC),
+    ).strip()
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return DEFAULT_AUDIO_RETENTION_INTERVAL_SEC
+
+
+async def _audio_retention_loop(repo, *, interval_sec: int, retention_hours: int) -> None:
+    while True:
+        try:
+            if retention_hours > 0:
+                result = await repo.purge_expired_audio_attachments(
+                    retention_hours=retention_hours
+                )
+                if int(result.get("purged", 0)) > 0:
+                    logger.info(
+                        "purged expired audio attachments purged=%s bytes_freed=%s",
+                        result.get("purged", 0),
+                        result.get("bytes_freed", 0),
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("audio retention purge failed")
+        await asyncio.sleep(interval_sec)
 
 
 def _pop_speakable_segments(
@@ -137,9 +217,25 @@ def create_app(
                 shuxin_home=shuxin_home,
                 out_dir=out_dir,
             )
+        retention_hours = _audio_retention_hours()
+        interval_sec = _audio_retention_interval_sec()
+        app.state.audio_retention_task = asyncio.create_task(
+            _audio_retention_loop(
+                app.state.repo,
+                interval_sec=interval_sec,
+                retention_hours=retention_hours,
+            )
+        )
 
     @app.on_event("shutdown")
     async def shutdown() -> None:
+        task = getattr(app.state, "audio_retention_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         if database_url:
             await db.close()
 
@@ -362,6 +458,114 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.post("/admin/api/devices/apply-tts-defaults")
+    async def admin_apply_tts_defaults(request: Request):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().apply_default_tts_to_all_devices())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/agents")
+    async def admin_list_agents(request: Request, limit: int = 50, cursor: str = "", q: str = ""):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().list_agents(limit=limit, cursor=cursor, q=q))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
+    @app.post("/admin/api/agents")
+    async def admin_create_agent(request: Request):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().create_agent(payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/agents/{agent_id}")
+    async def admin_get_agent(request: Request, agent_id: str):
+        try:
+            require_admin(request)
+            record = await repo().get_agent(agent_id)
+            return JSONResponse(record.to_admin_dict())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    @app.patch("/admin/api/agents/{agent_id}")
+    async def admin_update_agent(request: Request, agent_id: str):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().update_agent(agent_id, payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.delete("/admin/api/agents/{agent_id}")
+    async def admin_delete_agent(request: Request, agent_id: str):
+        try:
+            require_admin(request)
+            await repo().soft_delete_agent(agent_id)
+            return JSONResponse({"ok": True})
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.patch("/admin/api/users/{user_id}")
+    async def admin_patch_user(request: Request, user_id: str):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().patch_user(user_id, payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.patch("/admin/api/users/{user_id}/voice-preferences")
+    async def admin_user_voice_preferences(request: Request, user_id: str):
+        del request, user_id
+        return JSONResponse(
+            {"error": "voice-preferences API reserved for future user-facing customization"},
+            status_code=501,
+        )
+
+    @app.post("/admin/api/tts/preview")
+    async def admin_tts_preview(request: Request):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            agent_id = str(payload.get("agent_id") or DEFAULT_AGENT_ID)
+            text = str(payload.get("text") or "你好，这是音色试听。")
+            agent_record = await repo().get_agent(agent_id)
+            preview_dir = out_dir / "admin-preview"
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"{uuid.uuid4().hex}.mp3"
+            path = preview_dir / filename
+            provider = create_tts_provider_from_agent(agent_record, output_dir=str(preview_dir))
+            await provider.synthesize(text, path)
+            return JSONResponse(
+                {
+                    "agent_id": agent_id,
+                    "text": text,
+                    "audio_path": str(path),
+                    "audio_url": f"/admin/api/tts/preview/files/{filename}",
+                }
+            )
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/tts/preview/files/{filename}")
+    async def admin_tts_preview_file(request: Request, filename: str):
+        try:
+            require_admin(request)
+            safe_name = Path(filename).name
+            path = out_dir / "admin-preview" / safe_name
+            if not path.is_file():
+                return JSONResponse({"error": "preview file not found"}, status_code=404)
+            from fastapi.responses import FileResponse
+
+            return FileResponse(path, media_type="audio/mpeg", filename=safe_name)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
     @app.patch("/admin/api/devices/{device_id}")
     async def admin_update_device_label(request: Request, device_id: str):
         try:
@@ -556,10 +760,14 @@ class _VoiceWebSocketSession:
         self.stt = None
         self.tts = None
         self.agent = None
+        self.agent_record = None
         self.audio_chunks: list[bytes] = []
         self.realtime_asr: TencentRealtimeASRSession | None = None
         self.realtime_stt_started = 0.0
         self.listening = False
+        self.audio_wire_format = "pcm"
+        self.audio_params: dict[str, int | str] = _negotiate_audio_params(None)
+        self.opus_uplink_decoder: OpusStreamDecoder | None = None
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -591,6 +799,7 @@ class _VoiceWebSocketSession:
         if self.agent is not None:
             await asyncio.to_thread(self.agent.shutdown)
             self.agent = None
+        self.agent_record = None
         if mark_offline and self.device_id:
             try:
                 await self.repo.touch_device_status(device_id=self.device_id, online=False)
@@ -641,17 +850,40 @@ class _VoiceWebSocketSession:
                 online=True,
                 session_id=self.session_id,
             )
+            self.audio_params = _negotiate_audio_params(data.get("audio_params"))
+            self.audio_wire_format = str(self.audio_params["format"])
+            self.opus_uplink_decoder = None
+            if self.audio_wire_format == "opus":
+                if not opus_available():
+                    await self._send_json(
+                        {
+                            "type": "error",
+                            "message": "opus support requires opuslib_next (requirements-voice-app.txt); redeploy Docker",
+                        }
+                    )
+                    return
+                self.opus_uplink_decoder = OpusStreamDecoder(
+                    sample_rate=int(self.audio_params["uplink_sample_rate"]),
+                    frame_duration_ms=int(self.audio_params["frame_duration"]),
+                )
             await self._reset_runtime()
-            await self._send_json(
-                {
-                    "type": "hello",
-                    "state": "ok",
-                    "user_id": self.user_id,
-                    "device_id": self.device_id,
-                    "client_id": self.client_id,
-                    "session_id": self.session_id,
+            hello_ok = {
+                "type": "hello",
+                "state": "ok",
+                "user_id": self.user_id,
+                "device_id": self.device_id,
+                "client_id": self.client_id,
+                "session_id": self.session_id,
+            }
+            if self.audio_wire_format == "opus":
+                hello_ok["audio_params"] = {
+                    "format": "opus",
+                    "uplink_sample_rate": int(self.audio_params["uplink_sample_rate"]),
+                    "downlink_sample_rate": int(self.audio_params["downlink_sample_rate"]),
+                    "channels": int(self.audio_params["channels"]),
+                    "frame_duration": int(self.audio_params["frame_duration"]),
                 }
-            )
+            await self._send_json(hello_ok)
             return
 
         if message_type == "listen" and data.get("state") == "start":
@@ -700,11 +932,19 @@ class _VoiceWebSocketSession:
         await self._send_json({"type": "error", "message": f"unsupported message: {data}"})
 
     async def _handle_audio_frame(self, frame: bytes) -> None:
-        """缓存 listen 窗口内收到的 PCM16 二进制音频帧，并按需转发实时 ASR。"""
+        """缓存 listen 窗口内收到的 PCM16 或 Opus 二进制音频帧，并按需转发实时 ASR。"""
         if self.listening and frame:
-            self.audio_chunks.append(frame)
+            pcm_frame = frame
+            if self.audio_wire_format == "opus":
+                if self.opus_uplink_decoder is None:
+                    self.opus_uplink_decoder = OpusStreamDecoder(
+                        sample_rate=int(self.audio_params["uplink_sample_rate"]),
+                        frame_duration_ms=int(self.audio_params["frame_duration"]),
+                    )
+                pcm_frame = self.opus_uplink_decoder.decode_packet(frame)
+            self.audio_chunks.append(pcm_frame)
             if self.realtime_asr is not None:
-                await self.realtime_asr.send_audio(frame)
+                await self.realtime_asr.send_audio(pcm_frame)
 
     async def _process_turn(self) -> None:
         """处理完整的一轮语音对话。
@@ -973,6 +1213,7 @@ class _VoiceWebSocketSession:
         self.stt = None
         self.tts = None
         self.device = None
+        self.agent_record = None
 
     async def _stream_agent_chunks(self, text: str):
         """Run the sync Agent streaming iterator without blocking the event loop."""
@@ -1023,7 +1264,16 @@ class _VoiceWebSocketSession:
         )
         sentence_started = time.perf_counter()
         speech_path = await self.tts.synthesize(text, output_path)
-        await self.websocket.send_bytes(speech_path.read_bytes())
+        if self.audio_wire_format == "opus":
+            frames = transcode_mp3_to_opus_frames(
+                speech_path,
+                sample_rate=int(self.audio_params["downlink_sample_rate"]),
+                frame_duration_ms=int(self.audio_params["frame_duration"]),
+            )
+            for packet in frames:
+                await self.websocket.send_bytes(packet)
+        else:
+            await self.websocket.send_bytes(speech_path.read_bytes())
         await self._send_json(
             {
                 "type": "tts",
@@ -1096,13 +1346,22 @@ class _VoiceWebSocketSession:
                 self.stt = None
             else:
                 self.stt = create_stt_provider(self.device.stt)
-            self.tts = create_tts_provider(self.device.tts)
+            agent_id = DEFAULT_AGENT_ID
+            if self.user_settings and self.user_settings.agent_id.strip():
+                agent_id = self.user_settings.agent_id.strip()
+            elif hasattr(self.repo, "get_user_agent_id"):
+                agent_id = await self.repo.get_user_agent_id(self.user_id)
+            self.agent_record = await self.repo.get_agent(agent_id)
+            self.tts = create_tts_provider_from_agent(self.agent_record)
             self.agent = self.service.create_agent(
                 self.device,
                 user_home=self.audio_store.user_shuxin_home(),
+                agent=self.agent_record,
             )
             self.agent.context.metadata["channel"] = "voice"
+            self.agent.context.metadata["agent_id"] = self.agent_record.agent_id
             await asyncio.to_thread(self.agent.initialize)
+            VoiceService.apply_device_mbti(self.agent, self.device, self.agent_record)
 
     async def _send_json(self, data: dict) -> None:
         """以 UTF-8 JSON 文本消息下发状态，保留中文错误和回复内容。"""
@@ -1149,7 +1408,7 @@ def _admin_html(authenticated: bool) -> str:
     .table-row {{ display: grid; grid-template-columns: minmax(140px, 0.7fr) 170px minmax(220px, 1fr) minmax(180px, 0.9fr) 1fr 430px; gap: 8px; align-items: center; min-width: 1100px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }}
     .table-row > * {{ min-width: 0; }}
     .badge-row {{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }}
-    .table-row.users {{ grid-template-columns: minmax(200px, 0.85fr) 90px 100px 120px 120px minmax(200px, 1fr) minmax(280px, 1.1fr); min-width: 1100px; }}
+    .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 90px 100px 100px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1100px; }}
     .llm-form {{ display: grid; gap: 12px; }}
     .llm-form label {{ display: grid; gap: 4px; }}
     .llm-form input {{ width: 100%; }}
@@ -1205,6 +1464,7 @@ def _admin_html(authenticated: bool) -> str:
       <div class="tabs">
         <button id="tabDevices" class="active" onclick="showTab('devices')">设备</button>
         <button id="tabUsers" onclick="showTab('users')">用户</button>
+        <button id="tabAgents" onclick="showTab('agents')">Agent</button>
         <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
         <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
       </div>
@@ -1227,6 +1487,7 @@ def _admin_html(authenticated: bool) -> str:
             <h2>设备状态与配置</h2>
             <div class="toolbar" style="margin-bottom:0">
               <button class="secondary" onclick="applyTencentSttDefaults()">全部应用腾讯 STT</button>
+              <button class="secondary" onclick="applyVolcTtsDefaults()">全部应用火山 TTS</button>
               <input id="devicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
               <select id="devicesLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
               <button class="secondary" onclick="resetList('devices')">查找</button>
@@ -1259,6 +1520,31 @@ def _admin_html(authenticated: bool) -> str:
           </div>
           <div id="userList" class="table"></div>
           <div id="usersPager" class="pager"></div>
+        </div>
+      </div>
+      <div id="agents" class="stack" style="display:none">
+        <div class="panel">
+          <h2>新建 Agent</h2>
+          <div class="form-row compact">
+            <label><span class="hint">Agent ID</span><input id="newAgentId" placeholder="guardian" /></label>
+            <label><span class="hint">显示名</span><input id="newAgentName" placeholder="守护灵" /></label>
+            <label><span class="hint">voice_type</span><input id="newAgentVoice" placeholder="火山复刻 ID" /></label>
+            <label><span class="hint">cluster</span><input id="newAgentCluster" value="volcano_icl" /></label>
+            <label><span class="hint">soul_path</span><input id="newAgentSoul" placeholder="data/agents/shuxin/SOUL.md" /></label>
+          </div>
+          <div class="toolbar" style="margin-top:12px"><button onclick="createAgent()">保存 Agent</button></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Agent 音色与人格</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <input id="agentsSearch" placeholder="查找 Agent" />
+              <select id="agentsLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
+              <button class="secondary" onclick="resetList('agents')">查找</button>
+            </div>
+          </div>
+          <div id="agentList" class="table"></div>
+          <div id="agentsPager" class="pager"></div>
         </div>
       </div>
       <div id="bindings" class="grid" style="display:none">
@@ -1330,6 +1616,7 @@ def _admin_html(authenticated: bool) -> str:
   <script>
     let authenticated = {auth_state};
     let users = [];
+    let agents = [];
     let devices = [];
     let bindUsersPage = [];
     let bindDevicesPage = [];
@@ -1341,6 +1628,7 @@ def _admin_html(authenticated: bool) -> str:
     const listState = {{
       devices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       users: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
+      agents: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindings: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindUsers: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindDevices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
@@ -1511,8 +1799,8 @@ def _admin_html(authenticated: bool) -> str:
       authenticated = true; boot();
     }}
     function showTab(name) {{
-      for (const id of ['devices','users','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
-      for (const id of ['tabDevices','tabUsers','tabBindings','tabAdapters']) $(id).classList.remove('active');
+      for (const id of ['devices','users','agents','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
+      for (const id of ['tabDevices','tabUsers','tabAgents','tabBindings','tabAdapters']) $(id).classList.remove('active');
       $('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
       if (name === 'bindings' && authenticated) {{
         loadBindUsers();
@@ -1553,6 +1841,7 @@ def _admin_html(authenticated: bool) -> str:
     function loadList(name) {{
       if (name === 'devices') return loadDevices();
       if (name === 'users') return loadUsers();
+      if (name === 'agents') return loadAgents();
       if (name === 'bindUsers') return loadBindUsers();
       if (name === 'bindDevices') return loadBindDevices();
       return loadBindings();
@@ -1568,9 +1857,94 @@ def _admin_html(authenticated: bool) -> str:
     }}
     async function loadAll() {{
       await Promise.all([
-        loadDevices(), loadUsers(), loadBindings(), loadAdapters(),
+        loadDevices(), loadUsers(), loadAgents(), loadBindings(), loadAdapters(),
         loadBindUsers(), loadBindDevices(),
       ]);
+    }}
+    function agentOptionsHtml(selected) {{
+      const opts = agents.map(a => `<option value="${{esc(a.agent_id)}}" ${{a.agent_id === selected ? 'selected' : ''}}>${{esc(a.display_name || a.agent_id)}} (${{esc(a.agent_id)}})</option>`).join('');
+      return `<option value="">— 默认 shuxin —</option>` + opts;
+    }}
+    async function applyVolcTtsDefaults() {{
+      if (!confirm('将所有未删除设备的 TTS 设为火山复刻 (volcengine-clone)？')) return;
+      const res = await fetch('/admin/api/devices/apply-tts-defaults', {{method:'POST', headers:headers(), credentials:'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        openAdminModal({{title: '应用 TTS 失败', bodyHtml: `<p class="hint">${{esc(data.error || '操作失败')}}</p>`}});
+        return;
+      }}
+      openAdminModal({{
+        title: '已应用火山 TTS',
+        bodyHtml: `<p class="hint">已更新 ${{data.updated_count ?? 0}} 台设备为 volcengine-clone。</p>`,
+      }});
+      await loadDevices();
+    }}
+    async function loadAgents() {{
+      const data = await (await fetch(listUrl('agents', '/admin/api/agents'))).json();
+      agents = data.items || [];
+      listState.agents.nextCursor = data.next_cursor || '';
+      $('agentList').innerHTML = `<div class="table-row table-head"><div>Agent</div><div>voice_type</div><div>cluster</div><div>soul_path</div><div>操作</div></div>` + agents.map(a => {{
+        const q = jsQuote(a.agent_id);
+        return `<div class="table-row">
+          <div><strong>${{esc(a.display_name || a.agent_id)}}</strong><div class="meta">${{esc(a.agent_id)}}</div></div>
+          <input id="voice_${{esc(a.agent_id)}}" value="${{esc(a.voice_type || '')}}" placeholder="复刻 ID" />
+          <input id="cluster_${{esc(a.agent_id)}}" value="${{esc(a.cluster || 'volcano_icl')}}" />
+          <input id="soul_${{esc(a.agent_id)}}" value="${{esc(a.soul_path || '')}}" />
+          <div class="toolbar">
+            <button class="secondary" onclick="saveAgentRow('${{q}}')">保存</button>
+            <button class="secondary" onclick="previewAgent('${{q}}')">试听</button>
+            <button class="danger" onclick="deleteAgent('${{q}}')" ${{a.agent_id === 'shuxin' ? 'disabled' : ''}}>删除</button>
+          </div>
+        </div>`;
+      }}).join('');
+      renderPager('agents', agents.length);
+    }}
+    async function createAgent() {{
+      const payload = {{
+        agent_id: $('newAgentId').value.trim(),
+        display_name: $('newAgentName').value.trim(),
+        voice_type: $('newAgentVoice').value.trim(),
+        cluster: $('newAgentCluster').value.trim() || 'volcano_icl',
+        soul_path: $('newAgentSoul').value.trim(),
+      }};
+      const res = await fetch('/admin/api/agents', {{method:'POST', headers:headers(), body:JSON.stringify(payload)}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{ alert(data.error || 'create failed'); return; }}
+      $('newAgentId').value = ''; $('newAgentName').value = ''; $('newAgentVoice').value = '';
+      await loadAgents();
+    }}
+    async function saveAgentRow(id) {{
+      const payload = {{
+        voice_type: $('voice_' + id).value.trim(),
+        cluster: $('cluster_' + id).value.trim(),
+        soul_path: $('soul_' + id).value.trim(),
+      }};
+      const res = await fetch('/admin/api/agents/' + encodeURIComponent(id), {{method:'PATCH', headers:headers(), body:JSON.stringify(payload)}});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'update failed');
+      await loadAgents();
+    }}
+    async function previewAgent(id) {{
+      const text = prompt('试听文本', '你好，我是舒心') || '你好，我是舒心';
+      const res = await fetch('/admin/api/tts/preview', {{method:'POST', headers:headers(), body:JSON.stringify({{agent_id:id, text}})}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{ alert(data.error || 'preview failed'); return; }}
+      if (data.audio_url) {{
+        const audio = new Audio(data.audio_url + '?t=' + Date.now());
+        audio.play().catch(() => alert('播放失败，请检查浏览器自动播放策略'));
+      }}
+    }}
+    async function deleteAgent(id) {{
+      if (!confirm('删除 Agent ' + id + '？')) return;
+      await fetch('/admin/api/agents/' + encodeURIComponent(id), {{method:'DELETE', headers:headers()}});
+      await loadAgents();
+    }}
+    async function saveUserAgent(userId, agentId) {{
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId), {{
+        method:'PATCH', headers:headers(), body:JSON.stringify({{agent_id: agentId || 'shuxin'}}),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'agent update failed');
     }}
     function deviceStatusBadges(d) {{
       const badges = [];
@@ -1630,8 +2004,10 @@ def _admin_html(authenticated: bool) -> str:
       listState.devices.nextCursor = data.next_cursor || '';
       $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>密钥</div><div>备注</div><div>操作</div></div>` + devices.map(d => {{
         const sttType = (d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local';
+        const ttsType = (d.tts_config && d.tts_config.type) ? d.tts_config.type : 'volcengine-clone';
+        const mbti = (d.metadata && d.metadata.mbti) ? d.metadata.mbti : '';
         return `<div class="table-row">
-        ${{renderClipCell(d.device_id, `auth=${{esc(d.auth_mode || '')}} · stt=${{esc(sttType)}}`, '设备 ID')}}
+        ${{renderClipCell(d.device_id, `auth=${{esc(d.auth_mode || '')}} · stt=${{esc(sttType)}} · tts=${{esc(ttsType)}}${{mbti ? ' · mbti=' + esc(mbti) : ''}}`, '设备 ID')}}
         <input id="claim_${{esc(d.device_id)}}" value="${{esc(d.claim_code || '')}}" />
         <div>${{deviceStatusBadges(d)}}</div>
         ${{renderSecretCell(d)}}
@@ -1647,13 +2023,16 @@ def _admin_html(authenticated: bool) -> str:
       renderPager('devices', devices.length);
     }}
     async function loadUsers() {{
+      await loadAgents();
       const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
       users = data.items || [];
       listState.users.nextCursor = data.next_cursor || '';
-      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>启用</div><div>音频MB</div><div>Token额度</div><div>已用</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>Token额度</div><div>已用</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
         const q = jsQuote(u.user_id);
+        const agentSel = `<select id="agent_${{esc(u.user_id)}}" onchange="saveUserAgent('${{q}}', this.value)">${{agentOptionsHtml(u.agent_id || 'shuxin')}}</select>`;
         return `<div class="table-row users">
           ${{renderClipCell(u.user_id, `token=${{u.token_configured ? '已配置' : '未配置'}}`, '用户 ID')}}
+          <div>${{agentSel}}</div>
           <input id="userEnabled_${{esc(u.user_id)}}" value="${{u.enabled ? 'true' : 'false'}}" />
           <input id="audio_${{esc(u.user_id)}}" type="number" min="1" value="${{u.audio_quota_mb || 512}}" />
           <input id="quota_${{esc(u.user_id)}}" type="number" min="0" value="${{u.token_quota_total || 0}}" />
@@ -2013,7 +2392,9 @@ def _web_demo_html(default_device_id: str) -> str:
       testTargetSelect.innerHTML = '<option value="">选择用户与设备…</option>' + demoTargets.map((item, idx) => {{
         const online = item.online ? '在线' : '离线';
         const model = item.llm_model || '未配置';
-        return `<option value="${{idx}}">${{item.user_id}} · ${{item.device_id}} · ${{model}} · ${{online}}</option>`;
+        const agentLabel = item.agent_display_name || item.agent_id || 'shuxin';
+        const voice = item.tts_voice_type ? ` · 音色=${{item.tts_voice_type}}` : '';
+        return `<option value="${{idx}}">${{item.user_id}} · ${{item.device_id}} · Agent=${{agentLabel}}${{voice}} · ${{model}} · ${{online}}</option>`;
       }}).join('');
       log(`已加载 ${{demoTargets.length}} 个可测试绑定`);
       if (!demoTargets.length) log('没有 active 绑定或密钥不可读取，请在后台绑定设备并轮换密钥');
@@ -2030,7 +2411,7 @@ def _web_demo_html(default_device_id: str) -> str:
       secretInput.value = item.device_secret || '';
       llmPreviewEl.textContent = renderLlmPreview(item);
       applyLlmPreviewStyle(item);
-      log(`已选择 ${{item.user_id}} -> ${{item.device_id}}`);
+      log(`已选择 ${{item.user_id}} -> ${{item.device_id}} · Agent=${{item.agent_display_name || item.agent_id || 'shuxin'}}`);
       if (!item.llm_api_key_configured) {{
         log('绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」后再对话');
       }}
