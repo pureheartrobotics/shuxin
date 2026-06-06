@@ -7,8 +7,9 @@ defaults:
     model: 16k_zh
     output_dir: outputs
   tts:
-    type: local
-    voice: zh-CN-XiaoxiaoNeural
+    type: volcengine-clone
+    profile_id: shuxin
+    encoding: mp3
     output_dir: outputs
 
 devices:
@@ -24,8 +25,9 @@ devices:
       model_dir: models/paraformer-zh-streaming
       output_dir: outputs
     tts:
-      type: local
-      voice: zh-CN-XiaoxiaoNeural
+      type: volcengine-clone
+      profile_id: shuxin
+      encoding: mp3
       output_dir: outputs
     llm:
       provider: ${DEMO_LLM_PROVIDER}
@@ -39,8 +41,9 @@ devices:
       model: 16k_zh
       output_dir: outputs
     tts:
-      type: local
-      voice: zh-CN-XiaoxiaoNeural
+      type: volcengine-clone
+      profile_id: shuxin
+      encoding: mp3
       output_dir: outputs
     llm:
       provider: ${DEMO_LLM_PROVIDER}

@@ -14,5 +14,6 @@ def test_default_tencent_stt_config_shape(monkeypatch) -> None:
 
 def test_default_device_tts_config_shape() -> None:
     cfg = default_device_tts_config()
-    assert cfg["type"] == "local"
-    assert cfg["voice"]
+    assert cfg["type"] == "volcengine-clone"
+    assert cfg["profile_id"] == "shuxin"
+    assert cfg["encoding"] == "mp3"

@@ -47,6 +47,9 @@ data/devices.yaml
 data/docker_deps.hash
 data/shuxin_home/
 data/device_assets/**/_tmp/
+data/device_assets.zip
+data/pic/
+data/test/
 models/*
 !models/.gitkeep
 outputs/*
