@@ -29,16 +29,26 @@
     <view v-for="device in devices" :key="device.binding_id" class="device">
       <view>
         <view class="device-code">{{ device.device_code || device.device_id }}</view>
+        <view v-if="deviceMbtiLabel(device)" class="device-mbti">{{ deviceMbtiLabel(device) }}</view>
         <view class="device-meta">{{ device.online ? "在线" : "离线" }} · {{ device.bound_at || "刚刚绑定" }}</view>
       </view>
-      <button class="danger" :disabled="loading" @tap="unbindDevice(device)">解绑</button>
     </view>
+
+    <MbtiRevealModal
+      :visible="revealVisible"
+      :mbti="revealMbti"
+      :display-name="revealDisplayName"
+      :tagline="revealTagline"
+      :is-first-reveal="revealIsFirst"
+      @confirm="closeRevealModal"
+    />
   </view>
 </template>
 
 <script setup lang="ts">
 import { onLoad } from "@dcloudio/uni-app";
 import { ref } from "vue";
+import MbtiRevealModal from "../../components/MbtiRevealModal.vue";
 
 const apiBase = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
 const bindCode = ref("");
@@ -48,6 +58,11 @@ const loading = ref(false);
 const message = ref("");
 const authStatus = ref("等待获取微信身份");
 const resultKind = ref<"success" | "error" | "info">("info");
+const revealVisible = ref(false);
+const revealMbti = ref("");
+const revealDisplayName = ref("");
+const revealTagline = ref("");
+const revealIsFirst = ref(true);
 
 onLoad((query: Record<string, string | undefined>) => {
   ensureLoggedIn();
@@ -126,7 +141,7 @@ function setMessage(kind: "success" | "error" | "info", text: string) {
 
 function formatBindError(errorText: string): string {
   if (errorText.includes("already claimed") || errorText.includes("inactive")) {
-    return "这个外壳认领码已经被绑定过。请先在当前用户下解绑，或在后台重置认领码后再绑定。";
+    return "这个外壳认领码已经被绑定过。请联系售后或在后台重置认领码后再绑定。";
   }
   if (errorText.includes("claim_code is invalid") || errorText.includes("claim_code or device_code is invalid")) {
     return "没有找到这个外壳认领码。请确认后台已生成并入库，且微信开发者工具连接的是同一个后端数据库。";
@@ -258,11 +273,16 @@ async function bindDevice() {
       return;
     }
     const result = await request("/api/devices/bind", buildBindPayload(token));
-    setMessage("success", result.already_bound ? "设备已绑定" : `绑定成功: ${result.device_code || result.device_id || bindCode.value.trim()}`);
-    uni.showToast({ title: "绑定成功", icon: "success" });
     bindCode.value = "";
     bindCodeKind.value = "claim_code";
     await loadDevices();
+    if (result.mbti) {
+      openRevealModal(result.mbti);
+      setMessage("success", result.mbti.is_first_reveal ? "绑定成功，已揭晓伙伴类型" : "设备已绑定");
+    } else {
+      setMessage("success", result.already_bound ? "设备已绑定" : `绑定成功: ${result.device_code || result.device_id || ""}`);
+      uni.showToast({ title: result.already_bound ? "设备已绑定" : "绑定成功", icon: "success" });
+    }
   } catch (error) {
     setMessage("error", `绑定失败: ${error.message || String(error)}`);
     uni.showToast({ title: "绑定失败", icon: "none" });
@@ -291,15 +311,23 @@ async function loadDevices() {
   });
 }
 
-async function unbindDevice(device: any) {
-  await withSessionToken(async (token) => {
-    await request("/api/devices/unbind", {
-      session_token: token,
-      device_code: device.device_code || device.device_id
-    });
-    setMessage("success", "已解绑");
-    await loadDevices();
-  });
+function openRevealModal(mbti: any) {
+  revealMbti.value = String(mbti.mbti || "");
+  revealDisplayName.value = String(mbti.display_name || mbti.mbti || "");
+  revealTagline.value = String(mbti.tagline || "");
+  revealIsFirst.value = Boolean(mbti.is_first_reveal);
+  revealVisible.value = true;
+}
+
+function closeRevealModal() {
+  revealVisible.value = false;
+}
+
+function deviceMbtiLabel(device: any): string {
+  const meta = device?.device?.metadata || {};
+  if (!meta.mbti) return "";
+  const name = meta.display_name ? ` · ${meta.display_name}` : "";
+  return `${meta.mbti}${name}`;
 }
 </script>
 
@@ -470,6 +498,17 @@ button {
   color: #25211c;
   font-size: 30rpx;
   font-weight: 700;
+}
+
+.device-mbti {
+  display: inline-flex;
+  margin-top: 10rpx;
+  padding: 6rpx 14rpx;
+  border-radius: 999rpx;
+  background: rgba(47, 96, 79, 0.12);
+  color: #2f604f;
+  font-size: 22rpx;
+  font-weight: 600;
 }
 
 .device-meta {

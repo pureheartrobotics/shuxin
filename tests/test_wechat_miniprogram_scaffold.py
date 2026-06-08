@@ -41,7 +41,8 @@ def test_wechat_miniprogram_uses_wx_login_and_device_apis() -> None:
 
     assert '"/api/devices/bind"' in page
     assert '"/api/devices/my"' in page
-    assert '"/api/devices/unbind"' in page
+    assert "MbtiRevealModal" in page
+    assert "unbindDevice" not in page
     assert "shuxin_session_token" in page
     assert "session_token" in page
     assert "VITE_SHUXIN_API_BASE" in page
