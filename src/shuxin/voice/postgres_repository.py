@@ -115,7 +115,11 @@ class VoicePostgresRepository:
                     device_secret=device_secret,
                     claim_code=claim_code,
                     note="factory provisioned device",
-                    metadata={"provisioned_by": "factory"},
+                    metadata={
+                        "provisioned_by": "factory",
+                        "mbti": random.choice(sorted(VALID_MBTI_TYPES)),
+                        "mbti_status": "sealed",
+                    },
                 )
 
         return {
@@ -166,6 +170,7 @@ class VoicePostgresRepository:
                             "label_batch": label_batch,
                             "sequence": sequence,
                             "mbti": blind_mbti,
+                            "mbti_status": "sealed",
                         },
                     )
                     items.append(
@@ -449,12 +454,16 @@ class VoicePostgresRepository:
                     metadata={"existing_user_id": existing_user},
                 )
                 raise PermissionError("device is already bound")
-            return {
+            result = {
                 "binding_id": str(existing["binding_id"]),
                 "user_id": user_id,
                 "device_code": device_id,
                 "already_bound": True,
             }
+            mbti = await self._attach_mbti_reveal_on_bind(conn, device_id)
+            if mbti:
+                result["mbti"] = mbti
+            return result
 
         binding_id = uuid.uuid4().hex
         await conn.execute(
@@ -481,12 +490,120 @@ class VoicePostgresRepository:
             device_id=device_id,
             metadata={},
         )
-        return {
+        result = {
             "binding_id": binding_id,
             "user_id": user_id,
             "device_code": device_id,
             "already_bound": False,
         }
+        mbti = await self._attach_mbti_reveal_on_bind(conn, device_id)
+        if mbti:
+            result["mbti"] = mbti
+        return result
+
+    async def _attach_mbti_reveal_on_bind(
+        self,
+        conn,
+        device_id: str,
+    ) -> dict[str, Any] | None:
+        reveal = await self._try_reveal_and_lock_conn(conn, device_id, "miniprogram_bind")
+        if reveal:
+            return reveal
+        row = await conn.fetchrow(
+            """
+            SELECT metadata
+            FROM devices
+            WHERE device_id = $1 AND deleted_at IS NULL
+            """,
+            device_id,
+        )
+        if row is None:
+            return None
+        from shuxin.voice.mbti_reveal import build_mbti_client_payload, is_mbti_locked
+
+        metadata = _json_obj(row["metadata"])
+        if is_mbti_locked(metadata):
+            return build_mbti_client_payload(metadata, is_first_reveal=False)
+        return None
+
+    async def _try_reveal_and_lock_conn(
+        self,
+        conn,
+        device_id: str,
+        revealed_by: str,
+    ) -> dict[str, Any] | None:
+        row = await conn.fetchrow(
+            """
+            SELECT metadata
+            FROM devices
+            WHERE device_id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            device_id,
+        )
+        if row is None:
+            return None
+        metadata = _json_obj(row["metadata"])
+        from shuxin.voice.mbti_reveal import build_mbti_client_payload, needs_mbti_reveal
+
+        if not needs_mbti_reveal(metadata):
+            return None
+
+        await conn.execute(
+            """
+            UPDATE devices
+            SET metadata = COALESCE(metadata, '{}'::jsonb)
+                || jsonb_build_object('mbti_status', 'locked')
+                || jsonb_build_object('mbti_revealed_by', $2::text)
+                || jsonb_build_object(
+                    'mbti_revealed_at',
+                    to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                )
+                || jsonb_build_object('device_intro_played', false),
+                updated_at = now()
+            WHERE device_id = $1
+            """,
+            device_id,
+            revealed_by,
+        )
+        updated = {
+            **metadata,
+            "mbti_status": "locked",
+            "device_intro_played": False,
+        }
+        return build_mbti_client_payload(updated, is_first_reveal=True)
+
+    async def try_reveal_and_lock(self, device_id: str, revealed_by: str) -> dict[str, Any] | None:
+        selected_id = _validate_device_code(device_id)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                result = await self._try_reveal_and_lock_conn(conn, selected_id, revealed_by)
+                if result:
+                    await self.audit(
+                        "mbti_reveal_locked",
+                        "device",
+                        selected_id,
+                        {"revealed_by": revealed_by, "mbti": result.get("mbti")},
+                    )
+                return result
+
+    async def mark_device_intro_played(self, device_id: str) -> dict[str, Any]:
+        selected_id = _validate_device_code(device_id)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                result = await conn.execute(
+                    """
+                    UPDATE devices
+                    SET metadata = COALESCE(metadata, '{}'::jsonb)
+                        || jsonb_build_object('device_intro_played', true),
+                        updated_at = now()
+                    WHERE device_id = $1 AND deleted_at IS NULL
+                    """,
+                    selected_id,
+                )
+                if not result.endswith("1"):
+                    raise PermissionError("device is disabled or not found")
+        return {"device_id": selected_id, "device_intro_played": True}
 
     async def authenticate_device(
         self,
@@ -1526,6 +1643,61 @@ class VoicePostgresRepository:
                 )
         return {"device_id": selected_id}
 
+    async def update_device_mbti(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        selected_id = _validate_device_code(device_id)
+        mbti = str(payload.get("mbti") or "").strip().upper()
+        if not mbti or mbti not in VALID_MBTI_TYPES:
+            raise ValueError(f"invalid mbti: {mbti}")
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                result = await conn.execute(
+                    """
+                    UPDATE devices
+                    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('mbti', $2::text),
+                        updated_at = now()
+                    WHERE device_id = $1 AND deleted_at IS NULL
+                    """,
+                    selected_id,
+                    mbti,
+                )
+                if not result.endswith("1"):
+                    raise PermissionError("device is disabled or not found")
+
+                await self.audit(
+                    "update_device_mbti",
+                    "device",
+                    selected_id,
+                    {"mbti": mbti},
+                )
+
+        return {"device_id": selected_id, "mbti": mbti}
+
+    async def mark_mbti_locked(self, device_id: str) -> dict[str, Any]:
+        selected_id = _validate_device_code(device_id)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                result = await conn.execute(
+                    """
+                    UPDATE devices
+                    SET metadata = COALESCE(metadata, '{}'::jsonb)
+                        || jsonb_build_object('mbti_status', 'locked')
+                        || jsonb_build_object('mbti_revealed_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')),
+                        updated_at = now()
+                    WHERE device_id = $1 AND deleted_at IS NULL
+                    """,
+                    selected_id,
+                )
+                if not result.endswith("1"):
+                    raise PermissionError("device is disabled or not found")
+                await self.audit(
+                    "mark_mbti_locked",
+                    "device",
+                    selected_id,
+                    {},
+                )
+        return {"device_id": selected_id, "mbti_status": "locked"}
+
     async def reset_claim_code(self, device_id: str) -> dict[str, Any]:
         selected_id = _validate_device_code(device_id)
         result = await self.pool.execute(
@@ -2159,6 +2331,12 @@ def _secret_unavailable_message(hint: str) -> str:
     return messages.get(hint, "device secret is not available")
 
 
+def _sanitize_binding_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    from shuxin.voice.mbti_reveal import sanitize_device_metadata_for_client
+
+    return sanitize_device_metadata_for_client(metadata)
+
+
 def _binding_row(row) -> dict[str, Any]:
     return {
         "binding_id": str(row["binding_id"]),
@@ -2171,7 +2349,7 @@ def _binding_row(row) -> dict[str, Any]:
         "device": {
             "enabled": bool(row["enabled"]),
             "note": str(row["note"] or ""),
-            "metadata": _json_obj(row["metadata"]),
+            "metadata": _sanitize_binding_metadata(_json_obj(row["metadata"])),
         },
         "online": bool(row["online"] or False),
         "last_seen": _dt(row["last_seen"]),

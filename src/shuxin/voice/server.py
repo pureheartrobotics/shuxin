@@ -9,8 +9,10 @@ import threading
 import uuid
 import time
 from pathlib import Path
+from typing import Any
 
 from shuxin.core.config import get_shuxin_home
+from shuxin.core.identity import IdentityEngine, load_mbti_profiles
 from shuxin.voice.adapters import VoiceAdapterRegistry
 from shuxin.voice.audio_files import AudioFileStore
 from shuxin.voice.barcode import decode_barcode_image_base64, generate_code128_png
@@ -30,6 +32,7 @@ from shuxin.voice.opus_codec import (
 from shuxin.voice.providers import create_stt_provider
 from shuxin.voice.agents import DEFAULT_AGENT_ID
 from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
+from shuxin.voice.mbti_reveal import needs_mbti_reveal
 from shuxin.voice.service import VoiceService
 from shuxin.voice.tencent_realtime_asr import (
     TencentRealtimeASRResult,
@@ -575,6 +578,29 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+
+    @app.patch("/admin/api/devices/{device_id}/mbti")
+    async def admin_update_device_mbti(request: Request, device_id: str):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().update_device_mbti(device_id, payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/mbti/types")
+    async def admin_list_mbti_types(request: Request):
+        try:
+            require_admin(request)
+            profiles = load_mbti_profiles()
+            items = [
+                {"type": mbti, "tagline": str(entry.get("tagline") or "")}
+                for mbti, entry in sorted(profiles.items())
+            ]
+            return JSONResponse({"items": items})
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.delete("/admin/api/devices/{device_id}")
     async def admin_delete_device(request: Request, device_id: str):
         try:
@@ -884,6 +910,10 @@ class _VoiceWebSocketSession:
                     "frame_duration": int(self.audio_params["frame_duration"]),
                 }
             await self._send_json(hello_ok)
+            try:
+                await self._maybe_reveal_mbti_on_hello()
+            except Exception as exc:
+                logger.warning("mbti reveal on hello failed: %s", exc)
             return
 
         if message_type == "listen" and data.get("state") == "start":
@@ -1214,6 +1244,86 @@ class _VoiceWebSocketSession:
         self.tts = None
         self.device = None
         self.agent_record = None
+
+
+    async def _maybe_reveal_mbti_on_hello(self) -> None:
+        """sealed 设备首次 hello 时揭晓 MBTI 并播报 reveal_script。"""
+        device = await self.repo.get_device(self.device_id)
+        self.device = device
+        metadata = device.metadata or {}
+
+        if not needs_mbti_reveal(metadata):
+            return
+
+        result = await self.repo.try_reveal_and_lock(self.device_id, "first_hello")
+        if result and result.get("is_first_reveal"):
+            await self._play_mbti_intro(
+                result,
+                is_first_reveal=True,
+                bind_success_prefix=False,
+            )
+            await self.repo.mark_device_intro_played(self.device_id)
+            if self.device is not None:
+                self.device.metadata["mbti_status"] = "locked"
+                self.device.metadata["device_intro_played"] = True
+
+    async def _play_mbti_intro(
+        self,
+        payload: dict[str, Any],
+        *,
+        is_first_reveal: bool,
+        bind_success_prefix: bool = False,
+    ) -> None:
+        mbti = str(payload.get("mbti") or "").strip().upper()
+        if not mbti:
+            return
+        identity = IdentityEngine(mbti)
+        tagline = identity.get_description()
+        reveal = identity.get_reveal_script().strip()
+        if not reveal:
+            reveal = f"你好，我是{mbti}型的舒心。{tagline}"
+        if bind_success_prefix:
+            reveal = f"绑定成功。{reveal}"
+
+        if is_first_reveal:
+            await self._send_json(
+                {
+                    "type": "mbti/reveal",
+                    "mbti": mbti,
+                    "tagline": tagline,
+                    "is_first_reveal": True,
+                }
+            )
+        await self._send_json(
+            {"type": "agent", "state": "reply", "text": reveal, "elapsed_ms": 0}
+        )
+        try:
+            await self._ensure_runtime()
+            await self._play_proactive_tts(reveal)
+        except Exception as exc:
+            logger.warning("mbti intro TTS skipped: %s", exc)
+
+    async def _play_proactive_tts(self, text: str) -> None:
+        """播报无需 LLM 的固定台词（如开箱 reveal_script）。"""
+        if os.environ.get("SHUXIN_VOICE_E2E_SKIP_TTS") == "1":
+            return
+        if self.tts is None or self.audio_store is None:
+            return
+
+        started = time.perf_counter()
+        paths = self.audio_store.new_turn_paths(self.device_id, self.session_id or None)
+        output_path = paths.reply_mp3.parent / f"mbti-reveal-{uuid.uuid4().hex[:8]}.mp3"
+        tts_started = time.perf_counter()
+        await self._send_json({"type": "tts", "state": "start"})
+        await self._synthesize_and_send_sentence(text, output_path, 1, started)
+        await self._send_json(
+            {
+                "type": "tts",
+                "state": "stop",
+                "elapsed_ms": _elapsed_ms(tts_started),
+                "total_elapsed_ms": _elapsed_ms(started),
+            }
+        )
 
     async def _stream_agent_chunks(self, text: str):
         """Run the sync Agent streaming iterator without blocking the event loop."""
