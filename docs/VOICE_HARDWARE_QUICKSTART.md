@@ -79,14 +79,17 @@ UI 固定文案（「待命」「电量不足」等）**不经过 WebSocket**，
 - 生成产物：[`data/device_assets/zh-CN/`](../data/device_assets/zh-CN/)（`.ogg` + `.opus.bin` + `manifest.json`）
 - 固件 C 语言 i18n 表须与 JSON **字符串一致**（含 `CHECK_NEW_VERSION_FAILED`、`FOUND_NEW_ASSETS` 的固定句）
 
-`*.opus.bin` 格式：重复 `[uint16 大端长度][raw Opus packet]`，packet 与 WebSocket 下行 Opus 帧相同（24 kHz / 60 ms）。
+**Flash 编码档**（对齐 xiaozhi-esp32）：**16 kHz / mono / 16 kbps / 60 ms**。与 WebSocket 实时 TTS 下行（24 kHz）分开；固件本地提示音解码器按 `manifest.json` 的 `sample_rate` 配置。
+
+`*.opus.bin` 格式：重复 `[uint16 大端长度][raw Opus packet]`。生成脚本默认 `--format both`，结束后自动删除 `_tmp/`。编码需容器内 `ffmpeg` 带 `libopus`（`shuxin-voice-demo-pg` 镜像已含）；宿主机无 `libopus` 时用 `--reencode-existing` 在 Docker 内离线压档。
 
 生成命令（Docker 内，需 `.env` 火山 TTS 凭证）：
 
 ```bash
 docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
   python /app/scripts/generate_device_prompt_assets.py \
-  --out /app/data/device_assets/zh-CN
+  --out /app/data/device_assets/zh-CN \
+  --format both
 ```
 
 ## 6. 无硬件联调

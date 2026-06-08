@@ -10,6 +10,8 @@ from pathlib import Path
 DEFAULT_FRAME_DURATION_MS = 60
 UPLINK_SAMPLE_RATE = 16000
 DOWNLINK_SAMPLE_RATE = 24000
+FLASH_SAMPLE_RATE = 16000
+FLASH_OPUS_BITRATE = 16000
 DEFAULT_CHANNELS = 1
 
 _opuslib = None
@@ -71,6 +73,7 @@ class OpusStreamEncoder:
         sample_rate: int = UPLINK_SAMPLE_RATE,
         channels: int = DEFAULT_CHANNELS,
         frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS,
+        bitrate: int | None = None,
     ) -> None:
         opuslib = _load_opuslib()
         if opuslib is None:
@@ -84,6 +87,8 @@ class OpusStreamEncoder:
             channels,
             opuslib.APPLICATION_AUDIO,
         )
+        if bitrate is not None:
+            self._encoder.bitrate = bitrate
         self._buffer = bytearray()
 
     def encode_chunk(self, pcm: bytes, *, end_of_stream: bool = False) -> list[bytes]:
@@ -128,10 +133,12 @@ def encode_pcm_to_opus_frames(
     *,
     sample_rate: int = UPLINK_SAMPLE_RATE,
     frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS,
+    bitrate: int | None = None,
 ) -> list[bytes]:
     return OpusStreamEncoder(
         sample_rate=sample_rate,
         frame_duration_ms=frame_duration_ms,
+        bitrate=bitrate,
     ).encode_all(pcm)
 
 
@@ -182,12 +189,14 @@ def transcode_mp3_to_opus_frames(
     *,
     sample_rate: int = DOWNLINK_SAMPLE_RATE,
     frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS,
+    bitrate: int | None = None,
 ) -> list[bytes]:
     pcm = ffmpeg_pcm16_from_file(mp3_path, sample_rate=sample_rate)
     return encode_pcm_to_opus_frames(
         pcm,
         sample_rate=sample_rate,
         frame_duration_ms=frame_duration_ms,
+        bitrate=bitrate,
     )
 
 

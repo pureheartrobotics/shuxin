@@ -113,7 +113,7 @@ sequenceDiagram
 
 **浏览器测试台**（不传 `audio_params`）：仍为 PCM16 上行 + mp3 下行，见 [VOICE_HARDWARE_WS_PROTOCOL.md §2.2](VOICE_HARDWARE_WS_PROTOCOL.md)。
 
-**系统 UI 固定提示音**（「待命」「电量不足」等）在设备 **Flash 本地播放**预生成 Opus，不走 WebSocket；见 [VOICE_HARDWARE_QUICKSTART.md §5](VOICE_HARDWARE_QUICKSTART.md)。
+**系统 UI 固定提示音**（「待命」「电量不足」等）在设备 **Flash 本地播放**预生成 Opus（**16 kHz / 16 kbps**，与 WS 下行 24 kHz 分开），不走 WebSocket；生成与烧录见 [VOICE_HARDWARE_QUICKSTART.md §5](VOICE_HARDWARE_QUICKSTART.md)，验收见 [VOICE_DEMO_MIN_TEST.md §18](VOICE_DEMO_MIN_TEST.md)。
 
 ### 5.3 不要做什么
 
