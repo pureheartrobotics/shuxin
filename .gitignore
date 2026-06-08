@@ -57,6 +57,11 @@ outputs/*
 samples/*
 !samples/README.md
 
+# Local office / archive noise (do not commit)
+*.docx
+~$*
+*.7z
+
 # Local secrets / IDE noise (do not commit)
 apps/app.md
 /project.config.json
