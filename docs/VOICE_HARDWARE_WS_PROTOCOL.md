@@ -155,6 +155,20 @@ container: none
 {"type":"hello","state":"ok","user_id":"demo-user","device_id":"demo-device-001","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","uplink_sample_rate":16000,"downlink_sample_rate":24000,"channels":1,"frame_duration":60}}
 ```
 
+MBTI 盲盒揭晓（仅 `mbti_status=sealed` 且由 hello 抢先揭晓时；小程序已绑定时通常不再下发）：
+
+```json
+{"type":"mbti/reveal","mbti":"INFJ","tagline":"提倡者 — …","is_first_reveal":true}
+```
+
+随后可能紧跟固定台词（非 LLM 轮次）：
+
+```json
+{"type":"agent","state":"reply","text":"… reveal_script …","elapsed_ms":0}
+```
+
+以及 `tts/start` → 音频帧 → `tts/stop`。若小程序绑定已揭晓（`locked`）且 `device_intro_played=false`，hello 补播 TTS 自我介绍（台词为 `绑定成功。` + 各型 `reveal_script`），不再发 `mbti/reveal`。若绑定 API 执行时该设备已有活跃 WebSocket 会话，服务端也会立即推送同一段 TTS；否则等下次 `hello` 补播。`device_intro_played=true` 后不再重复播报。
+
 开始识别：
 
 ```json
@@ -336,9 +350,27 @@ POST /api/devices/bind
 {"wx_code":"...","claim_code":"..."}
 ```
 
+绑定成功且设备仍为 `sealed` 时，响应可含 MBTI 卡片（小程序弹窗用，不含 `reveal_script`）：
+
+```json
+{
+  "binding_id": "...",
+  "device_code": "SX-000001",
+  "already_bound": false,
+  "mbti": {
+    "is_first_reveal": true,
+    "mbti": "INFJ",
+    "display_name": "提倡者",
+    "tagline": "安静而神秘，记得你说过的小事"
+  }
+}
+```
+
 新版小程序优先提交 `session_token`；旧的 `{"wx_code":"...","device_code":"..."}`
 仍保留兼容，主要用于开发测试。为兼容旧小程序包，如果 `device_code` 里误传了
 外壳公开码，后端会在查不到内部设备时再按 `claim_code` 兜底查一次。
+
+小程序 UI **不提供用户解绑**；`POST /api/devices/unbind` 保留给 Admin/售后。
 
 我的设备：
 
@@ -347,12 +379,7 @@ POST /api/devices/my
 {"session_token":"..."}
 ```
 
-解绑：
-
-```http
-POST /api/devices/unbind
-{"session_token":"...","device_code":"..."}
-```
+`mbti_status=sealed` 时响应 `device.metadata` 不含 `mbti`；`locked` 后含 `mbti`、`display_name`、`tagline`。
 
 ## 8. 后台管理
 

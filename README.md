@@ -173,7 +173,7 @@ shuxin/
 │           └── interceptor.py       # 响应拦截器
 │
 ├── plugins/                         # 用户插件目录
-├── apps/wechat-miniprogram/          # 微信小程序绑定端，uni-app 编译到 dist/*/mp-weixin
+├── apps/wechat-miniprogram/          # 微信小程序：扫码绑定 + MBTI 盲盒弹窗（uni-app → dist/*/mp-weixin）
 └── tests/                           # 测试目录
 ```
 

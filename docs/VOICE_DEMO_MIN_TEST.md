@@ -295,7 +295,14 @@ http://localhost:8765/voice-demo
 4. 点击连接，再按住说话测试。
 ```
 
-若设备为 `per_device_secret` 且列表「查看」不到密钥，需先在 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`，再在后台对该设备「换密钥」一次。
+**设备密钥（Admin 可查看）**：批量制码前必须在 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`（Fernet，生成命令见 `.env.example`），并 `bash scripts/redeploy_docker.sh` 重部署。未配置时 Admin 批量制码区会显示黄条且 API 直接报错，避免只写入 hash、无法查看明文。
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# 写入 .env 后重部署，再在 Admin 批量制码；设备列表「查看」可复制 device_secret
+```
+
+历史假数据（制码时未配密钥）无法从 hash 恢复明文，需重新批量制码或 `POST /admin/api/devices/{device_id}/rotate-secret` 后重烧固件。
 
 单设备手填示例（`demo-device-001` 已绑定 `demo-user`）：
 
@@ -404,14 +411,17 @@ curl -s -X POST -H 'X-Admin-Token: dev-admin-token' \
 
 1. 打开 `http://localhost:8765/admin`，在「用户」Tab 找到目标用户，点击 **配置 LLM** 弹层填写 model、Base URL、API Key 并保存（API Key 留空表示不修改已有密钥）。
 2. **微信小程序用户**（`user_id` 以 `wx_` 开头）由登录自动创建，默认无 LLM 配置；必须在后台为该 `wx_` 用户单独配置 LLM 后，voice-demo 对话才不会出现 `connect_error` 或降级文案。
-3. 打开「绑定」Tab：左右列可独立搜索、翻页；点选用户与未绑定设备后「绑定所选」。
-4. 「当前绑定」表可查看绑定时间（active 行解绑时间为 `-`）。
-5. 打开 `http://localhost:8765/voice-demo`，填写 Admin Token →「加载设备」→ 选择条目；若「将使用 LLM」显示 key=未配置，请回后台配置后再连接。
-6. 连接后「绑定用户」与 hello 一致；对话使用该用户 LLM，而非仅设备默认配置。
+3. 打开「设备」Tab：设备以**卡片**展示；外壳码**只读**可复制（印在壳上不可改）；备注用 **textarea** + **保存备注** / **清空**；已绑定卡片底部有 **解绑**（二次确认）。设备 Tab **无**删除、改外壳码、重置认领、换密钥按钮。
+4. 打开「绑定」Tab：左右列可独立搜索、翻页；点选用户与未绑定设备后「绑定所选」。
+5. 「当前绑定」表可 **解绑**（二次确认）；解绑后认领码自动恢复可扫码，用户记忆保留。
+6. 打开 `http://localhost:8765/voice-demo`，填写 Admin Token →「加载设备」→ 选择条目；若「将使用 LLM」显示 key=未配置，请回后台配置后再连接。
+7. 连接后「绑定用户」与 hello 一致；对话使用该用户 LLM，而非仅设备默认配置。
 
 验收标准：
 
 - 列表出现 `demo-user -> demo-device-001` 的 active binding（或你的 `wx_... -> SX-...` 绑定）。
+- 设备卡片：外壳码只读可复制；备注可独立保存/清空（搜索框可按备注查找）。
+- Admin 解绑后，小程序「我的设备」刷新后该设备消失（`POST /api/devices/my` 不再返回）；可重新扫码绑定。
 - `/voice-demo` 使用对应 `device_code + device_secret` 连接后，hello 返回 `state: ok` 且 `user_id` 为绑定用户。
 - 绑定用户已在后台配置 API Key 后，WebSocket 日志不应再因缺 key 出现 `agent/error` + `connect_error`（网络正常时）；若 key 错误则为 `auth_error`。
 
@@ -456,7 +466,7 @@ apps/wechat-miniprogram/dist/build/mp-weixin
 apps/wechat-miniprogram/dist/dev/mp-weixin
 ```
 
-`scripts/wechat_miniprogram_dev.sh` 会监听源码变化并持续更新 `dist/dev/mp-weixin`。如果导入的是 `dist/build/mp-weixin`，它只是执行 `scripts/wechat_miniprogram_build.sh` 时的快照；改完源码后必须重新构建，再在微信开发者工具里重新编译或刷新项目。
+`scripts/wechat_miniprogram_dev.sh` 会监听源码变化并持续更新 `dist/dev/mp-weixin`。如果导入的是 `dist/build/mp-weixin`，它只是执行 `scripts/wechat_miniprogram_build.sh` 时的快照；改完源码后必须重新构建，再在微信开发者工具里重新编译或刷新项目。**MBTI 绑定弹窗**（`MbtiRevealModal`）只在最新 `dist` 里；若绑定成功只有 toast、无 MBTI，先执行 `bash scripts/wechat_miniprogram_dev.sh build` 并重新导入 `dist/dev/mp-weixin`。
 
 后台现在可以批量生成三码：外壳公开 `claim_code`、设备内部 `device_id` 和一次性 `device_secret`。本地最小验证可以调用：
 
@@ -477,7 +487,23 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 - 绑定后 `/api/devices/my` 使用 `session_token` 能返回该设备。
 - 旧包即使把 `claim_code` 误放进 `device_code` 字段，后端也会兜底识别并完成绑定。
 - 设备 WebSocket `hello` 使用正确 `device_id/device_code + device_secret` 才能通过鉴权。
-- 解绑后 active binding 消失，用户记忆不删除，外壳 `claim_code` 恢复为 active 并可再次绑定。
+- **MBTI 盲盒（§9.2.1）**：批量制码设备 `mbti_status=sealed`；绑定弹窗展示 MBTI；设备**首次**播报 `绑定成功。` + `reveal_script`（绑定瞬间若 WS 在线则即时推送，否则 hello 补播）；重连不重复开箱。
+- 小程序**不提供用户解绑**；售后换绑走 Admin。后端 `/api/devices/unbind` 仍保留供管理端。
+
+### 9.2.1 MBTI 盲盒绑定验收
+
+1. Admin 批量制码（见上文 curl）→ 设备 `metadata.mbti_status=sealed`。
+2. 小程序扫 `claim_code` 绑定 → 出现 **MbtiRevealModal**（`INFJ · 提倡者` + tagline）。
+3. 关闭弹窗后设备列表行显示 MBTI 徽章。
+4. 设备通电 WebSocket `hello`（已绑定且 `device_intro_played=false`）→ 听到「绑定成功。」+ 自我介绍 TTS；若绑定瞬间设备已在线，绑定 API 也会尝试即时推送同一段 TTS。再次 hello 不再播报。
+5. `curl` 验证 bind 响应含 `mbti.is_first_reveal`；`sealed` 设备在 bind 前调用 `/api/devices/my` 不应看到 `mbti` 字段。
+
+```bash
+# bind 响应示例字段（Postgres 模式）
+# mbti: { is_first_reveal, mbti, display_name, tagline }
+
+PYTHONPATH=src pytest tests/test_mbti_miniprogram_bind.py tests/test_mbti_reveal.py tests/test_device_intro_and_registry.py -q
+```
 
 常见失败原因：
 
@@ -845,21 +871,36 @@ docker exec shuxin-voice-demo-pg python scripts/ws_opus_smoke_test.py \
 
 ## 18. 设备 Flash 提示音资产生成
 
-固件 UI 固定文案（非 WebSocket 对话）使用预生成 Opus，源文件 [`data/device_assets/strings.zh-CN.json`](../data/device_assets/strings.zh-CN.json)。
+固件 UI 固定文案（非 WebSocket 对话）使用预生成 Opus，源文件 [`data/device_assets/strings.zh-CN.json`](../data/device_assets/strings.zh-CN.json)。Flash 档为 **16 kHz / 16 kbps**（对齐 xiaozhi-esp32）；WebSocket 实时 TTS 仍为 24 kHz。
 
 ```bash
 # 需 .env 中 VOLCENGINE_TTS_* 已配置且容器已 redeploy
 docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
   python /app/scripts/generate_device_prompt_assets.py \
-  --out /app/data/device_assets/zh-CN
+  --out /app/data/device_assets/zh-CN \
+  --format both
 
-# 抽查
-ls data/device_assets/zh-CN/*.ogg | head
+# 体积抽查（zh-CN 48 条参考：目录 ~444KB，ogg ~216KB，opus.bin ~208KB；无 _tmp/）
+du -sh data/device_assets/zh-CN
+du -ch data/device_assets/zh-CN/*.ogg | tail -1
+du -ch data/device_assets/zh-CN/*.opus.bin | tail -1
+test ! -d data/device_assets/zh-CN/_tmp && echo "no _tmp OK"
+
+# 听感抽查
 ffplay data/device_assets/zh-CN/STANDBY.ogg
 ffplay data/device_assets/zh-CN/CHECK_NEW_VERSION_FAILED.ogg
 ```
 
-验收：`manifest.json` 含全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
+无 TTS 凭证时，可仅把已有 OGG 压到 Flash 档（需 Docker 内 `libopus`）：
+
+```bash
+docker run --rm -v "$(pwd)":/app -w /app -e PYTHONPATH=/app/src \
+  --entrypoint python "$(docker inspect -f '{{.Config.Image}}' shuxin-voice-demo-pg)" \
+  /app/scripts/generate_device_prompt_assets.py \
+  --out /app/data/device_assets/zh-CN --format both --reencode-existing
+```
+
+验收：`manifest.json` 含 `profile: flash`、`sample_rate: 16000` 与全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
 
 ## 15. 最终通过标准
 
