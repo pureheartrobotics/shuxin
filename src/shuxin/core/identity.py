@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional, Dict, Any
+
+import yaml
 
 logger = logging.getLogger("shuxin.identity")
 
@@ -96,6 +99,62 @@ MBTI_COMPANION_FACTORS: Dict[str, Dict[str, float]] = {
 # 有效 MBTI 类型集合（用于快速验证）
 VALID_MBTI_TYPES: set = set(MBTI_DESCRIPTIONS.keys())
 
+# MBTI 配置文件（可由数据目录覆盖）
+_DEFAULT_MBTI_PROFILES_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "mbti" / "mbti_profiles.yaml"
+)
+
+# 运行时加载的 MBTI profiles（顶层 key 为 MBTI 类型）
+_MBTI_PROFILES: Dict[str, Dict[str, Any]] = {}
+_MBTI_PROFILES_LOADED = False
+
+
+def load_mbti_profiles(path: str | Path | None = None) -> Dict[str, Dict[str, Any]]:
+    """加载 data/mbti/mbti_profiles.yaml 并覆盖 MBTI 数据。
+
+    Returns:
+        dict: profiles 映射（key 为 MBTI 类型）。
+    """
+    global _MBTI_PROFILES, _MBTI_PROFILES_LOADED, VALID_MBTI_TYPES
+
+    if _MBTI_PROFILES_LOADED and path is None:
+        return _MBTI_PROFILES
+
+    selected = Path(path) if path is not None else _DEFAULT_MBTI_PROFILES_PATH
+    if not selected.exists():
+        logger.warning("MBTI profiles 未找到: %s（将回退到硬编码数据）", selected)
+        _MBTI_PROFILES = {}
+        _MBTI_PROFILES_LOADED = True
+        return _MBTI_PROFILES
+
+    try:
+        loaded = yaml.safe_load(selected.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        logger.warning("加载 MBTI profiles 失败: %s（将回退到硬编码数据）", e)
+        _MBTI_PROFILES = {}
+        _MBTI_PROFILES_LOADED = True
+        return _MBTI_PROFILES
+
+    if not isinstance(loaded, dict):
+        logger.warning("MBTI profiles 格式错误（非对象）：%s", selected)
+        _MBTI_PROFILES = {}
+        _MBTI_PROFILES_LOADED = True
+        return _MBTI_PROFILES
+
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for mbti, entry in loaded.items():
+        if not isinstance(mbti, str) or not isinstance(entry, dict):
+            continue
+        profiles[mbti.strip().upper()] = entry
+
+    _MBTI_PROFILES = profiles
+    _MBTI_PROFILES_LOADED = True
+    if profiles:
+        # 原地更新，避免其它模块通过 `from ... import VALID_MBTI_TYPES` 造成引用失效
+        VALID_MBTI_TYPES.clear()
+        VALID_MBTI_TYPES.update(profiles.keys())
+    return _MBTI_PROFILES
+
 # 因子中文名称映射
 FACTOR_LABELS: Dict[str, str] = {
     "empathy": "共情能力",
@@ -141,6 +200,11 @@ class IdentityProfile:
         age: 年龄。
         gender: 性别。
         prefix: 消息前缀。
+        tagline: 标签/一句话描述（用于展示）。
+        soul_snippet: 完整人格卡（可选，大文本）。
+        style_anchor: 运行时风格锚点（短文本，写入 Slot2）。
+        micro_anchor: 每轮微型锚点（超短文本，写入 Slot4）。
+        reveal_script: 开筱/首次揭晓台词（可选）。
         factors: MBTI 行为影响因子字典。
     """
     mbti: str = "INFJ"
@@ -149,6 +213,11 @@ class IdentityProfile:
     age: int = 22
     gender: str = "无性别"
     prefix: str = "舒心"
+    tagline: str = ""
+    soul_snippet: str = ""
+    style_anchor: str = ""
+    micro_anchor: str = ""
+    reveal_script: str = ""
     factors: Dict[str, float] = field(default_factory=dict)
 
 
@@ -171,19 +240,47 @@ class IdentityEngine:
         """
         self.profile = IdentityProfile(mbti=mbti)
         self._lock = threading.Lock()
-        self._load_factors()
+        # 启动时尝试加载 YAML profiles（失败则回退硬编码）
+        load_mbti_profiles()
+        self._load_profile_from_data()
 
-    def _load_factors(self) -> None:
-        """根据当前 MBTI 类型加载行为影响因子。
+    def _load_profile_from_data(self) -> None:
+        """根据当前 MBTI 类型加载 profiles 中的行为影响因子与锚点。
 
-        如果当前 MBTI 类型没有定义因子，使用 INFJ 作为默认值。
+        如果 profiles 没有该类型，回退到硬编码数据（INFJ 兜底）。
         """
         mbti = self.profile.mbti.upper()
-        if mbti in MBTI_COMPANION_FACTORS:
-            self.profile.factors = dict(MBTI_COMPANION_FACTORS[mbti])
-        else:
-            logger.debug("未找到 MBTI 类型 %s 的因子定义，使用 INFJ 默认值", mbti)
-            self.profile.factors = dict(MBTI_COMPANION_FACTORS["INFJ"])
+        # 1) 优先使用 YAML profiles
+        entry = _MBTI_PROFILES.get(mbti) if _MBTI_PROFILES_LOADED else None
+        if entry:
+            self.profile.tagline = str(entry.get("tagline") or "").strip() or MBTI_DESCRIPTIONS.get(mbti, "")
+            self.profile.soul_snippet = str(entry.get("soul_snippet") or "").strip()
+            self.profile.style_anchor = str(entry.get("style_anchor") or "").strip()
+            self.profile.micro_anchor = str(entry.get("micro_anchor") or "").strip()
+            self.profile.reveal_script = str(entry.get("reveal_script") or "").strip()
+
+            factors = entry.get("companion_factors") or {}
+            if isinstance(factors, dict) and factors:
+                self.profile.factors = {
+                    k: float(v)
+                    for k, v in factors.items()
+                    if isinstance(k, str) and k in FACTOR_LABELS and isinstance(v, (int, float))
+                }
+                # 缺字段时使用 INFJ 的对应字段兜底
+                if len(self.profile.factors) < len(FACTOR_LABELS):
+                    for fk, fv in MBTI_COMPANION_FACTORS.get("INFJ", {}).items():
+                        self.profile.factors.setdefault(fk, float(fv))
+            else:
+                self.profile.factors = dict(MBTI_COMPANION_FACTORS.get(mbti) or MBTI_COMPANION_FACTORS["INFJ"])
+            return
+
+        # 2) YAML 不可用或缺失，回退硬编码
+        self.profile.tagline = MBTI_DESCRIPTIONS.get(mbti, f"{mbti} — 未知类型")
+        self.profile.style_anchor = self.profile.tagline
+        self.profile.micro_anchor = f"保持 {mbti}：保持人格稳定，先共情后回应。"
+        self.profile.soul_snippet = ""
+        self.profile.reveal_script = ""
+        self.profile.factors = dict(MBTI_COMPANION_FACTORS.get(mbti) or MBTI_COMPANION_FACTORS["INFJ"])
 
     def set_mbti(self, mbti: str) -> bool:
         """动态切换 MBTI 类型。
@@ -209,8 +306,8 @@ class IdentityEngine:
 
         with self._lock:
             self.profile.mbti = mbti_upper
-            self._load_factors()
-            logger.info("MBTI 已切换为: %s — %s", mbti_upper, MBTI_DESCRIPTIONS[mbti_upper])
+            self._load_profile_from_data()
+            logger.info("MBTI 已切换为: %s — %s", mbti_upper, self.get_description())
         return True
 
     def get_description(self) -> str:
@@ -223,15 +320,13 @@ class IdentityEngine:
             >>> engine.get_description()
             '提倡者 — 安静而神秘，富有想象力和同情心，坚持自己的价值观'
         """
-        return MBTI_DESCRIPTIONS.get(
-            self.profile.mbti,
-            f"{self.profile.mbti} — 未知类型",
-        )
+        return self.profile.tagline or MBTI_DESCRIPTIONS.get(self.profile.mbti, f"{self.profile.mbti} — 未知类型")
 
     def get_system_prompt_block(self) -> str:
-        """生成系统提示中的人格影响块。
+        """生成系统提示中的 MBTI 风格锚点块（Slot2）。
 
-        包含 MBTI 类型描述和各行为因子的等级。
+        Slot2 的核心目标是“人格稳定规则”：每轮都注入固定风格锚点，
+        让用户对话无法诱导模型改变 MBTI 核心气质。
 
         Returns:
             str: 格式化的人格影响提示文本。
@@ -241,16 +336,11 @@ class IdentityEngine:
             '### MBTI 人格影响\\n你的 MBTI 类型是 INFJ...'
         """
         lines = [
-            f"### MBTI 人格影响",
-            f"你的 MBTI 类型是 {self.profile.mbti}（{self.get_description()}）",
+            "### MBTI 风格锚点",
+            f"设备 MBTI：{self.profile.mbti}（{self.get_description()}）",
             "",
-            f"这会影响你的行为方式：",
+            self.profile.style_anchor or self.get_description(),
         ]
-        for factor, value in self.profile.factors.items():
-            label = FACTOR_LABELS.get(factor, factor)
-            level = _get_factor_level(value)
-            lines.append(f"- {label}: {level}（{value:.0%}）")
-
         return "\n".join(lines)
 
     def get_response_prefix(self, context: Optional[Dict[str, Any]] = None) -> str:
@@ -275,3 +365,11 @@ class IdentityEngine:
             {'empathy': 0.95, 'protectiveness': 0.85, ...}
         """
         return dict(self.profile.factors)
+
+    def get_micro_anchor(self) -> str:
+        """获取每轮微型锚点（Slot4 追加）。"""
+        return self.profile.micro_anchor or ""
+
+    def get_reveal_script(self) -> str:
+        """获取开箱/首次连接自我介绍台词。"""
+        return self.profile.reveal_script or ""

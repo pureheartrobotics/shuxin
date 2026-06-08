@@ -88,6 +88,15 @@ class CompanionPlugin:
         if not self._initialized:
             self.initialize()
 
+        # 每轮追加 MBTI 微型锚点（防止用户对话“带偏”人格风格）
+        agent = kwargs.get("agent")
+        micro_anchor = ""
+        if agent is not None and hasattr(agent, "identity"):
+            try:
+                micro_anchor = agent.identity.get_micro_anchor() or ""
+            except Exception:
+                micro_anchor = ""
+
         # 注入情感状态
         emotion_context = self.emotion.get_emotion_context()
 
@@ -98,12 +107,16 @@ class CompanionPlugin:
         esteem_status = self.self_esteem.get_status_text()
         growth_context = self._get_growth_context()
 
+        micro_anchor_block = (
+            f"## MBTI 微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
+        )
         return (
-            f"## 舒心当前状态\n\n"
-            f"{esteem_status}\n\n"
-            f"{emotion_context}\n\n"
-            f"{profile_context}\n\n"
-            f"{growth_context}"
+            micro_anchor_block
+            + f"## 舒心当前状态\n\n"
+            + f"{esteem_status}\n\n"
+            + f"{emotion_context}\n\n"
+            + f"{profile_context}\n\n"
+            + f"{growth_context}"
         )
 
     def _get_growth_context(self) -> str:
