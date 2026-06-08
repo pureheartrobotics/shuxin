@@ -31,7 +31,12 @@ from shuxin.voice.opus_codec import (
 from shuxin.voice.providers import create_stt_provider
 from shuxin.voice.agents import DEFAULT_AGENT_ID
 from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
-from shuxin.voice.mbti_reveal import needs_mbti_reveal
+from shuxin.voice.mbti_reveal import (
+    build_device_intro_text,
+    needs_device_intro,
+    needs_mbti_reveal,
+)
+from shuxin.voice import voice_session_registry as vsr
 from shuxin.voice.service import VoiceService
 from shuxin.voice.tencent_realtime_asr import (
     TencentRealtimeASRResult,
@@ -324,14 +329,14 @@ def create_app(
     async def bind_device(request: Request):
         try:
             payload = await request.json()
-            return JSONResponse(
-                await repo().bind_device(
-                    wx_code=str(payload.get("wx_code") or ""),
-                    session_token=str(payload.get("session_token") or ""),
-                    claim_code=str(payload.get("claim_code") or ""),
-                    device_code=str(payload.get("device_code") or ""),
-                )
+            result = await repo().bind_device(
+                wx_code=str(payload.get("wx_code") or ""),
+                session_token=str(payload.get("session_token") or ""),
+                claim_code=str(payload.get("claim_code") or ""),
+                device_code=str(payload.get("device_code") or ""),
             )
+            await vsr.maybe_push_intro_after_bind(result)
+            return JSONResponse(result)
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -910,6 +915,7 @@ class _VoiceWebSocketSession:
                     "frame_duration": int(self.audio_params["frame_duration"]),
                 }
             await self._send_json(hello_ok)
+            vsr.register(self.device_id, self)
             try:
                 await self._maybe_reveal_mbti_on_hello()
             except Exception as exc:
@@ -1246,25 +1252,49 @@ class _VoiceWebSocketSession:
         self.agent_record = None
 
     async def _maybe_reveal_mbti_on_hello(self) -> None:
-        """sealed 设备首次 hello 时揭晓 MBTI 并播报 reveal_script。"""
+        """开箱或补播：sealed 时揭晓+TTS；小程序已揭晓时仅补播自我介绍。"""
         device = await self.repo.get_device(self.device_id)
         self.device = device
         metadata = device.metadata or {}
 
-        if not needs_mbti_reveal(metadata):
+        if needs_mbti_reveal(metadata):
+            result = await self.repo.try_reveal_and_lock(self.device_id, "first_hello")
+            if result and result.get("is_first_reveal"):
+                await self._play_mbti_intro(
+                    result,
+                    is_first_reveal=True,
+                    bind_success_prefix=False,
+                )
+                await self.repo.mark_device_intro_played(self.device_id)
+                if self.device is not None:
+                    self.device.metadata["mbti_status"] = "locked"
+                    self.device.metadata["device_intro_played"] = True
             return
 
-        result = await self.repo.try_reveal_and_lock(self.device_id, "first_hello")
-        if result and result.get("is_first_reveal"):
+        await self.play_pending_device_intro(bind_success_prefix=True)
+
+    async def play_pending_device_intro(self, *, bind_success_prefix: bool = True) -> bool:
+        """Play one-time device intro when MBTI is locked but TTS has not played."""
+        if not self.device_id:
+            return False
+        async with vsr.intro_lock(self.device_id):
+            device = await self.repo.get_device(self.device_id)
+            self.device = device
+            metadata = device.metadata or {}
+            if not needs_device_intro(metadata):
+                return False
+            mbti = str(metadata.get("mbti") or "").strip().upper()
+            if not mbti:
+                return False
             await self._play_mbti_intro(
-                result,
-                is_first_reveal=True,
-                bind_success_prefix=False,
+                {"mbti": mbti},
+                is_first_reveal=False,
+                bind_success_prefix=bind_success_prefix,
             )
             await self.repo.mark_device_intro_played(self.device_id)
             if self.device is not None:
-                self.device.metadata["mbti_status"] = "locked"
                 self.device.metadata["device_intro_played"] = True
+            return True
 
     async def _play_mbti_intro(
         self,
@@ -1278,11 +1308,7 @@ class _VoiceWebSocketSession:
             return
         identity = IdentityEngine(mbti)
         tagline = identity.get_description()
-        reveal = identity.get_reveal_script().strip()
-        if not reveal:
-            reveal = f"你好，我是{mbti}型的舒心。{tagline}"
-        if bind_success_prefix:
-            reveal = f"绑定成功。{reveal}" 
+        reveal = build_device_intro_text(mbti, bind_success_prefix=bind_success_prefix)
 
         if is_first_reveal:
             await self._send_json(

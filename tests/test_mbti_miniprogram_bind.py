@@ -83,3 +83,19 @@ def test_bind_attach_reveal_helpers_present() -> None:
     assert "_try_reveal_and_lock_conn" in source
     assert "device_intro_played" in source
     assert "miniprogram_bind" in source
+
+
+def test_hello_intro_playback_present() -> None:
+    server = SERVER.read_text(encoding="utf-8")
+    assert "needs_device_intro" in server
+    assert "play_pending_device_intro" in server
+    assert "build_device_intro_text" in server
+    assert "maybe_push_intro_after_bind" in server
+    assert "mark_device_intro_played" in server
+
+
+def test_miniprogram_modal_and_no_unbind() -> None:
+    index = INDEX.read_text(encoding="utf-8")
+    assert "MbtiRevealModal" in index
+    assert "unbindDevice" not in index
+    assert "解绑" not in index

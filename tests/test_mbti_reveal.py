@@ -149,3 +149,69 @@ def test_maybe_reveal_on_hello_sealed_plays_once(monkeypatch) -> None:
     assert not played_text.startswith("绑定成功。")
     session._play_proactive_tts.assert_awaited_once()
 
+
+def test_maybe_reveal_on_hello_locked_plays_pending_intro(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_VOICE_E2E_SKIP_TTS", "1")
+    device = DeviceConfig(
+        device_id="SX-000100",
+        metadata={
+            "mbti": "INFJ",
+            "mbti_status": MBTI_STATUS_LOCKED,
+            "device_intro_played": False,
+        },
+    )
+    repo = SimpleNamespace(
+        get_device=AsyncMock(return_value=device),
+        try_reveal_and_lock=AsyncMock(),
+        mark_device_intro_played=AsyncMock(return_value={"device_intro_played": True}),
+    )
+    session = _make_session(repo, device)
+
+    asyncio.run(session._maybe_reveal_mbti_on_hello())
+
+    assert "mbti/reveal" not in [msg["type"] for msg in session.sent]
+    assert any(msg.get("type") == "agent" for msg in session.sent)
+    repo.try_reveal_and_lock.assert_not_awaited()
+    repo.mark_device_intro_played.assert_awaited_once()
+    played_text = session._play_proactive_tts.await_args.args[0]
+    assert played_text.startswith("绑定成功。")
+    session._play_proactive_tts.assert_awaited_once()
+
+
+def test_maybe_reveal_on_hello_locked_skips_when_intro_played(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_VOICE_E2E_SKIP_TTS", "1")
+    device = DeviceConfig(
+        device_id="SX-000101",
+        metadata={
+            "mbti": "INFJ",
+            "mbti_status": MBTI_STATUS_LOCKED,
+            "device_intro_played": True,
+        },
+    )
+    repo = SimpleNamespace(
+        get_device=AsyncMock(return_value=device),
+        try_reveal_and_lock=AsyncMock(),
+        mark_device_intro_played=AsyncMock(),
+    )
+    session = _make_session(repo, device)
+
+    asyncio.run(session._maybe_reveal_mbti_on_hello())
+
+    assert session.sent == []
+    repo.mark_device_intro_played.assert_not_awaited()
+
+
+def test_maybe_reveal_legacy_mbti_without_status_plays_intro_once() -> None:
+    device = DeviceConfig(device_id="SX-legacy", metadata={"mbti": "ISTJ"})
+    repo = SimpleNamespace(
+        get_device=AsyncMock(return_value=device),
+        try_reveal_and_lock=AsyncMock(),
+        mark_device_intro_played=AsyncMock(return_value={"device_intro_played": True}),
+    )
+    session = _make_session(repo, device)
+
+    asyncio.run(session._maybe_reveal_mbti_on_hello())
+
+    assert any(msg.get("type") == "agent" for msg in session.sent)
+    repo.try_reveal_and_lock.assert_not_awaited()
+    repo.mark_device_intro_played.assert_awaited_once()
