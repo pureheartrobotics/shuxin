@@ -6,6 +6,13 @@ import os
 
 from cryptography.fernet import Fernet, InvalidToken
 
+DEVICE_SECRET_ENCRYPTION_ENV = "SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY"
+DEVICE_SECRET_ENCRYPTION_SETUP_HINT = (
+    "set SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY in .env "
+    '(generate: python -c "from cryptography.fernet import Fernet; '
+    'print(Fernet.generate_key().decode())")'
+)
+
 
 def _fernet() -> Fernet | None:
     raw = os.environ.get("SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY", "").strip()
@@ -16,6 +23,17 @@ def _fernet() -> Fernet | None:
     except Exception:
         digest = hashlib.sha256(raw.encode("utf-8")).digest()
         return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def device_secret_encryption_configured() -> bool:
+    return _fernet() is not None
+
+
+def require_device_secret_encryption() -> None:
+    if not device_secret_encryption_configured():
+        raise PermissionError(
+            f"device secret encryption is not configured; {DEVICE_SECRET_ENCRYPTION_SETUP_HINT}"
+        )
 
 
 def encrypt_device_secret(plaintext: str) -> str | None:

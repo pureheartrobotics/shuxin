@@ -213,6 +213,8 @@ class VoiceLocalRepository:
         raise RuntimeError("DATABASE_URL is required for mini-program device unbinding")
 
     async def list_devices(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
+        from shuxin.voice.device_secret_crypto import device_secret_encryption_configured
+
         default = self.device_provider.get(None)
         shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
         return {
@@ -227,6 +229,7 @@ class VoiceLocalRepository:
                     "device_secret_hint": "global_shared_secret",
                     "lifecycle_status": "provisioned",
                     "bound_user_id": DEFAULT_USER_ID,
+                    "active_binding_id": "",
                     "claim_code": "",
                     "claim_status": "",
                     "stt_config": default.stt.__dict__,
@@ -239,6 +242,7 @@ class VoiceLocalRepository:
                 }
             ],
             "next_cursor": "",
+            "device_secret_encryption_configured": device_secret_encryption_configured(),
         }
 
     async def reveal_device_secret(self, device_id: str) -> dict[str, Any]:
@@ -365,6 +369,18 @@ class VoiceLocalRepository:
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
+
+    async def update_device_mbti(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for admin writes")
+
+    async def mark_mbti_locked(self, device_id: str) -> dict[str, Any]:
+        return {"device_id": device_id, "mbti_status": "locked"}
+
+    async def try_reveal_and_lock(self, device_id: str, revealed_by: str) -> dict[str, Any] | None:
+        return None
+
+    async def mark_device_intro_played(self, device_id: str) -> dict[str, Any]:
+        return {"device_id": device_id, "device_intro_played": True}
 
     async def reset_claim_code(self, device_id: str) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")

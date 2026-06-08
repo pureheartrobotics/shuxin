@@ -8,6 +8,8 @@ SERVER = Path("src/shuxin/voice/server.py")
 def test_factory_provision_uses_per_device_secret_hash() -> None:
     source = REPO.read_text(encoding="utf-8")
 
+    assert "require_device_secret_encryption" in source
+    assert "device_secret_encryption_configured" in source
     assert "device_secret = secrets.token_urlsafe(32)" in source
     assert "'per_device_secret'" in source
     assert "device_secret_hash = excluded.device_secret_hash" in source
@@ -72,6 +74,8 @@ def test_admin_supports_batch_codes_and_label_updates() -> None:
     assert "/admin/api/voice-demo/targets" in server
     assert "device_secret_encrypted" in source
     assert "list_voice_demo_targets" in source
+    assert "batchEncryptionBanner" in server
+    assert "device_secret_encryption_configured" in server
 
 
 def test_admin_lists_support_server_search_and_pagination_controls() -> None:

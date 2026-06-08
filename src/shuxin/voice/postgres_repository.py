@@ -17,8 +17,10 @@ import yaml
 
 from shuxin.voice.audio_files import compress_wav_to_mp3, purge_attachment_file, sha256_file
 from shuxin.voice.device_secret_crypto import (
+    device_secret_encryption_configured,
     encrypt_device_secret,
     mask_device_secret,
+    require_device_secret_encryption,
     resolve_stored_device_secret,
 )
 from shuxin.voice.config import (
@@ -101,6 +103,7 @@ class VoicePostgresRepository:
 
     async def provision_device(self, device_code: str) -> dict[str, Any]:
         """工厂烧录时登记设备，并生成只给用户扫码认领用的 claim_code。"""
+        require_device_secret_encryption()
         selected_code = _validate_device_code(device_code)
         device_secret = secrets.token_urlsafe(32)
         claim_code = _make_claim_code("CLM", "A001", _device_sequence(selected_code) or 1)
@@ -132,6 +135,7 @@ class VoicePostgresRepository:
         }
 
     async def provision_devices_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        require_device_secret_encryption()
         device_prefix = _validate_code_prefix(str(payload.get("device_prefix") or "SX"))
         label_prefix = _validate_code_prefix(str(payload.get("label_prefix") or "CLM"))
         label_batch = _validate_code_prefix(str(payload.get("label_batch") or "A001"))
@@ -1310,7 +1314,11 @@ class VoicePostgresRepository:
             search,
         )
         items = [_device_row(row) for row in rows]
-        return {"items": items, "next_cursor": items[-1]["device_id"] if len(items) == limit else ""}
+        return {
+            "items": items,
+            "next_cursor": items[-1]["device_id"] if len(items) == limit else "",
+            "device_secret_encryption_configured": device_secret_encryption_configured(),
+        }
 
     async def apply_default_stt_to_all_devices(self) -> dict[str, Any]:
         """Set tencent-realtime STT on all non-deleted devices (idempotent)."""
@@ -1720,6 +1728,7 @@ class VoicePostgresRepository:
         return {"device_id": selected_id, "claim_status": "active"}
 
     async def rotate_device_secret(self, device_id: str) -> dict[str, Any]:
+        require_device_secret_encryption()
         selected_id = _validate_device_code(device_id)
         device_secret = secrets.token_urlsafe(32)
         result = await self.pool.execute(

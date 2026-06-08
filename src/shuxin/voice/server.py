@@ -1581,6 +1581,10 @@ def _admin_html(authenticated: bool) -> str:
       <div id="devices" class="stack">
         <div class="panel">
           <h2>批量制码</h2>
+          <div id="batchEncryptionBanner" class="callout warn" style="display:none">
+            未配置设备密钥加密（<code>SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY</code>）。批量制码将无法入库可查看密钥。
+            请在 <code>.env</code> 生成 Fernet 密钥后重部署 Docker，再重新制码。
+          </div>
           <div class="form-row">
             <label><span class="hint">设备前缀</span><input id="batchDevicePrefix" value="SX" onchange="refreshBatchStart()" /></label>
             <label><span class="hint">起始编号</span><input id="batchStart" type="number" value="1" min="1" /></label>
@@ -1728,6 +1732,7 @@ def _admin_html(authenticated: bool) -> str:
     let users = [];
     let agents = [];
     let devices = [];
+    let deviceSecretEncryptionConfigured = true;
     let bindUsersPage = [];
     let bindDevicesPage = [];
     let bindings = [];
@@ -1880,15 +1885,18 @@ def _admin_html(authenticated: bool) -> str:
         <strong>${{esc(truncateId(fullText))}}</strong>${{meta}}
       </div>`;
     }}
+    function renderEncryptionBanner() {{
+      const banner = $('batchEncryptionBanner');
+      if (banner) banner.style.display = deviceSecretEncryptionConfigured ? 'none' : 'block';
+    }}
     function renderSecretCell(d) {{
       const id = d.device_id;
       const q = jsQuote(id);
       const masked = d.device_secret_masked || '';
-      const display = masked || (d.device_secret_retrievable ? '已配置' : '需轮换密钥');
-      const hintParts = [];
-      if (!d.device_secret_retrievable && d.device_secret_hint) hintParts.push(String(d.device_secret_hint));
-      hintParts.push(d.device_secret_retrievable ? '点击查看并复制' : '点击了解如何查看');
-      const hintMeta = hintParts.join(' · ');
+      const display = masked || (d.device_secret_retrievable ? '已配置' : '未入库');
+      const hintMeta = d.device_secret_retrievable
+        ? '点击查看并复制'
+        : (deviceSecretEncryptionConfigured ? '需重新制码后查看' : '需先配置加密密钥并重新制码');
       return `<div class="cell-clip cell-secret" role="button" tabindex="0" title="${{esc(id)}} 密钥"
         onclick="revealDeviceSecret('${{q}}')"
         onkeydown="if(event.key==='Enter'){{ event.preventDefault(); revealDeviceSecret('${{q}}'); }}">
@@ -2072,12 +2080,10 @@ def _admin_html(authenticated: bool) -> str:
       return `<div class="badge-row">${{badges.join('')}}</div>`;
     }}
     function showSecretRotateHint(id) {{
-      const q = jsQuote(id);
-      openAdminModal({{
-        title: '设备密钥',
-        bodyHtml: '<p class="hint">该设备尚未保存可解密的加密密钥。请先在设备行点击「换密钥」轮换一次；轮换后可在此弹层查看全文并自动复制（需已配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY）。</p>',
-        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal();rotateDeviceSecret('${{q}}')">轮换密钥</button>`,
-      }});
+      const bodyHtml = deviceSecretEncryptionConfigured
+        ? '<p class="hint">该设备制码时未写入可解密密文（多为历史假数据）。请重新批量制码，或通过工程 API <code>POST /admin/api/devices/{{id}}/rotate-secret</code> 轮换密钥后重烧固件。</p>'
+        : '<p class="hint">未配置 <code>SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY</code>。请先在 <code>.env</code> 生成 Fernet 密钥、重部署 Docker，再重新批量制码；之后可在本页「查看」密钥。</p>';
+      openAdminModal({{ title: '设备密钥', bodyHtml }});
     }}
     async function revealDeviceSecret(id) {{
       const d = devices.find(item => item.device_id === id);
@@ -2111,6 +2117,8 @@ def _admin_html(authenticated: bool) -> str:
     async function loadDevices() {{
       const data = await (await fetch(listUrl('devices', '/admin/api/devices'))).json();
       devices = data.items || [];
+      deviceSecretEncryptionConfigured = data.device_secret_encryption_configured !== false;
+      renderEncryptionBanner();
       listState.devices.nextCursor = data.next_cursor || '';
       $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>密钥</div><div>备注</div><div>操作</div></div>` + devices.map(d => {{
         const sttType = (d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local';
