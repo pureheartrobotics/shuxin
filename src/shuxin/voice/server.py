@@ -9,7 +9,6 @@ import threading
 import uuid
 import time
 from pathlib import Path
-from typing import Any
 
 from shuxin.core.config import get_shuxin_home
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
@@ -578,7 +577,6 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
-
     @app.patch("/admin/api/devices/{device_id}/mbti")
     async def admin_update_device_mbti(request: Request, device_id: str):
         try:
@@ -831,6 +829,8 @@ class _VoiceWebSocketSession:
                 await self.repo.touch_device_status(device_id=self.device_id, online=False)
             except Exception:
                 pass
+        if self.device_id:
+            vsr.unregister(self.device_id, self)
 
     async def _handle_text(self, raw: str) -> None:
         """处理设备/浏览器上行的 JSON 控制消息。
@@ -1245,7 +1245,6 @@ class _VoiceWebSocketSession:
         self.device = None
         self.agent_record = None
 
-
     async def _maybe_reveal_mbti_on_hello(self) -> None:
         """sealed 设备首次 hello 时揭晓 MBTI 并播报 reveal_script。"""
         device = await self.repo.get_device(self.device_id)
@@ -1283,7 +1282,7 @@ class _VoiceWebSocketSession:
         if not reveal:
             reveal = f"你好，我是{mbti}型的舒心。{tagline}"
         if bind_success_prefix:
-            reveal = f"绑定成功。{reveal}"
+            reveal = f"绑定成功。{reveal}" 
 
         if is_first_reveal:
             await self._send_json(
@@ -1493,77 +1492,163 @@ def _admin_html(authenticated: bool) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ShuXin 管理后台</title>
   <style>
-    body {{ margin: 0; font-family: "Trebuchet MS", "Segoe UI", sans-serif; color: #1e2524; background: #edf0ec; }}
-    header {{ height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid #d8ddd5; background: #fbfaf5; }}
-    main {{ max-width: 1180px; margin: 0 auto; padding: 22px; }}
-    h1 {{ font-size: 20px; margin: 0; }}
-    h2 {{ font-size: 16px; margin: 0 0 12px; }}
-    input, textarea, select {{ box-sizing: border-box; width: 100%; border: 1px solid #cbd4ca; border-radius: 6px; padding: 9px 10px; font: inherit; background: white; }}
-    textarea {{ min-height: 130px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }}
-    button {{ height: 36px; border: 0; border-radius: 6px; padding: 0 12px; color: white; background: #245849; cursor: pointer; }}
-    button:disabled {{ cursor: not-allowed; opacity: .55; }}
-    button.secondary {{ color: #20242a; background: #dfe5dc; }}
-    button.danger {{ background: #b8453f; }}
+    :root {{
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --text: #1d1d1f;
+      --text-secondary: #6e6e73;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --destructive: #ff3b30;
+      --separator: rgba(0, 0, 0, .08);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 2px 16px rgba(0, 0, 0, .06);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: var(--font); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }}
+    header {{
+      height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+      border-bottom: 1px solid var(--separator); background: rgba(255, 255, 255, .72);
+      backdrop-filter: saturate(180%) blur(20px); position: sticky; top: 0; z-index: 100;
+    }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 24px 20px 48px; }}
+    h1 {{ font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.02em; }}
+    h2 {{ font-size: 15px; font-weight: 600; margin: 0 0 12px; letter-spacing: -.01em; }}
+    input, textarea, select {{
+      width: 100%; border: 1px solid var(--separator); border-radius: var(--radius-sm);
+      padding: 8px 11px; font: inherit; background: var(--surface); color: var(--text);
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }}
+    input:focus, textarea:focus, select:focus {{
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 113, 227, .15);
+    }}
+    textarea {{ min-height: 130px; font-family: var(--mono); font-size: 13px; }}
+    button {{
+      height: 32px; border: 0; border-radius: 980px; padding: 0 14px; font-size: 13px; font-weight: 500;
+      color: #fff; background: var(--accent); cursor: pointer; transition: background .15s ease, opacity .15s ease;
+    }}
+    button:hover {{ background: var(--accent-hover); }}
+    button:disabled {{ cursor: not-allowed; opacity: .45; }}
+    button.secondary {{ color: var(--text); background: rgba(0, 0, 0, .06); }}
+    button.secondary:hover {{ background: rgba(0, 0, 0, .1); }}
+    button.ghost {{ height: 28px; padding: 0 10px; font-size: 12px; color: var(--accent); background: transparent; }}
+    button.ghost:hover {{ background: rgba(0, 113, 227, .08); }}
+    button.danger {{ background: var(--destructive); }}
+    button.btn-destructive {{
+      height: auto; padding: 6px 12px; color: var(--destructive); background: transparent; border-radius: var(--radius-sm);
+    }}
+    button.btn-destructive:hover {{ background: rgba(255, 59, 48, .08); }}
     .grid {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; align-items: start; }}
     .stack {{ display: grid; gap: 16px; }}
-    .panel {{ background: #fffef9; border: 1px solid #d8ddd5; border-radius: 8px; padding: 16px; box-shadow: 0 12px 34px rgba(55, 70, 58, .06); }}
-    .toolbar {{ display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }}
-    .toolbar input {{ min-width: 220px; }}
-    .toolbar select {{ width: 86px; }}
+    .panel {{
+      background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius);
+      padding: 18px 20px; box-shadow: var(--shadow);
+    }}
+    .toolbar {{ display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }}
+    .toolbar input {{ min-width: 200px; flex: 1; }}
+    .toolbar select {{ width: 86px; flex: 0 0 auto; }}
     .pager {{ display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; }}
     .page-size {{ width: 86px; }}
     .form-row {{ display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; align-items: end; }}
     .form-row.compact {{ grid-template-columns: repeat(5, minmax(130px, 1fr)); }}
     .table {{ display: grid; gap: 6px; overflow-x: auto; }}
-    .table-row {{ display: grid; grid-template-columns: minmax(140px, 0.7fr) 170px minmax(220px, 1fr) minmax(180px, 0.9fr) 1fr 430px; gap: 8px; align-items: center; min-width: 1100px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }}
+    .table-row {{ display: grid; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }}
     .table-row > * {{ min-width: 0; }}
-    .badge-row {{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }}
     .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 90px 100px 100px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1100px; }}
+    .table-row.bindings {{ grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }}
+    .table-head {{ color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }}
+    .login {{ max-width: 400px; margin: 72px auto 0; }}
+    .list {{ display: grid; gap: 8px; }}
+    .item {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }}
+    .item.selectable {{ padding: 12px 14px; border: 1px solid var(--separator); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }}
+    .item.selectable:hover {{ border-color: rgba(0, 113, 227, .35); }}
+    .item.selected {{ border-color: var(--accent); background: rgba(0, 113, 227, .04); }}
+    .item.muted {{ opacity: .55; pointer-events: none; }}
+    .meta {{ color: var(--text-secondary); font-size: 12px; margin-top: 3px; }}
+    .meta-line {{ color: var(--text-secondary); font-size: 13px; margin-bottom: 4px; }}
+    .badge-row {{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }}
+    .badge {{
+      display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
+      font-size: 11px; font-weight: 500; color: var(--accent); background: rgba(0, 113, 227, .1);
+    }}
+    .badge.warn {{ color: #bf4800; background: rgba(191, 72, 0, .1); }}
+    .callout.warn {{
+      background: rgba(191, 72, 0, .08); border: 1px solid rgba(191, 72, 0, .22);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; color: #bf4800;
+    }}
+    .badge.off {{ color: var(--text-secondary); background: rgba(0, 0, 0, .06); }}
+    .badge.badge-click {{ cursor: pointer; }}
+    .badge.badge-click:hover {{ filter: brightness(.96); }}
+    .cell-clip {{ min-width: 0; overflow: hidden; cursor: pointer; border-radius: 6px; padding: 2px 0; }}
+    .cell-clip strong {{
+      display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--mono); font-size: 13px; font-weight: 600;
+    }}
+    .cell-clip:hover strong {{ color: var(--accent); }}
+    .cell-clip.cell-secret {{
+      padding: 8px 10px; border: 1px dashed var(--separator); border-radius: var(--radius-sm); background: rgba(0, 0, 0, .02);
+    }}
+    .cell-clip.cell-secret:hover {{ border-color: var(--accent); background: rgba(0, 113, 227, .04); }}
+    .device-cards {{ display: grid; gap: 12px; }}
+    .device-card {{
+      background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius);
+      padding: 16px 18px; box-shadow: var(--shadow);
+    }}
+    .device-card-head {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }}
+    .device-card-id {{ flex: 1; min-width: 0; }}
+    .device-card-body {{ display: grid; gap: 14px; }}
+    .device-card-section {{ display: grid; gap: 6px; }}
+    .field-label {{ font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .05em; }}
+    .readonly-field {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+    .claim-code {{
+      font-family: var(--mono); font-size: 13px; padding: 6px 10px; border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, .04); color: var(--text);
+    }}
+    .device-card-mbti {{ display: flex; gap: 8px; align-items: center; }}
+    .device-card-mbti select {{ flex: 1; }}
+    .device-card-note textarea {{ min-height: 56px; resize: vertical; font-family: var(--font); font-size: 14px; }}
+    .device-card-footer {{ display: flex; justify-content: flex-end; align-items: center; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--separator); }}
     .llm-form {{ display: grid; gap: 12px; }}
     .llm-form label {{ display: grid; gap: 4px; }}
     .llm-form input {{ width: 100%; }}
-    .meta-line {{ color: #647083; font-size: 13px; margin-bottom: 4px; }}
-    .table-row.bindings {{ grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }}
-    .table-head {{ color: #647083; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
-    .login {{ max-width: 420px; margin: 80px auto 0; }}
-    .list {{ display: grid; gap: 8px; }}
-    .item {{ display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #eef1f4; }}
-    .item.selectable {{ padding: 12px; border: 1px solid #e3e7df; border-radius: 8px; background: #ffffff; cursor: pointer; }}
-    .item.selectable:hover {{ border-color: #93aa9b; }}
-    .item.selected {{ border-color: #245849; background: #eef6f0; }}
-    .item.muted {{ opacity: .62; }}
-    .meta {{ color: #647083; font-size: 13px; margin-top: 3px; }}
-    .badge {{ display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; color: #245849; background: #e2eee7; }}
-    .badge.warn {{ color: #8a4a18; background: #f4e4ce; }}
-    .badge.off {{ color: #6b7280; background: #eceff1; }}
-    .badge.badge-click {{ cursor: pointer; max-width: 100%; }}
-    .badge.badge-click:hover {{ filter: brightness(0.96); }}
-    .cell-clip {{ min-width: 0; overflow: hidden; cursor: pointer; border-radius: 4px; padding: 2px 0; }}
-    .cell-clip strong {{ display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }}
-    .cell-clip:hover strong {{ color: #245849; text-decoration: underline; }}
-    .cell-clip.cell-secret {{ padding: 6px 8px; border: 1px dashed #b9c5ba; background: #f7f8f3; }}
-    .cell-clip.cell-secret:hover {{ border-color: #245849; background: #eef6f0; }}
-    .modal-backdrop {{ display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(30, 37, 36, .42); align-items: center; justify-content: center; padding: 24px; }}
+    .modal-backdrop {{ display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .35); align-items: center; justify-content: center; padding: 24px; }}
     .modal-backdrop.open {{ display: flex; animation: modalFade .18s ease; }}
-    .modal-panel {{ width: min(520px, 100%); max-height: min(80vh, 640px); overflow: auto; background: #fffef9; border: 1px solid #d8ddd5; border-radius: 10px; padding: 18px 20px; box-shadow: 0 18px 48px rgba(30, 37, 36, .18); transform: scale(.98); animation: modalScale .18s ease forwards; }}
+    .modal-panel {{
+      width: min(520px, 100%); max-height: min(80vh, 640px); overflow: auto; background: var(--surface);
+      border: 1px solid var(--separator); border-radius: var(--radius); padding: 20px 22px; box-shadow: 0 24px 64px rgba(0, 0, 0, .18);
+    }}
     .modal-header {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
-    .modal-header h3 {{ margin: 0; font-size: 16px; }}
-    .modal-body-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; white-space: pre-wrap; background: #f7f8f3; border: 1px solid #e3e7df; border-radius: 6px; padding: 12px; }}
+    .modal-header h3 {{ margin: 0; font-size: 17px; font-weight: 600; }}
+    .modal-body-text {{
+      font-family: var(--mono); font-size: 13px; word-break: break-all; white-space: pre-wrap;
+      background: rgba(0, 0, 0, .03); border: 1px solid var(--separator); border-radius: var(--radius-sm); padding: 12px;
+    }}
     .modal-actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }}
     .modal-close {{ height: 32px; }}
     @keyframes modalFade {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-    @keyframes modalScale {{ to {{ transform: scale(1); }} }}
-    .tabs {{ display: flex; gap: 8px; margin-bottom: 16px; }}
-    .tabs button.active {{ background: #1e2524; }}
+    .tabs {{
+      display: inline-flex; gap: 2px; margin-bottom: 20px; padding: 3px;
+      background: rgba(0, 0, 0, .06); border-radius: 980px;
+    }}
+    .tabs button {{
+      height: 32px; padding: 0 16px; color: var(--text-secondary); background: transparent; border-radius: 980px;
+    }}
+    .tabs button:hover {{ color: var(--text); background: rgba(255, 255, 255, .5); }}
+    .tabs button.active {{ color: var(--text); background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }}
     .bind-board {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }}
     .bind-action {{ display: grid; gap: 10px; }}
-    .bind-summary {{ min-height: 120px; padding: 12px; border: 1px dashed #b9c5ba; border-radius: 8px; background: #f7f8f3; }}
-    .hint {{ color: #647083; font-size: 13px; line-height: 1.5; }}
+    .bind-summary {{ min-height: 120px; padding: 12px; border: 1px dashed var(--separator); border-radius: var(--radius-sm); background: rgba(0, 0, 0, .02); }}
+    .hint {{ color: var(--text-secondary); font-size: 13px; line-height: 1.55; }}
     pre {{ white-space: pre-wrap; margin: 0; font-size: 13px; }}
+    .header-link {{ color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 500; }}
+    .header-link:hover {{ text-decoration: underline; }}
   </style>
 </head>
 <body>
-  <header><h1>ShuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" style="color:#245849;text-decoration:none">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
+  <header><h1>ShuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" class="header-link">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
   <main>
     <section id="login" class="panel login">
       <h2>管理员登录</h2>
@@ -1607,7 +1692,8 @@ def _admin_html(authenticated: bool) -> str:
               <button class="secondary" onclick="resetList('devices')">查找</button>
             </div>
           </div>
-          <div id="deviceList" class="table"></div>
+          <p class="hint" style="margin:0 0 12px">外壳码印在设备外壳上，仅展示不可修改。解绑后认领码自动恢复可扫码。</p>
+          <div id="deviceList" class="device-cards"></div>
           <div id="devicesPager" class="pager"></div>
         </div>
       </div>
@@ -1733,6 +1819,7 @@ def _admin_html(authenticated: bool) -> str:
     let agents = [];
     let devices = [];
     let deviceSecretEncryptionConfigured = true;
+    let mbtiTypes = [];
     let bindUsersPage = [];
     let bindDevicesPage = [];
     let bindings = [];
@@ -1904,6 +1991,25 @@ def _admin_html(authenticated: bool) -> str:
         <div class="meta">${{esc(hintMeta)}}</div>
       </div>`;
     }}
+    async function copyClaimCode(text) {{
+      const value = String(text || '').trim();
+      if (!value) {{ alert('无外壳码'); return; }}
+      try {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(value);
+        }} else {{
+          const ta = document.createElement('textarea');
+          ta.value = value;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }}
+        alert('外壳码已复制');
+      }} catch (err) {{
+        alert('复制失败，请手动选择复制');
+      }}
+    }}
     function boot() {{
       $('login').style.display = authenticated ? 'none' : 'block';
       $('admin').style.display = authenticated ? 'block' : 'none';
@@ -1975,9 +2081,25 @@ def _admin_html(authenticated: bool) -> str:
     }}
     async function loadAll() {{
       await Promise.all([
-        loadDevices(), loadUsers(), loadAgents(), loadBindings(), loadAdapters(),
+        loadMbtiTypes(), loadDevices(), loadUsers(), loadAgents(), loadBindings(), loadAdapters(),
         loadBindUsers(), loadBindDevices(),
       ]);
+    }}
+    async function loadMbtiTypes() {{
+      const res = await fetch('/admin/api/mbti/types', {{headers: headers(), credentials: 'same-origin'}});
+      const data = await res.json();
+      if (res.ok) mbtiTypes = data.items || [];
+    }}
+    function mbtiOptionsHtml(selected) {{
+      const items = mbtiTypes.length
+        ? mbtiTypes
+        : (selected ? [{{type: selected, tagline: ''}}] : []);
+      let html = '<option value="">—</option>';
+      for (const item of items) {{
+        const sel = item.type === selected ? ' selected' : '';
+        html += `<option value="${{esc(item.type)}}"${{sel}}>${{esc(item.type)}}</option>`;
+      }}
+      return html;
     }}
     function agentOptionsHtml(selected) {{
       const opts = agents.map(a => `<option value="${{esc(a.agent_id)}}" ${{a.agent_id === selected ? 'selected' : ''}}>${{esc(a.display_name || a.agent_id)}} (${{esc(a.agent_id)}})</option>`).join('');
@@ -2076,6 +2198,15 @@ def _admin_html(authenticated: bool) -> str:
       }} else badges.push(`<span class="badge warn">未绑定</span>`);
       if (d.claim_status) badges.push(`<span class="badge">认领:${{esc(d.claim_status)}}</span>`);
       if (d.lifecycle_status) badges.push(`<span class="badge">${{esc(d.lifecycle_status)}}</span>`);
+      const mbti = (d.metadata && d.metadata.mbti) ? d.metadata.mbti : '';
+      const mbtiStatus = (d.metadata && d.metadata.mbti_status)
+        ? d.metadata.mbti_status
+        : (mbti ? 'locked' : '');
+      if (mbti) badges.push(`<span class="badge">${{esc(mbti)}}</span>`);
+      if (mbtiStatus) {{
+        const warn = mbtiStatus === 'sealed' ? ' warn' : '';
+        badges.push(`<span class="badge${{warn}}">mbti:${{esc(mbtiStatus)}}</span>`);
+      }}
       if (!d.enabled) badges.push(`<span class="badge off">已停用</span>`);
       return `<div class="badge-row">${{badges.join('')}}</div>`;
     }}
@@ -2120,24 +2251,52 @@ def _admin_html(authenticated: bool) -> str:
       deviceSecretEncryptionConfigured = data.device_secret_encryption_configured !== false;
       renderEncryptionBanner();
       listState.devices.nextCursor = data.next_cursor || '';
-      $('deviceList').innerHTML = `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>状态</div><div>密钥</div><div>备注</div><div>操作</div></div>` + devices.map(d => {{
+      $('deviceList').innerHTML = devices.length ? devices.map(d => {{
         const sttType = (d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local';
         const ttsType = (d.tts_config && d.tts_config.type) ? d.tts_config.type : 'volcengine-clone';
         const mbti = (d.metadata && d.metadata.mbti) ? d.metadata.mbti : '';
-        return `<div class="table-row">
-        ${{renderClipCell(d.device_id, `auth=${{esc(d.auth_mode || '')}} · stt=${{esc(sttType)}} · tts=${{esc(ttsType)}}${{mbti ? ' · mbti=' + esc(mbti) : ''}}`, '设备 ID')}}
-        <input id="claim_${{esc(d.device_id)}}" value="${{esc(d.claim_code || '')}}" />
-        <div>${{deviceStatusBadges(d)}}</div>
-        ${{renderSecretCell(d)}}
-        <input id="note_${{esc(d.device_id)}}" value="${{esc(d.note || '')}}" />
-        <div class="toolbar">
-          <button class="secondary" onclick="saveDeviceRow('${{esc(d.device_id)}}')">更新</button>
-          <button class="secondary" onclick="resetClaim('${{esc(d.device_id)}}')">重置认领</button>
-          <button class="secondary" onclick="rotateDeviceSecret('${{esc(d.device_id)}}')">换密钥</button>
-          <button class="danger" onclick="deleteDevice('${{esc(d.device_id)}}')">删除</button>
+        const q = jsQuote(d.device_id);
+        const claimCode = d.claim_code || '';
+        const claimQ = jsQuote(claimCode);
+        const unbindBtn = d.active_binding_id
+          ? `<button type="button" class="btn-destructive" onclick="unbindBinding('${{esc(d.active_binding_id)}}', '${{jsQuote(d.bound_user_id || '')}}', '${{q}}')">解绑</button>`
+          : '';
+        return `<article class="device-card">
+        <div class="device-card-head">
+          <div class="device-card-id">${{renderClipCell(d.device_id, `auth=${{esc(d.auth_mode || '')}} · stt=${{esc(sttType)}} · tts=${{esc(ttsType)}}`, '设备 ID')}}</div>
+          <div>${{deviceStatusBadges(d)}}</div>
         </div>
-      </div>`;
-      }}).join('');
+        <div class="device-card-body">
+          <div class="device-card-section">
+            <span class="field-label">外壳码</span>
+            <div class="readonly-field">
+              <code class="claim-code">${{claimCode ? esc(claimCode) : '—'}}</code>
+              ${{claimCode ? `<button type="button" class="ghost" onclick="copyClaimCode('${{claimQ}}')">复制</button>` : ''}}
+            </div>
+          </div>
+          <div class="device-card-section">
+            <span class="field-label">MBTI</span>
+            <div class="device-card-mbti">
+              <select id="mbti_${{esc(d.device_id)}}">${{mbtiOptionsHtml(mbti)}}</select>
+              <button type="button" class="secondary" onclick="saveDeviceMbti('${{q}}')">保存</button>
+            </div>
+          </div>
+          <div class="device-card-section">
+            <span class="field-label">设备密钥</span>
+            ${{renderSecretCell(d)}}
+          </div>
+          <div class="device-card-section device-card-note">
+            <span class="field-label">运营备注</span>
+            <textarea id="note_${{esc(d.device_id)}}" rows="2" placeholder="售后备注、展厅位置等…">${{esc(d.note || '')}}</textarea>
+            <div class="toolbar" style="margin-bottom:0">
+              <button type="button" class="secondary" onclick="saveDeviceNote('${{q}}')">保存备注</button>
+              <button type="button" class="ghost" onclick="clearDeviceNote('${{q}}')">清空</button>
+            </div>
+          </div>
+        </div>
+        ${{unbindBtn ? `<div class="device-card-footer">${{unbindBtn}}</div>` : ''}}
+      </article>`;
+      }}).join('') : '<div class="hint">暂无设备</div>';
       renderPager('devices', devices.length);
     }}
     async function loadUsers() {{
@@ -2191,7 +2350,7 @@ def _admin_html(authenticated: bool) -> str:
           <div class="meta">${{esc(b.bound_at || '-')}}</div>
           <div class="meta">${{esc(b.unbound_at || '-')}}</div>
           <div><span class="badge ${{b.online ? '' : 'off'}}">${{b.online ? '在线' : '离线'}}</span></div>
-          <div><button class="danger" onclick="unbindBinding('${{esc(b.binding_id)}}')">解绑</button></div>
+          <div><button type="button" class="btn-destructive" onclick="unbindBinding('${{esc(b.binding_id)}}', '${{jsQuote(b.user_id || '')}}', '${{jsQuote(b.device_id || '')}}')">解绑</button></div>
         </div>`).join('')
         : '<div class="hint">暂无 active binding</div>';
       renderPager('bindings', bindings.length);
@@ -2276,7 +2435,9 @@ def _admin_html(authenticated: bool) -> str:
       const data = await res.json();
       if (!res.ok || data.error) {{ $('batchNextHint').textContent = data.error || '无法读取下一编号'; return; }}
       $('batchStart').value = data.next_sequence || 1;
-      $('batchNextHint').textContent = `下一设备号 ${{data.next_device_id}}；device_secret 只在本次生成结果里明文显示。`;
+      $('batchNextHint').textContent = deviceSecretEncryptionConfigured
+        ? `下一设备号 ${{data.next_device_id}}；入库后可在设备列表「查看」密钥。`
+        : `下一设备号 ${{data.next_device_id}}；请先配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY 再制码。`;
     }}
     async function provisionBatch() {{
       const payload = {{
@@ -2305,17 +2466,33 @@ def _admin_html(authenticated: bool) -> str:
       a.click();
       URL.revokeObjectURL(url);
     }}
-    async function saveDeviceRow(id) {{
-      const payload = {{claim_code:$('claim_' + id).value, note:$('note_' + id).value, enabled:true}};
+    async function saveDeviceNote(id) {{
+      const noteEl = $('note_' + id);
+      if (!noteEl) {{ alert('备注控件未找到'); return; }}
+      const payload = {{note: noteEl.value, enabled: true}};
       const res = await fetch('/admin/api/devices/' + encodeURIComponent(id), {{method:'PATCH', headers:headers(), body:JSON.stringify(payload)}});
       const data = await res.json();
-      if (!res.ok || data.error) alert(data.error || 'update failed');
-      await loadDevices();
+      if (!res.ok || data.error) alert(data.error || '备注保存失败');
+      else await loadDevices();
     }}
-    async function resetClaim(id) {{
-      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/reset-claim', {{method:'POST', headers:headers()}});
+    async function clearDeviceNote(id) {{
+      if (!confirm('确认清空该设备备注？')) return;
+      const noteEl = $('note_' + id);
+      if (noteEl) noteEl.value = '';
+      const payload = {{note: '', enabled: true}};
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id), {{method:'PATCH', headers:headers(), body:JSON.stringify(payload)}});
       const data = await res.json();
-      if (!res.ok || data.error) alert(data.error || 'reset failed');
+      if (!res.ok || data.error) alert(data.error || '清空失败');
+      else await loadDevices();
+    }}
+    async function saveDeviceMbti(id) {{
+      const mbti = $('mbti_' + id).value.trim();
+      if (!mbti) {{ alert('请选择 MBTI 类型'); return; }}
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/mbti', {{
+        method:'PATCH', headers:headers(), body:JSON.stringify({{mbti}}),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'mbti update failed');
       await loadDevices();
     }}
     async function createUser() {{
@@ -2340,28 +2517,21 @@ def _admin_html(authenticated: bool) -> str:
       if (!res.ok || data.error) alert(data.error || 'save failed');
       await loadUsers();
     }}
-    async function rotateDeviceSecret(id) {{
-      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/rotate-secret', {{method:'POST', headers:headers(), credentials: 'same-origin'}});
+    async function unbindBinding(bindingId, userId, deviceId) {{
+      const uid = userId || '';
+      const did = deviceId || '';
+      const msg = `确认解绑？\\n用户：${{uid}}\\n设备：${{did}}\\n\\n认领码将恢复为可扫码状态；用户记忆保留。用户刷新小程序后设备将从列表消失。`;
+      if (!confirm(msg)) return;
+      const res = await fetch('/admin/api/bindings/unbind', {{method:'POST', headers:headers(), body:JSON.stringify({{binding_id: bindingId}})}});
       const data = await res.json();
       if (!res.ok || data.error) {{
-        openAdminModal({{title: '轮换密钥失败', bodyHtml: `<p class="hint">${{esc(data.error || '轮换失败')}}</p>`}});
+        alert(data.error || '解绑失败');
         return;
       }}
-      await loadDevices();
-      const code = data.device_code || id;
-      const secret = data.device_secret || '';
-      if (secret) {{
-        openCopyableDetail(`设备 ${{code}} 密钥（已轮换）`, secret, true);
-      }} else {{
-        openAdminModal({{title: '轮换完成', bodyHtml: `<p class="hint">${{esc(code)}} 密钥已更新，请刷新后查看。</p>`}});
-      }}
-    }}
-    async function unbindBinding(bindingId) {{
-      const res = await fetch('/admin/api/bindings/unbind', {{method:'POST', headers:headers(), body:JSON.stringify({{binding_id: bindingId}})}});
-      $('bindingMsg').textContent = JSON.stringify(await res.json(), null, 2);
+      $('bindingMsg').textContent = JSON.stringify(data, null, 2);
+      alert('已解绑。用户刷新小程序后设备将从列表消失；可重新扫码绑定。');
       await Promise.all([loadBindings(), loadBindUsers(), loadBindDevices(), loadDevices()]);
     }}
-    async function deleteDevice(id) {{ await fetch('/admin/api/devices/' + encodeURIComponent(id), {{method:'DELETE'}}); await loadDevices(); }}
     async function deleteUser(id) {{ await fetch('/admin/api/users/' + encodeURIComponent(id), {{method:'DELETE'}}); await loadUsers(); }}
     async function callAdapter() {{
       const body = JSON.parse($('adapterPayload').value);

@@ -1284,6 +1284,7 @@ class VoicePostgresRepository:
                    d.stt_config, d.tts_config, d.llm_config, d.enabled, d.note, d.metadata,
                    c.claim_code, c.status AS claim_status,
                    b.user_id AS bound_user_id,
+                   b.binding_id AS active_binding_id,
                    s.online, s.last_seen, s.current_session_id, s.last_error
             FROM devices d
             LEFT JOIN device_status s ON s.device_id = d.device_id
@@ -2311,6 +2312,7 @@ def _device_row(row) -> dict[str, Any]:
         "device_secret_hint": secret_hint,
         "lifecycle_status": str(row.get("lifecycle_status") or "provisioned"),
         "bound_user_id": str(row.get("bound_user_id") or ""),
+        "active_binding_id": str(row.get("active_binding_id") or ""),
         "claim_code": str(row["claim_code"] or ""),
         "claim_status": str(row["claim_status"] or ""),
         "stt_config": _json_obj(row["stt_config"]),

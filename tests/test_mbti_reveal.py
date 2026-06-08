@@ -47,10 +47,13 @@ def test_update_device_mbti_does_not_touch_status() -> None:
     assert "jsonb_build_object('mbti', $2::text)" in block
 
 
-def test_admin_mbti_routes_present() -> None:
+def test_admin_mbti_routes_and_ui_present() -> None:
     server = SERVER.read_text(encoding="utf-8")
     assert "/admin/api/devices/{device_id}/mbti" in server
     assert "/admin/api/mbti/types" in server
+    assert "saveDeviceMbti" in server
+    assert "loadMbtiTypes" in server
+    assert 'field-label">MBTI</span>' in server
 
 
 def test_admin_list_mbti_types_returns_16(monkeypatch) -> None:
@@ -145,3 +148,4 @@ def test_maybe_reveal_on_hello_sealed_plays_once(monkeypatch) -> None:
     played_text = session._play_proactive_tts.await_args.args[0]
     assert not played_text.startswith("绑定成功。")
     session._play_proactive_tts.assert_awaited_once()
+

@@ -78,6 +78,16 @@ def test_admin_supports_batch_codes_and_label_updates() -> None:
     assert "device_secret_encryption_configured" in server
 
 
+def test_list_devices_exposes_active_binding_id_for_admin_unbind() -> None:
+    source = REPO.read_text(encoding="utf-8")
+    server = SERVER.read_text(encoding="utf-8")
+
+    assert "b.binding_id AS active_binding_id" in source
+    assert '"active_binding_id"' in source
+    assert "saveDeviceNote" in server
+    assert "unbindBinding" in server
+
+
 def test_admin_lists_support_server_search_and_pagination_controls() -> None:
     source = REPO.read_text(encoding="utf-8")
     server = SERVER.read_text(encoding="utf-8")
