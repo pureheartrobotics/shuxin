@@ -26,7 +26,9 @@
 | 🌈 **情感引擎** | 基于 Plutchik 情绪轮的 6 维情感模型，支持复合情绪 |
 | 🛡️ **守护系统** | 主动感知你的情绪，在你需要时给予关怀 |
 | 📝 **用户建模** | 记住你的喜好、习惯，关系会随着时间加深 |
-| 🧬 **MBTI 人格** | 默认 INFJ，可动态切换，影响行为方式 |
+| 🧬 **MBTI 人格** | CLI 可切换；硬件设备盲盒 16 型，开箱锁定，影响语气差异 |
+| 🎙️ **语音硬件栈** | WebSocket BFF、Postgres 设备绑定、火山 TTS、腾讯云 STT |
+| 📱 **微信小程序** | 扫码绑定、MBTI 盲盒弹窗、设备列表 |
 | 📖 **SOUL.md 灵魂文件** | 人格的核心定义，可自由定制 |
 | 🔄 **多模型支持** | 支持 OpenAI、Anthropic、DeepSeek 等多种 LLM 提供者 |
 
@@ -34,9 +36,14 @@
 
 ## 🚀 快速开始
 
-语音 Demo 的无硬件最小测试流程见：[语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md)。
-语音闭环和后续硬件接口规划见：[舒心语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md)。
-硬件 WebSocket、小程序绑定和后台设备管理接口见：[语音硬件 WebSocket 接口协议](docs/VOICE_HARDWARE_WS_PROTOCOL.md)。
+| 读者 | 文档入口 |
+|------|----------|
+| 硬件/固件 | [硬件对接总手册](docs/VOICE_HARDWARE_HANDBOOK.md) |
+| 联调/QA | [语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md) |
+| 架构 | [语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md) |
+| AI 协作者 | [AGENTS.md](AGENTS.md) |
+
+语音 Demo 无硬件测试：[VOICE_DEMO_MIN_TEST.md](docs/VOICE_DEMO_MIN_TEST.md)。硬件 WebSocket 字段详表：[VOICE_HARDWARE_WS_PROTOCOL.md](docs/VOICE_HARDWARE_WS_PROTOCOL.md)。
 
 ### 安装
 
@@ -116,6 +123,56 @@ shuxin --debug
 | `/shuxin reset` | 重置自尊系统 |
 | `/shuxin set_name <名字>` | 设置你的名字 |
 | `/shuxin help` | 显示陪伴系统帮助 |
+
+---
+
+## 🌐 产品整体架构
+
+舒心除 CLI 陪伴对话外，已具备 **Voice BFF + 小程序 + 硬件 WebSocket** 的完整产品链路：
+
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    CLI[CLI_shuxin]
+    MiniApp[WeChat_MiniProgram]
+    HW[ESP32_Hardware]
+    VoiceDemo[Browser_voice_demo]
+  end
+  subgraph voice [Voice_BFF]
+    WSServer[server.py_WebSocket]
+    Admin[Admin_HTTP]
+  end
+  subgraph core [ShuXin_Core]
+    Agent[core_agent]
+    Companion[companion_plugin]
+    Memory[memory_3layer]
+  end
+  subgraph data [Data]
+    PG[(Postgres)]
+    Qdrant[(Qdrant_Mem0)]
+    FS["~/.shuxin_files"]
+  end
+  CLI --> Agent
+  MiniApp --> Admin
+  HW --> WSServer
+  VoiceDemo --> WSServer
+  WSServer --> Agent
+  WSServer --> PG
+  Agent --> Companion
+  Agent --> Memory
+  Memory --> Qdrant
+  Memory --> FS
+```
+
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| Agent 核心 | `src/shuxin/core/` | LLM 循环、SOUL、记忆、插件 Hook |
+| 陪伴插件 | `plugins/companion/` | 自尊、情感、守护、用户建模 |
+| Voice BFF | `src/shuxin/voice/` | WS 鉴权、STT/TTS 代理、设备绑定、Admin |
+| 小程序 | `apps/wechat-miniprogram/` | 扫码绑定、MBTI 盲盒弹窗 |
+| 数据层 | Postgres + Qdrant + 本地文件 | 用户/设备/绑定/事件；长期记忆（Mem0 可选） |
+
+典型硬件语音路径：`设备 Opus 上行` → `Voice Server STT` → `Agent + 陪伴插件` → `火山 TTS` → `Opus 下行`。云厂商密钥仅在服务端，固件不直连 ASR/TTS/LLM。
 
 ---
 
@@ -378,10 +435,11 @@ client_id: web-demo-test
 - [x] 交互式首次设置（API 密钥、模型选择）
 - [x] 多 LLM 提供者支持（OpenAI、Anthropic、DeepSeek、OpenAI 兼容）
 - [x] 运行时切换模型（`/switch-model` 命令）
-- [x] 语音 demo（STT/TTS、无硬件会话、WebSocket 浏览器测试台、Postgres 设备绑定原型）
-- [ ] 集成 Mem0 记忆系统
-- [ ] Web 管理界面
-- [ ] 生产级语音交互（VAD、流式 TTS、每设备独立密钥）
+- [x] 语音 demo（STT/TTS、无硬件会话、WebSocket 浏览器测试台、Postgres 设备绑定）
+- [x] Postgres 设备绑定 + 微信小程序 MBTI 盲盒
+- [x] Voice 路径 Mem0 + Qdrant 长期记忆（可选，`SHUXIN_MEM0_ENABLED=1`）
+- [ ] Web 管理界面（Voice Admin 已有，独立 Web UI 待建）
+- [ ] 生产级语音交互（VAD、流式 TTS、OTA）
 - [ ] 多语言支持
 - [ ] 发布至 PyPI
 

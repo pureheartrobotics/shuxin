@@ -131,7 +131,7 @@
 - `data/mbti/mbti_profiles.yaml`（16 型）+ `load_mbti_profiles()`；Slot2 `style_anchor`、Slot4 `micro_anchor`；
 - 盲盒状态机：`sealed` → `locked`；`mbti_revealed_by`（`miniprogram_bind` | `first_hello`）；`device_intro_played` 控制 TTS 自我介绍仅一次；
 - 小程序绑定：`POST /api/devices/bind` 返回 `mbti` 卡片 + `MbtiRevealModal` 弹窗；设备列表展示 MBTI 徽章；**用户侧无解绑**；
-- WebSocket：`hello` 后 `mbti/reveal`（仅 hello 抢先揭晓时）+ `reveal_script` TTS；小程序已揭晓时 hello **补播**自我介绍；
+- WebSocket：`hello` 后 `mbti/reveal`（仅 hello 抢先揭晓时）+ `reveal_script` TTS；小程序已揭晓时 hello **补播**自我介绍；`_ensure_runtime` 以 `agent is None` 初始化运行时（device 可先由 intro 预填）；
 - Admin：设备 Tab MBTI 下拉、`PATCH /admin/api/devices/{id}/mbti`（不改 `mbti_status`）；
 - `VoiceService.apply_device_mbti()`、多设备 binding、Mem0 + rolling summary、陪伴插件已接入语音路径。
 

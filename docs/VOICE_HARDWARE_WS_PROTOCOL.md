@@ -1,5 +1,7 @@
 # 语音硬件 WebSocket 接口协议
 
+> **阅读顺序**：流程与状态机见 [VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)；本文档为消息字段与 Admin API 详表。
+
 本文档面向后续硬件接入方。当前协议用于无硬件 Web 测试台，也作为后续真实硬件的最小接入边界。
 
 **STT/TTS 由舒心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权，且设备已被用户绑定后，才能进入语音识别与合成流程。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。

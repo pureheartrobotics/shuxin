@@ -1,5 +1,7 @@
 # 硬件快速接入（固件工程师）
 
+> **阅读顺序**：完整端到端流程与状态机见 [VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)；本文档为 1 页速查。
+
 面向 ESP32 等设备的 **最小联调清单**。协议细节见 [VOICE_HARDWARE_WS_PROTOCOL.md](VOICE_HARDWARE_WS_PROTOCOL.md)；鉴权与云能力边界见 [VOICE_HARDWARE_INTEGRATION.md](VOICE_HARDWARE_INTEGRATION.md)。
 
 ## 1. 服务地址
