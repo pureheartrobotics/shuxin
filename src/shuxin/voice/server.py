@@ -1470,11 +1470,12 @@ class _VoiceWebSocketSession:
             )
         if self.device is None:
             self.device = await self.repo.get_device(self.device_id)
-            if self.user_settings and self.user_settings.llm_config:
-                self.device.llm = merge_llm_device_config(
-                    self.device.llm,
-                    self.user_settings.llm_config,
-                )
+        if self.user_settings and self.user_settings.llm_config:
+            self.device.llm = merge_llm_device_config(
+                self.device.llm,
+                self.user_settings.llm_config,
+            )
+        if self.agent is None:
             if not self.device.llm.api_key:
                 raise ValueError("LLM api_key is not configured for this device/user")
             if is_tencent_realtime_stt(self.device.stt):

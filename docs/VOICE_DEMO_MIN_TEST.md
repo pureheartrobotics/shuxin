@@ -502,11 +502,14 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 # bind 响应示例字段（Postgres 模式）
 # mbti: { is_first_reveal, mbti, display_name, tagline }
 
-PYTHONPATH=src pytest tests/test_mbti_miniprogram_bind.py tests/test_mbti_reveal.py tests/test_device_intro_and_registry.py -q
+PYTHONPATH=src pytest tests/test_ensure_runtime_after_mbti_prefetch.py \
+  tests/test_mbti_miniprogram_bind.py tests/test_mbti_reveal.py \
+  tests/test_device_intro_and_registry.py -q
 ```
 
 常见失败原因：
 
+- hello 后有 MBTI 自我介绍文字但无 `tts/start`、首轮对话报 `'NoneType' object has no attribute 'chat_stream'`：2026-06-08 前版本在 MBTI 路径预填 `device` 后未初始化 agent；升级至含 `_ensure_runtime` 修复的版本后应消失。
 - 控制台提示 `wx.getSystemInfoSync is deprecated`：这是基础库兼容警告，通常不是本次绑定失败根因。
 - 控制台提示关闭合法域名校验：这是开发者工具设置提示；本地 HTTP 联调时可以保留，但真机和上线必须配置 HTTPS 合法域名。
 - `SystemError ... timeout`：通常是小程序请求的后端地址不可达。确认 Docker voice 服务已启动，`curl -s http://localhost:8765/health` 可用；小程序页面里也可以点“测试后端连接”。当前开发构建默认使用 `http://localhost:8765`，需要改地址时设置 `SHUXIN_API_BASE` 后重新编译。
@@ -804,6 +807,7 @@ curl -s -X PATCH -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/
 
 | 现象 | 排查 |
 |------|------|
+| hello 有 MBTI 文字无 TTS，首轮 `chat_stream` NoneType | 升级至 2026-06-08 后含 `_ensure_runtime` 修复的版本 |
 | `voice_type` ValueError | compose 未透传 env → `redeploy_docker.sh` |
 | TTS 成功但仍是旧音色 | 未重连 WS；或 `users.agent_id` 未更新 |
 | 仍走 Edge/local | Postgres `tts_config.type=local` → 「全部应用火山 TTS」 |

@@ -1,5 +1,7 @@
 # 硬件 STT/TTS 调用与鉴权接入指南
 
+> **阅读顺序**：端到端流程与固件状态机见 [VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)；本文档侧重鉴权与 BFF 边界。
+
 本文档面向硬件/固件工程师、工厂烧录与联调测试。说明设备如何经舒心 Voice 服务间接使用语音识别与合成，以及为何必须先完成设备鉴权与用户绑定。
 
 协议字段与下行消息格式见 [语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。架构与绑定模型见 [舒心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md) §6.1。
@@ -45,6 +47,7 @@ sequenceDiagram
 - `hello` 携带 `device_code` / `device_secret` 时调用 `authenticate_device()`（见 `src/shuxin/voice/server.py`）。
 - Postgres 模式校验 `device_secret_hash` 与 `device_bindings.status='active'`（见 `src/shuxin/voice/postgres_repository.py`）。
 - 鉴权通过后，在 `_ensure_runtime()` 中按设备 STT 配置与用户 `agent_id`（Postgres `agents` 表）创建 STT/TTS Provider；设备 `metadata.mbti` 注入语气差异。
+- `_ensure_runtime()` **device 加载与 agent 初始化解耦**：MBTI 自我介绍路径可在 hello 时先写入 `self.device`，但仍以 `self.agent is None` 为门槛创建 STT/TTS/Agent；否则 intro 仅有文字、首轮 `chat_stream` 会报 NoneType。
 
 ## 3. 三码模型与职责边界
 
@@ -81,6 +84,7 @@ sequenceDiagram
 | `invalid device secret` | `device_secret` 错误，或后台轮换密钥后固件未更新 |
 | `device is not bound or disabled` | 用户未绑定、已解绑，或设备被禁用 |
 | `LLM api_key is not configured for this device/user` | 绑定用户未配置 LLM（鉴权已过，首轮对话失败） |
+| hello 有 MBTI 文字无 TTS，首轮 `chat_stream` NoneType | 旧版 `_ensure_runtime` 在 device 已预填时跳过 Agent 初始化；升级至 2026-06-08 后修复版 |
 | `no audio received` | `listen stop` 前未发送 PCM 帧 |
 
 ## 5. 固件侧调用方式

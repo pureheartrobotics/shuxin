@@ -2,7 +2,7 @@
 
 本文档说明当前语音 demo 的边界：我们参考小智项目的成熟服务端形态，但不复制它的产品核心。舒心自己的核心仍然是 Agent 主循环、人格、记忆、插件和陪伴编排。
 
-硬件接入方优先阅读：[语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。
+**硬件方入口**：[VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)（流程与状态机）。协议字段见 [VOICE_HARDWARE_WS_PROTOCOL.md](VOICE_HARDWARE_WS_PROTOCOL.md)。
 
 ## 1. 架构边界
 
@@ -211,6 +211,16 @@ voice-demo 人工验收步骤见 [VOICE_DEMO_MIN_TEST.md §11](VOICE_DEMO_MIN_TE
 Edge TTS + karen FX 仅保留于 `scripts/generate_voiceover_candidates.py` 等试听脚本，不再用于生产 WebSocket 路径。
 
 **历史参考**：`outputs/voiceover-candidates/` 与 `scripts/generate_voiceover_candidates.py` 用于 Edge 音色候选对比。
+
+## 3.4 WebSocket 会话运行时（`_ensure_runtime`）
+
+`server.py` 中 `_VoiceWebSocketSession` 在 hello 鉴权后懒加载语音运行时：
+
+1. **audio_store / session** — 用户目录与 Postgres 会话记录（首次调用时创建）。
+2. **device** — 若 `self.device is None` 则从仓储加载，并合并绑定用户的 `llm_config`（`merge_llm_device_config`，空字符串不覆盖已有字段）。
+3. **STT / TTS / Agent** — 仅当 `self.agent is None` 时创建并 `initialize`；MBTI 路径可在 hello 时先预填 `self.device` 再播自我介绍，**不得**以「device 已有」跳过本步。
+
+`_reset_runtime()`（hello 重连）仍清空 `agent/device/stt/tts`，下次 `_ensure_runtime` 按上述规则重建。回归测试：`tests/test_ensure_runtime_after_mbti_prefetch.py`。
 
 ## 4. Transport 预留接口
 
