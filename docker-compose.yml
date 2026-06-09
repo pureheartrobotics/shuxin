@@ -98,10 +98,11 @@ services:
       # 挂载脚本目录，便于容器内下载/更新语音模型。
       - ./scripts:/app/scripts
       - ./tests:/app/tests
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./samples:/app/samples
-      - ./outputs:/app/outputs
+      # 阶段 A：宿主机路径可用 SHUXIN_HOST_* 指到大磁盘（见 .env.example、docs/DEPLOY_SERVER.md）
+      - ${SHUXIN_HOST_DATA_DIR:-./data}:/app/data
+      - ${SHUXIN_HOST_MODELS_DIR:-./models}:/app/models
+      - ${SHUXIN_HOST_SAMPLES_DIR:-./samples}:/app/samples
+      - ${SHUXIN_HOST_OUTPUTS_DIR:-./outputs}:/app/outputs
     working_dir: /app
     command: ["python", "-m", "shuxin.voice.server", "--host", "0.0.0.0", "--port", "8765"]
     networks:

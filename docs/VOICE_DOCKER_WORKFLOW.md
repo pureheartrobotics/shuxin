@@ -37,6 +37,12 @@ Dockerfile 安装顺序：**heavy** → **app** → 应用代码。
 
 ## 常用命令
 
+WSL / Docker Desktop 启动前，确认 daemon 已连接（`docker info | head -5` 只有 Client 段，不能说明已连上）：
+
+```bash
+docker info 2>&1 | grep -E "Server Version|Cannot connect"
+```
+
 ```bash
 # 日常重部署
 bash scripts/redeploy_docker.sh

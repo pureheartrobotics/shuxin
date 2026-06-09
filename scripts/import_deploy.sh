@@ -72,19 +72,47 @@ restore_code() {
   source "${INSTALL_DIR}/scripts/lib/docker_compose.sh"
 }
 
+_restore_host_archive() {
+  local archive="$1"
+  local host_dir="$2"
+  [[ -f "$archive" ]] || return 0
+  local parent
+  parent="$(dirname "$host_dir")"
+  mkdir -p "$parent"
+  tar xzf "$archive" -C "$parent"
+}
+
 restore_volumes() {
   info "步骤 3/8  恢复 data/models/samples/outputs ..."
-  mkdir -p data models samples outputs
+  if [[ -f .env ]]; then
+    load_host_data_dirs
+  else
+    SHUXIN_HOST_DATA_DIR="./data"
+    SHUXIN_HOST_MODELS_DIR="./models"
+    SHUXIN_HOST_SAMPLES_DIR="./samples"
+    SHUXIN_HOST_OUTPUTS_DIR="./outputs"
+  fi
+  mkdir -p \
+    "$SHUXIN_HOST_DATA_DIR" \
+    "$SHUXIN_HOST_MODELS_DIR" \
+    "$SHUXIN_HOST_SAMPLES_DIR" \
+    "$SHUXIN_HOST_OUTPUTS_DIR"
 
-  [[ -f "${EXTRACT_DIR}/data.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/data.tar.gz" -C "$INSTALL_DIR"
-  [[ -f "${EXTRACT_DIR}/models.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/models.tar.gz" -C "$INSTALL_DIR" \
-    || warn "缺少 models.tar.gz，STT 前需自行准备模型"
-  [[ -f "${EXTRACT_DIR}/samples.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/samples.tar.gz" -C "$INSTALL_DIR"
-  [[ -f "${EXTRACT_DIR}/outputs.tar.gz" ]] && tar xzf "${EXTRACT_DIR}/outputs.tar.gz" -C "$INSTALL_DIR"
+  _restore_host_archive "${EXTRACT_DIR}/data.tar.gz" "$SHUXIN_HOST_DATA_DIR"
+  if [[ -f "${EXTRACT_DIR}/models.tar.gz" ]]; then
+    _restore_host_archive "${EXTRACT_DIR}/models.tar.gz" "$SHUXIN_HOST_MODELS_DIR"
+  else
+    warn "缺少 models.tar.gz，STT 前需自行准备模型"
+  fi
+  _restore_host_archive "${EXTRACT_DIR}/samples.tar.gz" "$SHUXIN_HOST_SAMPLES_DIR"
+  _restore_host_archive "${EXTRACT_DIR}/outputs.tar.gz" "$SHUXIN_HOST_OUTPUTS_DIR"
 
-  if [[ ! -f data/devices.yaml && -f data/devices.yaml.example ]]; then
-    cp data/devices.yaml.example data/devices.yaml
-    warn "已从示例创建 data/devices.yaml，chat-audio 前请填写真实 API 配置"
+  if [[ ! -f "${SHUXIN_HOST_DATA_DIR}/devices.yaml" && -f "${SHUXIN_HOST_DATA_DIR}/devices.yaml.example" ]]; then
+    cp "${SHUXIN_HOST_DATA_DIR}/devices.yaml.example" "${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+    warn "已从示例创建 devices.yaml，chat-audio 前请填写真实 API 配置"
+  elif [[ ! -f "${SHUXIN_HOST_DATA_DIR}/devices.yaml" && -f data/devices.yaml.example ]]; then
+    cp data/devices.yaml.example "${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+    warn "已从仓库示例创建 ${SHUXIN_HOST_DATA_DIR}/devices.yaml"
   fi
 }
 

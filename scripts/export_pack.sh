@@ -94,41 +94,48 @@ pack_code() {
   info "  code.tar.gz $(du -sh "${WORK_DIR}/code.tar.gz" | cut -f1)"
 }
 
+_pack_host_dir() {
+  local archive_name="$1"
+  local host_dir="$2"
+  local exclude="${3:-}"
+  local parent base
+  if [[ ! -d "$host_dir" ]]; then
+    warn "未找到 ${host_dir}，已跳过 ${archive_name}"
+    return 0
+  fi
+  parent="$(cd "$(dirname "$host_dir")" && pwd)"
+  base="$(basename "$host_dir")"
+  if [[ -n "$exclude" ]]; then
+    tar czf "${WORK_DIR}/${archive_name}" --exclude="$exclude" -C "$parent" "$base"
+  else
+    tar czf "${WORK_DIR}/${archive_name}" -C "$parent" "$base"
+  fi
+  info "  ${archive_name} $(du -sh "${WORK_DIR}/${archive_name}" | cut -f1) (from ${host_dir})"
+}
+
 pack_data() {
   info "步骤 5/8  打包 data ..."
-  if [[ -d data ]]; then
-    tar czf "${WORK_DIR}/data.tar.gz" \
-      --exclude='devices.yaml.example' \
-      -C "$ROOT_DIR" data
-    info "  data.tar.gz $(du -sh "${WORK_DIR}/data.tar.gz" | cut -f1)"
-  else
-    warn "未找到 data/，已跳过"
-  fi
+  _pack_host_dir "data.tar.gz" "$SHUXIN_HOST_DATA_DIR" "devices.yaml.example"
 }
 
 pack_models() {
   info "步骤 6/8  打包 models ..."
-  if [[ -d models ]] && [[ -n "$(find models -type f ! -name '.gitkeep' -print -quit 2>/dev/null)" ]]; then
-    tar czf "${WORK_DIR}/models.tar.gz" -C "$ROOT_DIR" models
-    info "  models.tar.gz $(du -sh "${WORK_DIR}/models.tar.gz" | cut -f1)"
+  if [[ -d "$SHUXIN_HOST_MODELS_DIR" ]] \
+    && [[ -n "$(find "$SHUXIN_HOST_MODELS_DIR" -type f ! -name '.gitkeep' -print -quit 2>/dev/null)" ]]; then
+    _pack_host_dir "models.tar.gz" "$SHUXIN_HOST_MODELS_DIR"
   else
     warn "models/ 无模型文件，已跳过 models.tar.gz"
   fi
 }
 
 pack_samples() {
-  if [[ -d samples ]]; then
-    tar czf "${WORK_DIR}/samples.tar.gz" -C "$ROOT_DIR" samples
-    info "  samples.tar.gz $(du -sh "${WORK_DIR}/samples.tar.gz" | cut -f1)"
-  else
-    warn "未找到 samples/，已跳过"
-  fi
+  _pack_host_dir "samples.tar.gz" "$SHUXIN_HOST_SAMPLES_DIR"
 }
 
 pack_outputs() {
-  if [[ -d outputs ]] && [[ -n "$(find outputs -type f -print -quit 2>/dev/null)" ]]; then
-    tar czf "${WORK_DIR}/outputs.tar.gz" -C "$ROOT_DIR" outputs
-    info "  outputs.tar.gz $(du -sh "${WORK_DIR}/outputs.tar.gz" | cut -f1)"
+  if [[ -d "$SHUXIN_HOST_OUTPUTS_DIR" ]] \
+    && [[ -n "$(find "$SHUXIN_HOST_OUTPUTS_DIR" -type f -print -quit 2>/dev/null)" ]]; then
+    _pack_host_dir "outputs.tar.gz" "$SHUXIN_HOST_OUTPUTS_DIR"
   else
     warn "outputs/ 为空或不存在，已跳过 outputs.tar.gz"
   fi
@@ -172,6 +179,7 @@ EOF
 main() {
   info "舒心语音 demo 打包 (${TIMESTAMP})"
   check_deps
+  load_host_data_dirs
   mkdir -p "$WORK_DIR"
 
   if check_docker; then

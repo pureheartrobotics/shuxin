@@ -2,8 +2,10 @@
 # 舒心语音 demo 的日常 Docker 重部署/启动。
 # 保留挂载数据: data/、models/、samples/、outputs/。
 #
-# Windows: 需要 Git for Windows（Git Bash）+ Docker Desktop。
-# 在项目根目录、原生盘符路径下执行（如 C:/Users/.../shuxin）:
+# Windows/WSL: 需要 Docker Desktop，并对当前 WSL 发行版开启 integration。
+# 启动前验证 daemon（勿用 docker info | head -5，Client 段无法说明已连上）:
+#   docker info 2>&1 | grep -E "Server Version|Cannot connect"
+# 在项目根目录执行:
 #   bash scripts/redeploy_docker.sh
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
@@ -15,10 +17,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# shellcheck source=lib/docker_compose.sh
+source "${ROOT_DIR}/scripts/lib/docker_compose.sh"
+
 PROJECT_NAME="${PROJECT_NAME:-shuxin}"
 SERVICE="${SERVICE:-shuxin-voice-demo}"
 IMAGE="${IMAGE:-shuxin-voice-demo:latest}"
-DEPS_HASH_FILE="${DEPS_HASH_FILE:-data/docker_deps.hash}"
 FORCE_BUILD=0
 NO_BUILD=0
 DEPS_MODULES=(
@@ -31,7 +35,14 @@ for arg in "$@"; do
     --build) FORCE_BUILD=1 ;;
     --no-build) NO_BUILD=1 ;;
     -h|--help)
-      echo "用法: bash scripts/redeploy_docker.sh [--build|--no-build]"
+      cat <<'EOF'
+用法: bash scripts/redeploy_docker.sh [--build|--no-build]
+
+环境变量:
+  COMPOSE_FILE   默认 docker-compose.yml；生产可设
+                 docker-compose.yml:docker-compose.prod.yml
+  SHUXIN_HOST_*  见 .env.example（阶段 A 大磁盘 bind mount）
+EOF
       exit 0
       ;;
     *) echo "[redeploy] 未知参数: $arg" >&2; exit 1 ;;
@@ -65,20 +76,28 @@ fi
 
 check_deps
 
-mkdir -p data models samples outputs
+load_host_data_dirs
+info "数据目录: data=${SHUXIN_HOST_DATA_DIR} outputs=${SHUXIN_HOST_OUTPUTS_DIR}"
+DEPS_HASH_FILE="${DEPS_HASH_FILE:-${SHUXIN_HOST_DATA_DIR}/docker_deps.hash}"
+mkdir -p "$SHUXIN_HOST_DATA_DIR" "$SHUXIN_HOST_MODELS_DIR" "$SHUXIN_HOST_SAMPLES_DIR" "$SHUXIN_HOST_OUTPUTS_DIR"
 
 if [[ ! -f .env && -f .env.example ]]; then
   cp .env.example .env
   warn "已从 .env.example 创建 .env"
 fi
 
-if [[ ! -f data/devices.yaml && -f data/devices.yaml.example ]]; then
-  cp data/devices.yaml.example data/devices.yaml
-  warn "已从示例创建 data/devices.yaml"
+if [[ ! -f "${SHUXIN_HOST_DATA_DIR}/devices.yaml" ]]; then
+  if [[ -f "${SHUXIN_HOST_DATA_DIR}/devices.yaml.example" ]]; then
+    cp "${SHUXIN_HOST_DATA_DIR}/devices.yaml.example" "${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+    warn "已从示例创建 ${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+  elif [[ -f data/devices.yaml.example ]]; then
+    cp data/devices.yaml.example "${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+    warn "已从仓库 data/devices.yaml.example 创建 ${SHUXIN_HOST_DATA_DIR}/devices.yaml"
+  fi
 fi
 
 info "检查 docker compose 配置 ..."
-docker compose -p "$PROJECT_NAME" config >/dev/null
+compose_cmd config >/dev/null
 
 hash_file() {
   local path="$1"
@@ -192,7 +211,7 @@ fi
 
 if [[ -n "$BUILD_REASON" ]]; then
   info "构建 Docker 镜像（${BUILD_REASON}）..."
-  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -p "$PROJECT_NAME" build "$SERVICE"
+  DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 compose_cmd build "$SERVICE"
   printf "%s\n" "$CURRENT_HASH" > "$DEPS_HASH_FILE"
 else
   info "仅代码变更，跳过依赖层构建"
@@ -202,10 +221,10 @@ else
 fi
 
 info "启动依赖服务（postgres、qdrant）..."
-docker compose -p "$PROJECT_NAME" up -d postgres qdrant
+compose_cmd up -d postgres qdrant
 
 info "重建并启动 voice 服务（--no-deps: 保持 postgres/qdrant 健康）..."
-docker compose -p "$PROJECT_NAME" up -d --force-recreate --no-deps "$SERVICE"
+compose_cmd up -d --force-recreate --no-deps "$SERVICE"
 
 QDRANT_PORT="${QDRANT_HTTP_PORT:-6335}"
 if [[ -f .env ]]; then
@@ -216,5 +235,8 @@ if [[ "$QDRANT_PORT" == "6335" ]]; then
   warn "生产部署前请将 .env 中 QDRANT_HTTP_PORT 改为 6333（见 docs/DEPLOY_SERVER.md）"
 fi
 
+if [[ "$SHUXIN_HOST_DATA_DIR" != "./data" || "$SHUXIN_HOST_OUTPUTS_DIR" != "./outputs" ]]; then
+  info "宿主机数据目录: data=${SHUXIN_HOST_DATA_DIR} outputs=${SHUXIN_HOST_OUTPUTS_DIR}"
+fi
 info "重部署完成，挂载的运行时数据已保留。"
 info "Qdrant 控制台（若已映射端口）: http://localhost:${QDRANT_PORT}/dashboard"
