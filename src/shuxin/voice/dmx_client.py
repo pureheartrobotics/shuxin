@@ -233,18 +233,86 @@ async def create_user_token(*, name: str, quota_yuan: float = DEFAULT_QUOTA_YUAN
     raise PermissionError(f"DMX token created but key not found for name={name}")
 
 
-async def top_up_token_by_name(*, name: str, add_yuan: float) -> dict[str, Any]:
-    """Increment a DMX token balance by add_yuan (yuan)."""
-    if not dmx_admin_configured():
-        raise PermissionError("DMX admin credentials are not configured")
+async def _get_token_record_by_api_key(
+    client: httpx.AsyncClient,
+    api_key: str,
+) -> dict[str, Any]:
+    selected = _normalize_api_key(api_key)
+    if not selected:
+        raise PermissionError("api_key is required for DMX top-up")
+    response = await client.get(
+        f"{_dmx_api_root()}/api/token/key/{selected}",
+        headers=_admin_headers(),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    if not isinstance(data, dict):
+        raise PermissionError("DMX token key lookup response is invalid")
+    token_id = int(data.get("id") or 0)
+    if token_id <= 0:
+        raise PermissionError("DMX token id is invalid for api_key lookup")
+    return await _get_token_record(client, token_id)
 
+
+async def _top_up_token_record(
+    client: httpx.AsyncClient,
+    current: dict[str, Any],
+    *,
+    add_yuan: float,
+    label: str,
+) -> dict[str, Any]:
     amount = float(add_yuan)
     if amount <= 0:
         raise ValueError("add_yuan must be positive")
     if amount > MAX_TOP_UP_YUAN:
         raise ValueError(f"add_yuan must not exceed {MAX_TOP_UP_YUAN}")
+    if bool(current.get("unlimited_quota")):
+        raise PermissionError("DMX token has unlimited quota; incremental top-up is not supported")
 
     added_units = int(amount * QUOTA_UNITS_PER_YUAN)
+    current["remain_quota"] = int(current.get("remain_quota") or 0) + added_units
+    current["unlimited_quota"] = False
+    current["unlimited_count"] = True
+    current["remain_count"] = 0
+
+    response = await client.put(
+        f"{_dmx_api_root()}/api/token/",
+        headers=_admin_headers(),
+        json=current,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("success") is False:
+        raise PermissionError(str(payload.get("message") or "DMX token top-up failed"))
+
+    updated = payload.get("data") if isinstance(payload.get("data"), dict) else current
+    result = parse_balance_payload(updated if isinstance(updated, dict) else current)
+    result["add_yuan"] = amount
+    logger.info("DMX topped up %s by %s yuan", label, amount)
+    return result
+
+
+async def top_up_token_by_api_key(*, api_key: str, add_yuan: float) -> dict[str, Any]:
+    """Increment the DMX token tied to api_key (matches balance queries)."""
+    if not dmx_admin_configured():
+        raise PermissionError("DMX admin credentials are not configured")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        current = await _get_token_record_by_api_key(client, api_key)
+        return await _top_up_token_record(
+            client,
+            current,
+            add_yuan=add_yuan,
+            label=_normalize_api_key(api_key)[:12],
+        )
+
+
+async def top_up_token_by_name(*, name: str, add_yuan: float) -> dict[str, Any]:
+    """Increment a DMX token balance by user_id name (fallback when api_key missing)."""
+    if not dmx_admin_configured():
+        raise PermissionError("DMX admin credentials are not configured")
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         item = await _find_token_item_by_name(client, name)
         if item is None:
@@ -255,29 +323,7 @@ async def top_up_token_by_name(*, name: str, add_yuan: float) -> dict[str, Any]:
             raise PermissionError(f"DMX token id is invalid for name={name}")
 
         current = await _get_token_record(client, token_id)
-        if bool(current.get("unlimited_quota")):
-            raise PermissionError("DMX token has unlimited quota; incremental top-up is not supported")
-
-        current["remain_quota"] = int(current.get("remain_quota") or 0) + added_units
-        current["unlimited_quota"] = False
-        current["unlimited_count"] = True
-        current["remain_count"] = 0
-
-        response = await client.put(
-            f"{_dmx_api_root()}/api/token/",
-            headers=_admin_headers(),
-            json=current,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if payload.get("success") is False:
-            raise PermissionError(str(payload.get("message") or "DMX token top-up failed"))
-
-        updated = payload.get("data") if isinstance(payload.get("data"), dict) else current
-        result = parse_balance_payload(updated if isinstance(updated, dict) else current)
-        result["add_yuan"] = amount
-        logger.info("DMX topped up %s by %s yuan", name, amount)
-        return result
+        return await _top_up_token_record(client, current, add_yuan=add_yuan, label=name)
 
 
 async def get_token_balance(api_key: str) -> dict[str, Any]:

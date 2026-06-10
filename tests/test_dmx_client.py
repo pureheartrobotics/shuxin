@@ -172,6 +172,67 @@ def test_top_up_token_by_name_adds_remain_quota(monkeypatch) -> None:
     assert result["remain_yuan"] == 12.0
 
 
+def test_top_up_token_by_api_key_adds_remain_quota(monkeypatch) -> None:
+    monkeypatch.setenv("DMX_SYSTEM_TOKEN", "admin-token")
+    monkeypatch.setenv("DMX_API_USER_ID", "42")
+    monkeypatch.setenv("DMX_API_BASE_URL", "https://dmx.example")
+    put_body: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/token/key/sk-user-key":
+            return httpx.Response(200, json={"data": {"id": 77, "name": "demo-user"}})
+        if request.method == "GET" and request.url.path == "/api/token/77":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": 77,
+                        "name": "demo-user",
+                        "remain_quota": 0,
+                        "used_quota": 5_000_000,
+                        "unlimited_quota": False,
+                        "unlimited_count": True,
+                        "remain_count": 0,
+                        "expired_time": -1,
+                        "group": "default",
+                        "model_limits_enabled": False,
+                        "model_limits": "",
+                        "allow_ips": "",
+                        "exclude_ips": "",
+                    }
+                },
+            )
+        if request.method == "PUT" and request.url.path == "/api/token/":
+            put_body.append(json.loads(request.content.decode("utf-8")))
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "remain_quota": put_body[-1]["remain_quota"],
+                        "used_quota": 5_000_000,
+                        "unlimited_quota": False,
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def mock_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(dmx_client.httpx, "AsyncClient", mock_client)
+
+    result = asyncio.run(dmx_client.top_up_token_by_api_key(api_key="sk-user-key", add_yuan=10))
+    assert put_body[0]["remain_quota"] == 5_000_000
+    assert result["add_yuan"] == 10
+    assert result["remain_yuan"] == 10.0
+    assert result["exhausted"] is False
+
+
 def test_get_token_balance_parses_remain_yuan(monkeypatch) -> None:
     monkeypatch.setenv("DMX_API_USER_ID", "42")
     monkeypatch.setenv("DMX_API_BASE_URL", "https://dmx.example")

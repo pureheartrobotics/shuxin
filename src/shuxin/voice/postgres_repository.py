@@ -22,7 +22,7 @@ from shuxin.voice.dmx_client import (
     dmx_admin_configured,
     get_token_balance,
     merge_platform_llm_defaults,
-    top_up_token_by_name,
+    top_up_token_by_api_key,
     voice_test_mode_enabled,
 )
 
@@ -240,7 +240,7 @@ class VoicePostgresRepository:
         if not api_key:
             raise PermissionError("user has no DMX api_key; ask user to login first")
 
-        top_up_result = await top_up_token_by_name(name=selected_id, add_yuan=amount)
+        top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=amount)
         note_text = str(note or "").strip()
         if note_text:
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -804,11 +804,19 @@ class VoicePostgresRepository:
             await self._record_auth_failure(selected_code)
             raise PermissionError("invalid device secret")
 
+        user_id = str(row["user_id"])
+        await self.ensure_user_dmx_llm(user_id)
+        llm_row = await self.pool.fetchrow(
+            "SELECT llm_config FROM users WHERE user_id = $1 AND deleted_at IS NULL",
+            user_id,
+        )
+        llm_config = _json_obj(llm_row["llm_config"]) if llm_row else _json_obj(row["llm_config"])
+
         return UserSettings(
-            user_id=str(row["user_id"]),
+            user_id=user_id,
             token="",
             audio_quota_mb=int(row["audio_quota_mb"]),
-            llm_config=_json_obj(row["llm_config"]),
+            llm_config=llm_config,
             agent_id=str(row["agent_id"] or ""),
         )
 
