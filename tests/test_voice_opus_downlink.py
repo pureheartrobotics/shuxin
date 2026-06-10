@@ -33,6 +33,7 @@ def _make_downlink_session() -> _VoiceWebSocketSession:
     )
     session.audio_wire_format = "opus"
     session.hardware_session = True
+    session.client_id = "opus-smoke-client"
     session.sent_bytes: list[bytes] = []
     session.websocket.send_bytes = AsyncMock(
         side_effect=lambda data: session.sent_bytes.append(data)
@@ -66,6 +67,7 @@ def test_hardware_session_uses_opus_downlink_not_whole_mp3():
         pytest.skip("outputs/volc-demo.mp3 not found")
     session = _make_downlink_session()
     session.audio_wire_format = "pcm"
+    assert session._uses_opus_downlink()
 
     async def run() -> None:
         await session._send_opus_downlink_stream(VOLC_DEMO_MP3)
@@ -73,3 +75,37 @@ def test_hardware_session_uses_opus_downlink_not_whole_mp3():
     asyncio.run(run())
     assert len(session.sent_bytes) > 1
     assert not any(looks_like_mp3(packet) for packet in session.sent_bytes)
+
+
+def test_web_demo_uses_mp3_downlink_not_opus():
+    session = _make_downlink_session()
+    session.client_id = "web-demo"
+    session.hardware_session = True
+    session.audio_wire_format = "pcm"
+    assert not session._uses_opus_downlink()
+
+
+def test_send_downlink_bytes_chunks_large_binary_for_hardware():
+    session = _make_downlink_session()
+    session.client_id = "hw-client"
+    big = b"x" * 5000
+
+    async def run() -> None:
+        await session._send_downlink_bytes(big)
+
+    asyncio.run(run())
+    assert session.sent_bytes
+    assert all(len(chunk) <= SERVER_HARD_MAX for chunk in session.sent_bytes)
+    assert sum(len(chunk) for chunk in session.sent_bytes) == len(big)
+
+
+def test_send_downlink_bytes_web_demo_sends_whole_blob():
+    session = _make_downlink_session()
+    session.client_id = "web-demo"
+    payload = b"whole-mp3-blob"
+
+    async def run() -> None:
+        await session._send_downlink_bytes(payload)
+
+    asyncio.run(run())
+    assert session.sent_bytes == [payload]

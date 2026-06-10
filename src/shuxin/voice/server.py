@@ -10,6 +10,7 @@ import uuid
 import time
 from pathlib import Path
 
+from shuxin.core.agent import Agent
 from shuxin.core.config import get_shuxin_home
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
 from shuxin.voice.adapters import VoiceAdapterRegistry
@@ -953,9 +954,13 @@ class _VoiceWebSocketSession:
             )
             self.hardware_session = bool(data.get("device_code") or data.get("device_secret"))
             self.audio_params = _negotiate_audio_params(data.get("audio_params"))
-            if self.hardware_session and self.audio_params["format"] != "opus":
+            if (
+                self.hardware_session
+                and not self._is_web_demo_client()
+                and self.audio_params["format"] != "opus"
+            ):
                 logger.warning(
-                    "hardware session requested %s downlink; forcing opus",
+                    "hardware session requested %s wire format; forcing opus",
                     self.audio_params["format"],
                 )
                 self.audio_params = _negotiate_audio_params(
@@ -1183,6 +1188,17 @@ class _VoiceWebSocketSession:
 
             reply = "".join(reply_parts).strip()
             agent_ms = _elapsed_ms(agent_started)
+            if not reply and not error_kind:
+                error_kind = "empty_reply"
+                await self._send_json(
+                    {
+                        "type": "agent",
+                        "state": "error",
+                        "error_kind": error_kind,
+                        "elapsed_ms": agent_ms,
+                    }
+                )
+                reply = Agent._get_fallback_response()
             await self._send_json(
                 {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
             )
@@ -1478,10 +1494,10 @@ class _VoiceWebSocketSession:
         )
         sentence_started = time.perf_counter()
         speech_path = await self.tts.synthesize(text, output_path)
-        if self.audio_wire_format == "opus" or self.hardware_session:
+        if self._uses_opus_downlink():
             await self._send_opus_downlink_stream(speech_path)
         else:
-            await self.websocket.send_bytes(speech_path.read_bytes())
+            await self._send_downlink_bytes(speech_path.read_bytes())
         await self._send_json(
             {
                 "type": "tts",
@@ -1494,10 +1510,38 @@ class _VoiceWebSocketSession:
         )
         return speech_path
 
+    def _is_web_demo_client(self) -> bool:
+        return (self.client_id or "web-demo") == "web-demo"
+
+    def _uses_opus_downlink(self) -> bool:
+        if self._is_web_demo_client():
+            return False
+        return self.audio_wire_format == "opus" or self.hardware_session
+
+    async def _send_downlink_bytes(self, data: bytes) -> None:
+        """Chunk downlink binary for hardware (default 2KB, hard cap 4KB per frame)."""
+        if not data:
+            return
+        if self._is_web_demo_client():
+            await self.websocket.send_bytes(data)
+            return
+        chunk_size = _ws_downlink_max_bytes()
+        if len(data) > HARD_WS_DOWNLINK_MAX_BYTES:
+            logger.warning(
+                "downlink binary %d bytes exceeds %d; streaming in %d-byte chunks",
+                len(data),
+                HARD_WS_DOWNLINK_MAX_BYTES,
+                chunk_size,
+            )
+        yield_seconds = _ws_downlink_yield_seconds()
+        for offset in range(0, len(data), chunk_size):
+            await self.websocket.send_bytes(data[offset : offset + chunk_size])
+            if yield_seconds > 0:
+                await asyncio.sleep(yield_seconds)
+
     async def _send_opus_downlink_stream(self, mp3_path: Path) -> None:
         """Send one Opus packet per WebSocket binary frame (streamed transcoding)."""
         max_bytes = _ws_downlink_max_bytes()
-        yield_seconds = _ws_downlink_yield_seconds() if self.hardware_session else 0.0
         packet_count = 0
         for packet in iter_transcode_mp3_to_opus_frames(
             mp3_path,
@@ -1513,10 +1557,8 @@ class _VoiceWebSocketSession:
                     len(packet),
                     max_bytes,
                 )
-            await self.websocket.send_bytes(packet)
+            await self._send_downlink_bytes(packet)
             packet_count += 1
-            if yield_seconds > 0:
-                await asyncio.sleep(yield_seconds)
         if packet_count == 0:
             logger.warning("no opus packets produced for %s", mp3_path)
 
@@ -2969,13 +3011,22 @@ def _web_demo_html(default_device_id: str) -> str:
           client_id: clientInput.value || 'web-demo'
         }}));
       }};
-      ws.onclose = () => {{
+      ws.onclose = async () => {{
         statusEl.textContent = '已断开';
-        recordBtn.disabled = true;
+        recording = false;
+        startingRecording = false;
+        recordingRequested = false;
+        await cleanupAudio();
+        restoreReadyState();
         connectBtn.disabled = false;
       }};
-      ws.onerror = () => {{
+      ws.onerror = async () => {{
         log('WebSocket error');
+        recording = false;
+        startingRecording = false;
+        recordingRequested = false;
+        await cleanupAudio();
+        restoreReadyState();
         connectBtn.disabled = false;
       }};
       ws.onmessage = (event) => {{
@@ -3001,8 +3052,10 @@ def _web_demo_html(default_device_id: str) -> str:
           if (errText.includes('api_key')) {{
             log('LLM 未配置：请在 /admin 用户页为该绑定用户点击「配置 LLM」填写 API Key');
           }}
-          recordBtn.disabled = false;
-          recordBtn.textContent = '按住说话';
+          recording = false;
+          startingRecording = false;
+          recordingRequested = false;
+          restoreReadyState();
         }}
         if (msg.type === 'agent' && msg.state === 'error' && msg.error_kind) {{
           const picked = demoTargets[Number(testTargetSelect.value)];

@@ -260,6 +260,8 @@ exit
 
 这个测试用浏览器模拟未来硬件：浏览器麦克风采集 16k mono PCM16，通过 WebSocket 发给服务端，服务端完成 STT、Agent 回复和 TTS 播放。
 
+**线格式**：`client_id=web-demo` 时服务端保持 **PCM 上行 + 整段 MP3 下行**（浏览器 `Audio` 播放）。真实硬件须使用非 `web-demo` 的 `client_id`，协商 **Opus 上下行**，下行每 WebSocket 二进制帧 ≤4KB（`SHUXIN_WS_DOWNLINK_MAX_BYTES`，默认 2048）。勿将硬件 `client_id` 设为 `web-demo`。
+
 首次测试 streaming STT 前，下载模型到挂载目录：
 
 ```bash
