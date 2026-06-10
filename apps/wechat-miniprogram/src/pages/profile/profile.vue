@@ -15,6 +15,13 @@
       </view>
       <view class="row">
         <view>
+          <view class="label">账户余额</view>
+          <view class="value" :class="{ exhausted: quotaExhausted }">{{ balanceLabel }}</view>
+          <view v-if="quotaExhausted" class="hint">额度已用尽，请联系客服</view>
+        </view>
+      </view>
+      <view class="row">
+        <view>
           <view class="label">绑定设备</view>
           <view class="value">{{ deviceCount }} 台</view>
         </view>
@@ -35,8 +42,16 @@ const loading = ref(false);
 const message = ref("");
 const userId = ref("");
 const deviceCount = ref(0);
+const remainYuan = ref<number | null>(null);
+const quotaConfigured = ref(false);
+const quotaExhausted = ref(false);
 const loggedIn = computed(() => Boolean(sessionToken()));
 const maskedUserId = computed(() => maskUserId(userId.value || String(uni.getStorageSync("shuxin_user_id") || "")));
+const balanceLabel = computed(() => {
+  if (!quotaConfigured.value) return "—";
+  if (remainYuan.value == null) return "查询失败";
+  return `${remainYuan.value} 元`;
+});
 
 onShow(() => {
   loadProfile();
@@ -77,9 +92,18 @@ async function loadProfile() {
   loading.value = true;
   message.value = "";
   try {
-    const result = await request("/api/devices/my", { session_token: token });
-    userId.value = result.user_id || String(uni.getStorageSync("shuxin_user_id") || "");
-    deviceCount.value = (result.items || []).length;
+    const [devices, quota] = await Promise.all([
+      request("/api/devices/my", { session_token: token }),
+      request("/api/users/quota", { session_token: token })
+    ]);
+    userId.value = devices.user_id || String(uni.getStorageSync("shuxin_user_id") || "");
+    deviceCount.value = (devices.items || []).length;
+    quotaConfigured.value = Boolean(quota.configured);
+    quotaExhausted.value = Boolean(quota.exhausted);
+    remainYuan.value = quota.remain_yuan == null ? null : Number(quota.remain_yuan);
+    if (quotaExhausted.value && quota.message) {
+      message.value = quota.message;
+    }
   } catch (error) {
     message.value = error.message || String(error);
   } finally {
@@ -161,6 +185,16 @@ function maskUserId(value: string): string {
   color: #25211c;
   font-size: 32rpx;
   font-weight: 700;
+  margin-top: 8rpx;
+}
+
+.value.exhausted {
+  color: #9e3b35;
+}
+
+.hint {
+  color: #9e3b35;
+  font-size: 24rpx;
   margin-top: 8rpx;
 }
 

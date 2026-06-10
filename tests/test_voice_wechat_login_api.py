@@ -44,6 +44,9 @@ def test_device_routes_accept_session_token_while_keeping_wx_code(monkeypatch) -
             self.calls.append(("unbind_session", kwargs))
             return {"ok": True}
 
+        async def get_user_quota_by_session(self, session_token: str):
+            return {"configured": False, "exhausted": False}
+
     with TestClient(app) as client:
         fake = FakeRepo()
         app.state.repo = fake
@@ -106,3 +109,102 @@ def test_admin_next_sequence_route_requires_token_and_uses_repo(monkeypatch) -> 
         "next_device_id": "SX-000004",
     }
     assert fake.prefixes == ["SX"]
+
+
+def test_user_quota_route_uses_session_token(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
+    app = create_app()
+
+    class FakeRepo:
+        async def get_user_quota_by_session(self, session_token: str):
+            assert session_token == "app-session"
+            return {
+                "user_id": "wx_test",
+                "configured": True,
+                "remain_yuan": 8.5,
+                "used_yuan": 1.5,
+                "exhausted": False,
+                "message": "",
+            }
+
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        response = client.post("/api/users/quota", json={"session_token": "app-session"})
+
+    assert response.status_code == 200
+    assert response.json()["remain_yuan"] == 8.5
+
+
+def test_bind_device_rejects_exhausted_quota(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
+    app = create_app()
+
+    class FakeRepo:
+        async def get_user_quota_by_session(self, session_token: str):
+            return {"configured": True, "exhausted": True, "message": "额度已用尽，请联系客服"}
+
+        async def bind_device(self, **kwargs):
+            raise AssertionError("bind_device should not be called when quota is exhausted")
+
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        response = client.post(
+            "/api/devices/bind",
+            json={"session_token": "app-session", "claim_code": "CLM-A001-000001"},
+        )
+
+    assert response.status_code == 403
+    assert "联系客服" in response.json()["error"]
+
+
+def test_admin_platform_llm_defaults_route(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("SHUXIN_LLM_DEFAULT_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DMX_API_BASE_URL", "https://www.dmxapi.cn")
+    app = create_app()
+
+    with TestClient(app) as client:
+        forbidden = client.get("/admin/api/platform/llm-defaults")
+        ok = client.get(
+            "/admin/api/platform/llm-defaults",
+            headers={"X-Admin-Token": "admin-token"},
+        )
+
+    assert forbidden.status_code == 403
+    assert ok.status_code == 200
+    assert ok.json()["model"] == "deepseek-v4-flash"
+    assert ok.json()["base_url"] == "https://www.dmxapi.cn"
+
+
+def test_admin_quota_top_up_route(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_ADMIN_TOKEN", "admin-token")
+    app = create_app()
+
+    class FakeRepo:
+        async def top_up_user_dmx_quota(self, user_id: str, *, add_yuan: float, note: str = ""):
+            assert user_id == "wx_user_1"
+            assert add_yuan == 10
+            assert note == "wechat-pay-001"
+            return {
+                "user_id": user_id,
+                "configured": True,
+                "remain_yuan": 10.0,
+                "exhausted": False,
+                "add_yuan": 10,
+            }
+
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        forbidden = client.post(
+            "/admin/api/users/wx_user_1/quota/top-up",
+            json={"add_yuan": 10, "note": "wechat-pay-001"},
+        )
+        ok = client.post(
+            "/admin/api/users/wx_user_1/quota/top-up",
+            json={"add_yuan": 10, "note": "wechat-pay-001"},
+            headers={"X-Admin-Token": "admin-token"},
+        )
+
+    assert forbidden.status_code == 403
+    assert ok.status_code == 200
+    assert ok.json()["remain_yuan"] == 10.0

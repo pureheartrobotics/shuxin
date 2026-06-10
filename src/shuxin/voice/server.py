@@ -16,6 +16,11 @@ from shuxin.voice.adapters import VoiceAdapterRegistry
 from shuxin.voice.audio_files import AudioFileStore
 from shuxin.voice.barcode import decode_barcode_image_base64, generate_code128_png
 from shuxin.voice.config import DeviceConfigProvider, LLMDeviceConfig, merge_llm_device_config
+from shuxin.voice.dmx_client import (
+    QUOTA_EXHAUSTED_MESSAGE,
+    default_platform_llm_config,
+    voice_test_mode_enabled,
+)
 from shuxin.voice.db import PostgresDatabase
 from shuxin.voice.local_repository import VoiceLocalRepository
 from shuxin.voice.postgres_repository import VoicePostgresRepository
@@ -338,13 +343,31 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.post("/api/users/quota")
+    async def user_quota(request: Request):
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            if not session_token:
+                return JSONResponse({"error": "session_token is required"}, status_code=400)
+            return JSONResponse(await repo().get_user_quota_by_session(session_token))
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.post("/api/devices/bind")
     async def bind_device(request: Request):
         try:
             payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            if session_token:
+                quota = await repo().get_user_quota_by_session(session_token)
+                if quota.get("exhausted"):
+                    return JSONResponse({"error": QUOTA_EXHAUSTED_MESSAGE}, status_code=403)
             result = await repo().bind_device(
                 wx_code=str(payload.get("wx_code") or ""),
-                session_token=str(payload.get("session_token") or ""),
+                session_token=session_token,
                 claim_code=str(payload.get("claim_code") or ""),
                 device_code=str(payload.get("device_code") or ""),
             )
@@ -683,6 +706,39 @@ def create_app(
             return JSONResponse({"ok": True})
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/users/{user_id}/quota")
+    async def admin_user_quota(request: Request, user_id: str):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().get_user_quota_by_user_id(user_id))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/admin/api/users/{user_id}/quota/top-up")
+    async def admin_user_quota_top_up(request: Request, user_id: str):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(
+                await repo().top_up_user_dmx_quota(
+                    user_id,
+                    add_yuan=float(payload.get("add_yuan") or 0),
+                    note=str(payload.get("note") or ""),
+                )
+            )
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/platform/llm-defaults")
+    async def admin_platform_llm_defaults(request: Request):
+        try:
+            require_admin(request)
+            return JSONResponse(default_platform_llm_config())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
 
     @app.get("/admin/api/bindings")
     async def admin_list_bindings(request: Request, limit: int = 50, cursor: str = "", q: str = ""):
@@ -1519,6 +1575,8 @@ class _VoiceWebSocketSession:
                 self.user_settings.llm_config,
             )
         if self.agent is None:
+            if hasattr(self.repo, "assert_user_quota_available"):
+                await self.repo.assert_user_quota_available(self.user_id)
             if not self.device.llm.api_key:
                 raise ValueError("LLM api_key is not configured for this device/user")
             if is_tencent_realtime_stt(self.device.stt):
@@ -1555,6 +1613,18 @@ def _elapsed_ms(started: float) -> int:
 def _admin_html(authenticated: bool) -> str:
     """返回轻量后台页面；所有数据操作仍走 /admin/api。"""
     auth_state = "true" if authenticated else "false"
+    platform_llm = default_platform_llm_config()
+    platform_model = platform_llm.get("model", "deepseek-chat")
+    platform_base_url = platform_llm.get("base_url", "https://www.dmxapi.cn")
+    voice_test_mode = "true" if voice_test_mode_enabled() else "false"
+    users_test_hint = (
+        '<p class="hint" style="margin:0 0 12px;color:#9e3b35">'
+        "测试模式已开启（SHUXIN_VOICE_TEST_MODE=1）：删除用户将真删（解绑设备、清 DB 记忆），"
+        "便于验证 DMX 重新开通。"
+        "</p>"
+        if voice_test_mode == "true"
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1627,7 +1697,7 @@ def _admin_html(authenticated: bool) -> str:
     .table {{ display: grid; gap: 6px; overflow-x: auto; }}
     .table-row {{ display: grid; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }}
     .table-row > * {{ min-width: 0; }}
-    .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 90px 100px 100px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1100px; }}
+    .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 90px 120px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1020px; }}
     .table-row.bindings {{ grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }}
     .table-head {{ color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }}
     .login {{ max-width: 400px; margin: 72px auto 0; }}
@@ -1772,14 +1842,14 @@ def _admin_html(authenticated: bool) -> str:
           <h2>新增用户与模型配置</h2>
           <div class="form-row compact">
             <label><span class="hint">用户 ID</span><input id="newUserId" value="demo-user" /></label>
-            <label><span class="hint">Token 额度</span><input id="newTokenQuota" type="number" value="0" min="0" /></label>
-            <label><span class="hint">模型</span><input id="newModel" placeholder="deepseek-chat" /></label>
-            <label><span class="hint">Base URL</span><input id="newBaseUrl" placeholder="https://api.deepseek.com" /></label>
+            <label><span class="hint">模型</span><input id="newModel" placeholder="{platform_model}" /></label>
+            <label><span class="hint">Base URL</span><input id="newBaseUrl" placeholder="{platform_base_url}" /></label>
             <label><span class="hint">API Key</span><input id="newApiKey" type="password" placeholder="只保存，不回显" /></label>
           </div>
           <div class="toolbar" style="margin-top:12px"><button onclick="createUser()">保存用户</button></div>
         </div>
         <div class="panel">
+          {users_test_hint}
           <div class="toolbar" style="justify-content:space-between">
             <h2>用户与额度</h2>
             <div class="toolbar" style="margin-bottom:0">
@@ -1885,6 +1955,8 @@ def _admin_html(authenticated: bool) -> str:
   </div>
   <script>
     let authenticated = {auth_state};
+    const voiceTestMode = {voice_test_mode};
+    const platformLlmDefaults = {json.dumps(platform_llm, ensure_ascii=False)};
     let users = [];
     let agents = [];
     let devices = [];
@@ -1993,13 +2065,15 @@ def _admin_html(authenticated: bool) -> str:
       const u = users.find(item => item.user_id === userId);
       if (!u) return;
       const llm = u.llm_config || {{}};
+      const modelVal = llm.model || platformLlmDefaults.model || '';
+      const baseVal = llm.base_url || platformLlmDefaults.base_url || '';
       const keyHint = llmApiKeyConfigured(llm) ? '已配置，留空则不修改' : '未配置，请填写';
       const q = jsQuote(userId);
       openAdminModal({{
         title: `配置 LLM · ${{userId}}`,
         bodyHtml: `<div class="llm-form">
-          <label><span class="hint">模型</span><input id="llmModalModel" value="${{esc(llm.model || '')}}" placeholder="deepseek-chat" /></label>
-          <label><span class="hint">Base URL</span><input id="llmModalBaseUrl" type="url" value="${{esc(llm.base_url || '')}}" placeholder="https://api.deepseek.com" /></label>
+          <label><span class="hint">模型</span><input id="llmModalModel" value="${{esc(modelVal)}}" placeholder="${{esc(platformLlmDefaults.model || '')}}" /></label>
+          <label><span class="hint">Base URL</span><input id="llmModalBaseUrl" type="url" value="${{esc(baseVal)}}" placeholder="${{esc(platformLlmDefaults.base_url || '')}}" /></label>
           <label><span class="hint">API Key</span><input id="llmModalApiKey" type="password" placeholder="${{esc(keyHint)}}" autocomplete="off" /></label>
         </div>`,
         actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="saveUserLlmModal('${{q}}')">保存</button>`,
@@ -2374,7 +2448,7 @@ def _admin_html(authenticated: bool) -> str:
       const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
       users = data.items || [];
       listState.users.nextCursor = data.next_cursor || '';
-      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>Token额度</div><div>已用</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>DMX余额</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
         const q = jsQuote(u.user_id);
         const agentSel = `<select id="agent_${{esc(u.user_id)}}" onchange="saveUserAgent('${{q}}', this.value)">${{agentOptionsHtml(u.agent_id || 'shuxin')}}</select>`;
         return `<div class="table-row users">
@@ -2382,12 +2456,15 @@ def _admin_html(authenticated: bool) -> str:
           <div>${{agentSel}}</div>
           <input id="userEnabled_${{esc(u.user_id)}}" value="${{u.enabled ? 'true' : 'false'}}" />
           <input id="audio_${{esc(u.user_id)}}" type="number" min="1" value="${{u.audio_quota_mb || 512}}" />
-          <input id="quota_${{esc(u.user_id)}}" type="number" min="0" value="${{u.token_quota_total || 0}}" />
-          <input id="used_${{esc(u.user_id)}}" type="number" min="0" value="${{u.token_quota_used || 0}}" />
+          <div class="toolbar" style="margin-bottom:0">
+            <span id="dmxBalance_${{esc(u.user_id)}}" class="meta">—</span>
+            <button type="button" class="ghost" onclick="refreshUserQuota('${{q}}')">刷新</button>
+            <button type="button" class="secondary" onclick="openUserTopUpModal('${{q}}')">充值</button>
+          </div>
           <div>${{renderUserLlmStatus(u)}}</div>
           <div class="toolbar">
             <button class="secondary" onclick="openUserLlmModal('${{q}}')">配置 LLM</button>
-            <button class="secondary" onclick="saveUserRow('${{q}}')">更新额度</button>
+            <button class="secondary" onclick="saveUserRow('${{q}}')">保存</button>
             <button class="danger" onclick="deleteUser('${{q}}')">删除</button>
           </div>
         </div>`;
@@ -2440,7 +2517,7 @@ def _admin_html(authenticated: bool) -> str:
         return `
         <div class="item selectable ${{selectedUserId === u.user_id ? 'selected' : ''}}" onclick="selectUser('${{jsQuote(u.user_id)}}')">
           <div>
-            ${{renderClipCell(u.user_id, `音频 ${{u.audio_quota_mb}}MB · token ${{u.token_quota_used || 0}}/${{u.token_quota_total || 0}}${{modelHint}}`, '用户 ID', true)}}
+            ${{renderClipCell(u.user_id, `音频 ${{u.audio_quota_mb}}MB${{modelHint}}`, '用户 ID', true)}}
           </div>
           <span class="badge">${{bindings.filter(b => b.user_id === u.user_id && b.status === 'active').length}} 台</span>
         </div>`;
@@ -2565,9 +2642,65 @@ def _admin_html(authenticated: bool) -> str:
       if (!res.ok || data.error) alert(data.error || 'mbti update failed');
       await loadDevices();
     }}
+    function formatDmxBalance(quota) {{
+      if (!quota || !quota.configured) return '未配置 DMX';
+      if (quota.unlimited_quota) return '无限';
+      if (quota.remain_yuan == null) return '查询失败';
+      const suffix = quota.exhausted ? '（已用尽）' : '';
+      return `${{quota.remain_yuan}} 元${{suffix}}`;
+    }}
+    async function refreshUserQuota(userId) {{
+      const el = $('dmxBalance_' + userId);
+      if (el) el.textContent = '查询中…';
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId) + '/quota', {{headers: headers(), credentials:'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        if (el) el.textContent = data.error || '查询失败';
+        return;
+      }}
+      if (el) el.textContent = formatDmxBalance(data);
+    }}
+    function openUserTopUpModal(userId) {{
+      const q = jsQuote(userId);
+      openAdminModal({{
+        title: `DMX 充值 · ${{userId}}`,
+        bodyHtml: `<div class="llm-form">
+          <label><span class="hint">增加金额（元）</span><input id="topUpAmount" type="number" min="0.01" step="0.01" value="10" /></label>
+          <label><span class="hint">备注（可选）</span><input id="topUpNote" placeholder="微信收款单号等" /></label>
+          <p class="hint">增量充值：在当前 DMX 余额上增加指定金额。</p>
+        </div>`,
+        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="submitUserTopUp('${{q}}')">确认充值</button>`,
+      }});
+    }}
+    async function submitUserTopUp(userId) {{
+      const addYuan = Number(($('topUpAmount') && $('topUpAmount').value) || 0);
+      const note = ($('topUpNote') && $('topUpNote').value) || '';
+      if (!(addYuan > 0)) {{
+        $('adminModalMsg').textContent = '请输入大于 0 的充值金额';
+        return;
+      }}
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId) + '/quota/top-up', {{
+        method: 'POST',
+        headers: headers(),
+        credentials: 'same-origin',
+        body: JSON.stringify({{add_yuan: addYuan, note}}),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        $('adminModalMsg').textContent = data.error || '充值失败';
+        return;
+      }}
+      closeAdminModal();
+      await refreshUserQuota(userId);
+      alert(`充值成功：+${{addYuan}} 元，当前余额 ${{formatDmxBalance(data)}}`);
+    }}
     async function createUser() {{
-      const llm = {{model:$('newModel').value, base_url:$('newBaseUrl').value, api_key:$('newApiKey').value}};
-      const payload = {{user_id:$('newUserId').value, token_quota_total:Number($('newTokenQuota').value || 0), token_quota_used:0, audio_quota_mb:512, enabled:true, llm_config:llm}};
+      const llm = {{
+        model: $('newModel').value || platformLlmDefaults.model || '',
+        base_url: $('newBaseUrl').value || platformLlmDefaults.base_url || '',
+        api_key: $('newApiKey').value,
+      }};
+      const payload = {{user_id:$('newUserId').value, audio_quota_mb:512, enabled:true, llm_config:llm}};
       const res = await fetch('/admin/api/users', {{method:'POST', headers:headers(), body:JSON.stringify(payload)}});
       const data = await res.json();
       if (!res.ok || data.error) alert(data.error || 'save failed');
@@ -2577,8 +2710,6 @@ def _admin_html(authenticated: bool) -> str:
     async function saveUserRow(id) {{
       const payload = {{
         user_id:id,
-        token_quota_total:Number($('quota_' + id).value || 0),
-        token_quota_used:Number($('used_' + id).value || 0),
         audio_quota_mb:Number($('audio_' + id).value || 512),
         enabled:$('userEnabled_' + id).value !== 'false',
       }};
@@ -2602,7 +2733,16 @@ def _admin_html(authenticated: bool) -> str:
       alert('已解绑。用户刷新小程序后设备将从列表消失；可重新扫码绑定。');
       await Promise.all([loadBindings(), loadBindUsers(), loadBindDevices(), loadDevices()]);
     }}
-    async function deleteUser(id) {{ await fetch('/admin/api/users/' + encodeURIComponent(id), {{method:'DELETE'}}); await loadUsers(); }}
+    async function deleteUser(id) {{
+      const msg = voiceTestMode
+        ? `测试模式：将真删除用户 ${{id}}（解绑设备并清 DB 记忆），确认？`
+        : `确认删除用户 ${{id}}？（软删除，同一微信再登录可恢复旧配置）`;
+      if (!confirm(msg)) return;
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(id), {{method:'DELETE', headers: headers(), credentials:'same-origin'}});
+      const data = await res.json().catch(() => ({{}}));
+      if (!res.ok || data.error) alert(data.error || '删除失败');
+      await loadUsers();
+    }}
     async function callAdapter() {{
       const body = JSON.parse($('adapterPayload').value);
       const res = await fetch(`/admin/api/adapters/${{body.adapter_name}}/${{body.action}}`, {{method:'POST', headers:headers(), body:JSON.stringify(body.params || {{}})}});

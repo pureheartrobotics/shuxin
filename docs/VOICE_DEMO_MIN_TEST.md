@@ -906,6 +906,108 @@ docker run --rm -v "$(pwd)":/app -w /app -e PYTHONPATH=/app/src \
 
 验收：`manifest.json` 含 `profile: flash`、`sample_rate: 16000` 与全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
 
+## 19. DMX 额度与测试模式验收
+
+### 19.1 环境变量
+
+`.env` 至少配置：
+
+```bash
+DMX_SYSTEM_TOKEN=...
+DMX_API_USER_ID=...
+DMX_API_BASE_URL=https://www.dmxapi.cn
+SHUXIN_LLM_DEFAULT_MODEL=deepseek-v4-flash
+SHUXIN_VOICE_TEST_MODE=0   # 本地重测 DMX 开通时设为 1
+```
+
+Docker 部署改 `.env` 后须 `bash scripts/redeploy_docker.sh`（compose 已透传上述变量）。容器内验收：
+
+```bash
+docker exec shuxin-voice-demo-pg env | grep -E 'DMX_|SHUXIN_LLM_DEFAULT|SHUXIN_VOICE_TEST'
+```
+
+### 19.2 新用户 DMX 开通（mock 微信）
+
+```bash
+curl -s -X POST http://localhost:8765/api/wechat/login \
+  -H 'Content-Type: application/json' \
+  -d '{"wx_code":"dmx-test-unique-001"}' | jq .
+```
+
+记下 `user_id`、`session_token`，查 Postgres：
+
+```sql
+SELECT user_id,
+       llm_config->>'model' AS model,
+       llm_config->>'base_url' AS base_url,
+       left(llm_config->>'api_key', 10) AS key_prefix
+FROM users WHERE user_id = '<user_id>';
+```
+
+期望：`api_key` 以 `sk-` 开头；`model`/`base_url` 为环境默认。
+
+余额 API：
+
+```bash
+curl -s -X POST http://localhost:8765/api/users/quota \
+  -H 'Content-Type: application/json' \
+  -d '{"session_token":"<session_token>"}' | jq .
+```
+
+期望：`configured: true`，`remain_yuan` 约 `10`。
+
+Admin 刷新：`GET /admin/api/users/<user_id>/quota`（`X-Admin-Token`）。
+
+### 19.3 测试模式真删 vs 生产软删
+
+| `SHUXIN_VOICE_TEST_MODE` | Admin 删除用户 |
+|--------------------------|----------------|
+| `0`（生产） | 软删：同一微信再登录恢复旧 `llm_config` 与设备绑定 |
+| `1`（测试） | 真删：解绑设备、清 DB 记忆、`DELETE users`；再登录走全新 DMX 10 元开通 |
+
+本地重测 DMX 流程：
+
+1. `.env` 设 `SHUXIN_VOICE_TEST_MODE=1` 并重部署
+2. Admin 用户 Tab 应显示红色测试模式提示
+3. 删除自己的 `wx_` 用户 → 确认弹窗含「真删除」
+4. 小程序重新登录 → 绑定设备 → 查 `llm_config` 与 `/api/users/quota`
+5. 验收通过后改回 `SHUXIN_VOICE_TEST_MODE=0`
+
+**注意**：生产勿长期开启测试模式。软删后旧 `api_key` 存在时不会重复创建 DMX 令牌（设计如此）。
+
+### 19.4 孤儿令牌与 Key 未回写
+
+若 DMX 工作台已出现同名令牌，但 Admin 用户仍显示 `key=未配置`：
+
+1. 在 DMX 工作台 → 令牌，删除该用户同名且**剩余次数为 0** 的历史令牌（旧版本 bug 可能留下不可用令牌）。
+2. 本地设 `SHUXIN_VOICE_TEST_MODE=1`，Admin 真删用户后重新登录；或换新的 mock `wx_code` 测全新 `user_id`。
+3. 重登后查 DB：`llm_config->>'api_key'` 应以 `sk-` 开头；DMX 后台该令牌应为**次数无限、额度约 10 元**。
+4. 查看 voice 容器日志应含 `DMX provisioned token` 与 `DMX saved llm_config`。
+
+创建参数以 [DMX 创建令牌文档](https://doc.dmxapi.cn/Create_token.html) 为准：`unlimited_count=true`（次数无限），`remain_quota=10×500000`（10 元额度）。
+
+### 19.5 客服增量充值
+
+用户额度用尽后联系客服，Admin 操作：
+
+1. Admin → 用户 → 找到 `wx_` 用户 → **DMX余额 → 刷新** 确认已用尽
+2. 收款后点 **充值**，填写增加金额（元，默认 10）与可选备注
+3. 接口：`POST /admin/api/users/{user_id}/quota/top-up`，body `{"add_yuan":10,"note":"..."}`
+4. 再点 **刷新**，余额应增加；小程序「我的」刷新后同步
+5. 用户无需重绑设备，直接继续语音对话
+
+充值走 DMX [更新令牌 API](https://doc.dmxapi.cn/Update_token.html)（`remain_quota += add_yuan × 500000`）。`users.token_quota_*` 不参与计费。
+
+若 `key=未配置`，先让用户重新登录完成 DMX 开通，再充值。
+
+### 19.6 自动化
+
+```bash
+PYTHONPATH=src pytest tests/test_dmx_client.py tests/test_voice_wechat_login_api.py -q
+```
+
+（含 DMX 开通、增量充值 admin route 用例。）
+
 ## 15. 最终通过标准
 
 最小可测试单元通过标准：
