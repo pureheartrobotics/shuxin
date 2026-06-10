@@ -125,25 +125,6 @@ def _pick_latest_token_item(items: list[dict[str, Any]], name: str) -> dict[str,
     return sorted(matches, key=_token_sort_key, reverse=True)[0]
 
 
-def _pick_token_item_by_key(items: list[dict[str, Any]], api_key: str) -> dict[str, Any] | None:
-    selected = _normalize_api_key(api_key)
-    if not selected:
-        return None
-    matches = [
-        item
-        for item in items
-        if _normalize_api_key(str(item.get("key") or "")) == selected
-        and _is_usable_api_key(str(item.get("key") or ""))
-    ]
-    if not matches:
-        return None
-    return sorted(matches, key=_token_sort_key, reverse=True)[0]
-
-
-def is_usable_dmx_api_key(raw: str) -> bool:
-    return _is_usable_api_key(raw)
-
-
 async def _find_token_item_by_name(
     client: httpx.AsyncClient,
     name: str,
@@ -164,68 +145,6 @@ async def _find_token_item_by_name(
     )
     search_response.raise_for_status()
     return _pick_latest_token_item(_parse_token_items(search_response.json()), name)
-
-
-async def _find_token_item_by_key(
-    client: httpx.AsyncClient,
-    api_key: str,
-) -> dict[str, Any] | None:
-    list_response = await client.get(
-        f"{_dmx_api_root()}/api/token/",
-        headers=_admin_headers(),
-    )
-    list_response.raise_for_status()
-    selected = _pick_token_item_by_key(_parse_token_items(list_response.json()), api_key)
-    if selected is not None:
-        return selected
-
-    keyword = _normalize_api_key(api_key)
-    search_response = await client.get(
-        f"{_dmx_api_root()}/api/token/search",
-        headers=_admin_headers(),
-        params={"keyword": keyword[-8:] if len(keyword) > 8 else keyword},
-    )
-    search_response.raise_for_status()
-    return _pick_token_item_by_key(_parse_token_items(search_response.json()), api_key)
-
-
-async def _resolve_token_id_for_api_key(
-    client: httpx.AsyncClient,
-    api_key: str,
-) -> int:
-    selected = _normalize_api_key(api_key)
-    if not selected:
-        raise PermissionError("api_key is required for DMX top-up")
-    response = await client.get(
-        f"{_dmx_api_root()}/api/token/key/{selected}",
-        headers=_admin_headers(),
-    )
-    response.raise_for_status()
-    payload = response.json()
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    if isinstance(data, dict):
-        token_id = int(data.get("id") or 0)
-        if token_id > 0:
-            return token_id
-
-    item = await _find_token_item_by_key(client, api_key)
-    if item is not None:
-        token_id = int(item.get("id") or 0)
-        if token_id > 0:
-            return token_id
-
-    raise PermissionError("api_key is not a DMX user token")
-
-
-async def dmx_token_resolvable(api_key: str) -> bool:
-    if not dmx_admin_configured() or not _is_usable_api_key(api_key):
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            await _resolve_token_id_for_api_key(client, api_key)
-        return True
-    except PermissionError:
-        return False
 
 
 async def _get_token_record(client: httpx.AsyncClient, token_id: int) -> dict[str, Any]:
@@ -318,7 +237,21 @@ async def _get_token_record_by_api_key(
     client: httpx.AsyncClient,
     api_key: str,
 ) -> dict[str, Any]:
-    token_id = await _resolve_token_id_for_api_key(client, api_key)
+    selected = _normalize_api_key(api_key)
+    if not selected:
+        raise PermissionError("api_key is required for DMX top-up")
+    response = await client.get(
+        f"{_dmx_api_root()}/api/token/key/{selected}",
+        headers=_admin_headers(),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    if not isinstance(data, dict):
+        raise PermissionError("DMX token key lookup response is invalid")
+    token_id = int(data.get("id") or 0)
+    if token_id <= 0:
+        raise PermissionError("DMX token id is invalid for api_key lookup")
     return await _get_token_record(client, token_id)
 
 

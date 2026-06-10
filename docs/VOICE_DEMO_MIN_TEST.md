@@ -1000,26 +1000,7 @@ Admin 刷新：`GET /admin/api/users/<user_id>/quota`（`X-Admin-Token`）。
 
 若 `key=未配置`，先让用户重新登录完成 DMX 开通，再充值。
 
-若充值报 `token id is invalid for api_key lookup`：`demo-user` 等 Admin 手填了非 DMX 用户令牌时常见。处理：**配置 LLM → 清空 API Key → 保存**（自动开通），或代码会回退按 `user_id` 名充值。
-
-### 19.6 `demo-user` 与 Opus smoke test
-
-`python scripts/ws_opus_smoke_test.py` 依赖：
-
-1. **设备绑定**：Postgres 存在 `demo-user` ↔ `demo-device-001` 的 active binding（测试模式真删用户后会丢失）：
-
-```bash
-curl -s -H 'X-Admin-Token: dev-admin-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"user_id":"demo-user","device_id":"demo-device-001"}' \
-  http://localhost:8765/admin/api/bindings
-```
-
-2. **DMX 用户令牌**：勿在 Admin 为 `demo-user` 手填平台/环境变量里的 API Key；留空保存以触发 DMX 自动开通（见 §19.4）。
-
-3. 再执行：`python scripts/ws_opus_smoke_test.py`
-
-### 19.7 自动化
+### 19.6 自动化
 
 ```bash
 PYTHONPATH=src pytest tests/test_dmx_client.py tests/test_voice_wechat_login_api.py -q
