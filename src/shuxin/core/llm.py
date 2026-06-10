@@ -230,7 +230,9 @@ class OpenAIProvider(BaseLLMProvider):
             ) from e
 
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL", "")
+        self.base_url = _normalize_openai_base_url(
+            base_url or os.environ.get("OPENAI_BASE_URL", "")
+        )
         self.model = model
 
         client_kwargs: Dict[str, Any] = {
@@ -419,11 +421,32 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                if not chunk.choices:
+                    continue
+                piece = _openai_stream_delta_text(chunk.choices[0].delta)
+                if piece:
+                    yield piece
         except Exception as e:
             logger.error("LLM 流式调用失败 [model=%s]: %s", self.model, e)
             raise
+
+
+def _normalize_openai_base_url(base_url: str) -> str:
+    """Ensure OpenAI-compatible clients target the /v1 API prefix."""
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if url.endswith("/v1"):
+        return url
+    return f"{url}/v1"
+
+
+def _openai_stream_delta_text(delta: Any) -> str:
+    """Extract speakable text from OpenAI-compatible stream deltas."""
+    content = getattr(delta, "content", None) or ""
+    if content:
+        return content
+    return getattr(delta, "reasoning_content", None) or ""
 
 
 class AnthropicProvider(BaseLLMProvider):
