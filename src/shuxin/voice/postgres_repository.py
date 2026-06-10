@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timezone
 import hmac
 import json
+import logging
 import os
 import random
 import re
@@ -12,6 +13,20 @@ import secrets
 import uuid
 from pathlib import Path
 from typing import Any
+
+from shuxin.voice.dmx_client import (
+    DEFAULT_QUOTA_YUAN,
+    MAX_TOP_UP_YUAN,
+    QUOTA_EXHAUSTED_MESSAGE,
+    create_user_token,
+    dmx_admin_configured,
+    get_token_balance,
+    merge_platform_llm_defaults,
+    top_up_token_by_name,
+    voice_test_mode_enabled,
+)
+
+logger = logging.getLogger("shuxin.voice.postgres")
 
 import yaml
 
@@ -95,11 +110,162 @@ class VoicePostgresRepository:
                 json.dumps({"identity_provider": "wechat"}, ensure_ascii=False),
                 _hash_secret(session_token),
             )
-        return {
+        result = {
             "session_token": session_token,
             "expires_at": _dt(expires_at),
             "user_id": user_id,
         }
+        await self.ensure_user_dmx_llm(user_id)
+        return result
+
+    async def ensure_user_dmx_llm(self, user_id: str) -> None:
+        """Provision a per-user DMX API key on first login; fill platform LLM defaults."""
+        selected_id = validate_user_id(user_id)
+        if not dmx_admin_configured():
+            logger.info("DMX skip %s: admin credentials not configured", selected_id)
+            return
+        row = await self.pool.fetchrow(
+            "SELECT llm_config FROM users WHERE user_id = $1 AND deleted_at IS NULL",
+            selected_id,
+        )
+        if row is None:
+            logger.info("DMX skip %s: user row not found", selected_id)
+            return
+        llm_config = _json_obj(row["llm_config"])
+        api_key = str(llm_config.get("api_key") or "").strip()
+        if not api_key:
+            try:
+                api_key = await create_user_token(name=selected_id, quota_yuan=DEFAULT_QUOTA_YUAN)
+                logger.info("DMX provisioned token for %s", selected_id)
+            except Exception as exc:
+                logger.warning("DMX token provisioning failed for %s: %s", selected_id, exc)
+                return
+            llm_config["api_key"] = api_key
+        else:
+            logger.info("DMX skipped provision for %s: existing api_key", selected_id)
+        llm_config = merge_platform_llm_defaults(llm_config)
+        await self.pool.execute(
+            """
+            UPDATE users
+            SET llm_config = $2::jsonb, updated_at = now()
+            WHERE user_id = $1 AND deleted_at IS NULL
+            """,
+            selected_id,
+            json.dumps(llm_config, ensure_ascii=False),
+        )
+        logger.info("DMX saved llm_config for %s", selected_id)
+
+    async def get_user_quota_by_user_id(self, user_id: str) -> dict[str, Any]:
+        selected_id = validate_user_id(user_id)
+        row = await self.pool.fetchrow(
+            """
+            SELECT llm_config
+            FROM users
+            WHERE user_id = $1 AND enabled = true AND deleted_at IS NULL
+            """,
+            selected_id,
+        )
+        if row is None:
+            return {
+                "user_id": selected_id,
+                "configured": False,
+                "exhausted": False,
+                "remain_yuan": None,
+                "used_yuan": None,
+                "message": "",
+            }
+        api_key = str(_json_obj(row["llm_config"]).get("api_key") or "").strip()
+        if not api_key:
+            return {
+                "user_id": selected_id,
+                "configured": False,
+                "exhausted": False,
+                "remain_yuan": None,
+                "used_yuan": None,
+                "message": "",
+            }
+        try:
+            balance = await get_token_balance(api_key)
+        except Exception as exc:
+            logger.warning("DMX balance query failed for %s: %s", selected_id, exc)
+            balance = {
+                "configured": True,
+                "exhausted": False,
+                "remain_yuan": None,
+                "used_yuan": None,
+                "unlimited_quota": False,
+            }
+        exhausted = bool(balance.get("exhausted"))
+        return {
+            "user_id": selected_id,
+            **balance,
+            "message": QUOTA_EXHAUSTED_MESSAGE if exhausted else "",
+        }
+
+    async def get_user_quota_by_session(self, session_token: str) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+        return await self.get_user_quota_by_user_id(user_id)
+
+    async def assert_user_quota_available(self, user_id: str) -> None:
+        quota = await self.get_user_quota_by_user_id(user_id)
+        if quota.get("configured") and quota.get("exhausted"):
+            raise PermissionError(QUOTA_EXHAUSTED_MESSAGE)
+
+    async def top_up_user_dmx_quota(
+        self,
+        user_id: str,
+        *,
+        add_yuan: float,
+        note: str = "",
+    ) -> dict[str, Any]:
+        selected_id = validate_user_id(user_id)
+        amount = float(add_yuan)
+        if amount <= 0:
+            raise ValueError("add_yuan must be positive")
+        if amount > MAX_TOP_UP_YUAN:
+            raise ValueError(f"add_yuan must not exceed {MAX_TOP_UP_YUAN}")
+
+        row = await self.pool.fetchrow(
+            """
+            SELECT llm_config, quota_note
+            FROM users
+            WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+            """,
+            selected_id,
+        )
+        if row is None:
+            raise PermissionError("user is disabled or not found")
+        api_key = str(_json_obj(row["llm_config"]).get("api_key") or "").strip()
+        if not api_key:
+            raise PermissionError("user has no DMX api_key; ask user to login first")
+
+        top_up_result = await top_up_token_by_name(name=selected_id, add_yuan=amount)
+        note_text = str(note or "").strip()
+        if note_text:
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            line = f"{stamp} +{amount:g}元 {note_text}"
+            existing_note = str(row["quota_note"] or "").strip()
+            merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
+            await self.pool.execute(
+                """
+                UPDATE users
+                SET quota_note = $2, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                selected_id,
+                merged_note,
+            )
+
+        await self.audit(
+            "dmx_top_up",
+            "user",
+            selected_id,
+            {"add_yuan": amount, "note": note_text, **top_up_result},
+        )
+        quota = await self.get_user_quota_by_user_id(selected_id)
+        quota["add_yuan"] = amount
+        return quota
 
     async def provision_device(self, device_code: str) -> dict[str, Any]:
         """工厂烧录时登记设备，并生成只给用户扫码认领用的 claim_code。"""
@@ -369,7 +535,8 @@ class VoicePostgresRepository:
                         """,
                         claim_id,
                     )
-                return result
+        await self.ensure_user_dmx_llm(user_id)
+        return result
 
     async def _find_active_claim(self, conn, claim_code: str):
         selected_claim = _validate_claim_code(claim_code)
@@ -1845,12 +2012,18 @@ class VoicePostgresRepository:
 
     async def upsert_user(self, payload: dict[str, Any]) -> dict[str, Any]:
         user_id = validate_user_id(str(payload.get("user_id") or ""))
+        existing_row = await self.pool.fetchrow(
+            """
+            SELECT token, audio_quota_mb, token_quota_total, token_quota_used,
+                   quota_note, llm_config, enabled, metadata, agent_id
+            FROM users
+            WHERE user_id = $1
+            """,
+            user_id,
+        )
         llm_config = dict(payload.get("llm_config") or {})
         if not llm_config.get("api_key"):
-            existing_llm = await self.pool.fetchval(
-                "SELECT llm_config FROM users WHERE user_id = $1",
-                user_id,
-            )
+            existing_llm = existing_row["llm_config"] if existing_row else None
             llm_config = _merge_dict(_json_obj(existing_llm), llm_config)
         if not llm_config.get("api_key"):
             llm_config.pop("api_key", None)
@@ -1861,6 +2034,27 @@ class VoicePostgresRepository:
                 await self.get_agent(agent_id)
         else:
             agent_id = None
+        token_value = payload.get("token")
+        if token_value is None and existing_row is not None:
+            token_value = str(existing_row["token"] or "")
+        audio_quota_mb = payload.get("audio_quota_mb")
+        if audio_quota_mb is None:
+            audio_quota_mb = int(existing_row["audio_quota_mb"]) if existing_row else DEFAULT_AUDIO_QUOTA_MB
+        token_quota_total = payload.get("token_quota_total")
+        if token_quota_total is None:
+            token_quota_total = int(existing_row["token_quota_total"]) if existing_row else 0
+        token_quota_used = payload.get("token_quota_used")
+        if token_quota_used is None:
+            token_quota_used = int(existing_row["token_quota_used"]) if existing_row else 0
+        quota_note = payload.get("quota_note")
+        if quota_note is None:
+            quota_note = str(existing_row["quota_note"] or "") if existing_row else ""
+        enabled = payload.get("enabled")
+        if enabled is None:
+            enabled = bool(existing_row["enabled"]) if existing_row else True
+        metadata = payload.get("metadata")
+        if metadata is None:
+            metadata = _json_obj(existing_row["metadata"]) if existing_row else {}
         await self.pool.execute(
             """
             INSERT INTO users (
@@ -1882,21 +2076,106 @@ class VoicePostgresRepository:
                 deleted_at = NULL
             """,
             user_id,
-            str(payload.get("token") or ""),
-            int(payload.get("audio_quota_mb") or DEFAULT_AUDIO_QUOTA_MB),
-            max(0, int(payload.get("token_quota_total") or 0)),
-            max(0, int(payload.get("token_quota_used") or 0)),
-            str(payload.get("quota_note") or ""),
+            str(token_value or ""),
+            int(audio_quota_mb),
+            max(0, int(token_quota_total)),
+            max(0, int(token_quota_used)),
+            str(quota_note or ""),
             json.dumps(llm_config, ensure_ascii=False),
-            bool(payload.get("enabled", True)),
-            json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+            bool(enabled),
+            json.dumps(metadata or {}, ensure_ascii=False),
             agent_id,
         )
+        if not str(llm_config.get("api_key") or "").strip():
+            await self.ensure_user_dmx_llm(user_id)
         await self.audit("upsert_user", "user", user_id, _mask_secrets({**payload, "token": "***"}))
         return {"user_id": user_id}
 
+    async def hard_delete_user_for_test(self, user_id: str) -> None:
+        """测试模式真删：解绑设备、清理会话/记忆并删除 users 行。"""
+        selected_id = validate_user_id(user_id)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                active_bindings = await conn.fetch(
+                    """
+                    SELECT device_id
+                    FROM device_bindings
+                    WHERE user_id = $1 AND status = 'active'
+                    """,
+                    selected_id,
+                )
+                for row in active_bindings:
+                    device_id = str(row["device_id"])
+                    await conn.execute(
+                        """
+                        UPDATE device_bindings
+                        SET status = 'unbound', unbound_at = now()
+                        WHERE user_id = $1 AND device_id = $2 AND status = 'active'
+                        """,
+                        selected_id,
+                        device_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET status = 'provisioned', updated_at = now()
+                        WHERE device_id = $1
+                          AND NOT EXISTS (
+                            SELECT 1 FROM device_bindings
+                            WHERE device_id = $1 AND status = 'active'
+                          )
+                        """,
+                        device_id,
+                    )
+                    await self._restore_latest_claim_code(conn, device_id)
+
+                await conn.execute(
+                    "DELETE FROM conversation_events WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM audio_attachments WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM voice_sessions WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM wechat_sessions WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM shared_memory WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM user_facts WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM companion_state WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM device_bindings WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM device_binding_events WHERE user_id = $1",
+                    selected_id,
+                )
+                await conn.execute(
+                    "DELETE FROM users WHERE user_id = $1",
+                    selected_id,
+                )
+        await self.audit("hard_delete_user_test", "user", selected_id, {})
+
     async def soft_delete_user(self, user_id: str) -> None:
         selected_id = validate_user_id(user_id)
+        if voice_test_mode_enabled():
+            await self.hard_delete_user_for_test(selected_id)
+            return
         await self.pool.execute(
             "UPDATE users SET deleted_at = now(), enabled = false, updated_at = now() WHERE user_id = $1",
             selected_id,

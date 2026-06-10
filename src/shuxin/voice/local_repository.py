@@ -41,11 +41,45 @@ class VoiceLocalRepository:
             "user_id": user_id,
             "expires_at": expires_at.isoformat(),
         }
-        return {
+        result = {
             "session_token": token,
             "expires_at": expires_at.isoformat(),
             "user_id": user_id,
         }
+        await self.ensure_user_dmx_llm(user_id)
+        return result
+
+    async def ensure_user_dmx_llm(self, user_id: str) -> None:
+        return None
+
+    async def get_user_quota_by_user_id(self, user_id: str) -> dict[str, Any]:
+        return {
+            "user_id": user_id,
+            "configured": False,
+            "exhausted": False,
+            "remain_yuan": None,
+            "used_yuan": None,
+            "message": "",
+        }
+
+    async def get_user_quota_by_session(self, session_token: str) -> dict[str, Any]:
+        selected = str(session_token or "").strip()
+        session = self.wechat_sessions.get(selected)
+        if not session:
+            raise PermissionError("session_token is invalid or expired")
+        return await self.get_user_quota_by_user_id(session["user_id"])
+
+    async def assert_user_quota_available(self, user_id: str) -> None:
+        return None
+
+    async def top_up_user_dmx_quota(
+        self,
+        user_id: str,
+        *,
+        add_yuan: float,
+        note: str = "",
+    ) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for admin writes")
 
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         return self.user_provider.authenticate(user_id, token)
@@ -386,6 +420,9 @@ class VoiceLocalRepository:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
     async def upsert_user(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for admin writes")
+
+    async def hard_delete_user_for_test(self, user_id: str) -> None:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
     async def soft_delete_user(self, user_id: str) -> None:
