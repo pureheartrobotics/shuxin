@@ -12,6 +12,8 @@ from shuxin.voice.opus_codec import (
     decode_opus_packets,
     encode_pcm_to_opus_frames,
     extract_opus_packets_from_ogg,
+    iter_transcode_mp3_to_opus_frames,
+    looks_like_mp3,
     opus_available,
     transcode_mp3_to_opus_frames,
 )
@@ -76,3 +78,24 @@ def test_transcode_mp3_to_opus_frames_when_sample_exists():
     assert frames
     pcm = decode_opus_packets(frames, sample_rate=DOWNLINK_SAMPLE_RATE)
     assert len(pcm) > 0
+
+
+def test_iter_transcode_matches_batch_packet_count():
+    if not VOLC_DEMO_MP3.exists():
+        pytest.skip("outputs/volc-demo.mp3 not found")
+    batch = transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)
+    streamed = list(
+        iter_transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)
+    )
+    assert len(streamed) == len(batch)
+    assert streamed == batch
+
+
+def test_transcode_opus_packets_within_downlink_limit():
+    if not VOLC_DEMO_MP3.exists():
+        pytest.skip("outputs/volc-demo.mp3 not found")
+    frames = transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)
+    assert frames
+    for packet in frames:
+        assert len(packet) <= 4096
+        assert not looks_like_mp3(packet)

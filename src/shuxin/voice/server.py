@@ -25,8 +25,9 @@ from shuxin.voice.opus_codec import (
     DOWNLINK_SAMPLE_RATE,
     OpusStreamDecoder,
     UPLINK_SAMPLE_RATE,
+    iter_transcode_mp3_to_opus_frames,
+    looks_like_mp3,
     opus_available,
-    transcode_mp3_to_opus_frames,
 )
 from shuxin.voice.providers import create_stt_provider
 from shuxin.voice.agents import DEFAULT_AGENT_ID
@@ -56,7 +57,19 @@ MAX_STREAMING_TTS_CHARS = 48
 
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
+DEFAULT_WS_DOWNLINK_MAX_BYTES = 2048
+HARD_WS_DOWNLINK_MAX_BYTES = 4096
 logger = logging.getLogger("shuxin.voice.server")
+
+
+def _ws_downlink_max_bytes() -> int:
+    raw = int(os.environ.get("SHUXIN_WS_DOWNLINK_MAX_BYTES", DEFAULT_WS_DOWNLINK_MAX_BYTES))
+    return max(256, min(raw, HARD_WS_DOWNLINK_MAX_BYTES))
+
+
+def _ws_downlink_yield_seconds() -> float:
+    raw = float(os.environ.get("SHUXIN_WS_DOWNLINK_YIELD_MS", "0"))
+    return max(0.0, raw) / 1000.0
 
 
 def _negotiate_audio_params(client_params: dict | None) -> dict[str, int | str]:
@@ -797,6 +810,7 @@ class _VoiceWebSocketSession:
         self.audio_wire_format = "pcm"
         self.audio_params: dict[str, int | str] = _negotiate_audio_params(None)
         self.opus_uplink_decoder: OpusStreamDecoder | None = None
+        self.hardware_session = False
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -881,7 +895,16 @@ class _VoiceWebSocketSession:
                 online=True,
                 session_id=self.session_id,
             )
+            self.hardware_session = bool(data.get("device_code") or data.get("device_secret"))
             self.audio_params = _negotiate_audio_params(data.get("audio_params"))
+            if self.hardware_session and self.audio_params["format"] != "opus":
+                logger.warning(
+                    "hardware session requested %s downlink; forcing opus",
+                    self.audio_params["format"],
+                )
+                self.audio_params = _negotiate_audio_params(
+                    {"format": "opus", "frame_duration": self.audio_params["frame_duration"]}
+                )
             self.audio_wire_format = str(self.audio_params["format"])
             self.opus_uplink_decoder = None
             if self.audio_wire_format == "opus":
@@ -1399,14 +1422,8 @@ class _VoiceWebSocketSession:
         )
         sentence_started = time.perf_counter()
         speech_path = await self.tts.synthesize(text, output_path)
-        if self.audio_wire_format == "opus":
-            frames = transcode_mp3_to_opus_frames(
-                speech_path,
-                sample_rate=int(self.audio_params["downlink_sample_rate"]),
-                frame_duration_ms=int(self.audio_params["frame_duration"]),
-            )
-            for packet in frames:
-                await self.websocket.send_bytes(packet)
+        if self.audio_wire_format == "opus" or self.hardware_session:
+            await self._send_opus_downlink_stream(speech_path)
         else:
             await self.websocket.send_bytes(speech_path.read_bytes())
         await self._send_json(
@@ -1420,6 +1437,32 @@ class _VoiceWebSocketSession:
             }
         )
         return speech_path
+
+    async def _send_opus_downlink_stream(self, mp3_path: Path) -> None:
+        """Send one Opus packet per WebSocket binary frame (streamed transcoding)."""
+        max_bytes = _ws_downlink_max_bytes()
+        yield_seconds = _ws_downlink_yield_seconds() if self.hardware_session else 0.0
+        packet_count = 0
+        for packet in iter_transcode_mp3_to_opus_frames(
+            mp3_path,
+            sample_rate=int(self.audio_params["downlink_sample_rate"]),
+            frame_duration_ms=int(self.audio_params["frame_duration"]),
+        ):
+            if looks_like_mp3(packet):
+                logger.warning("downlink opus packet looks like mp3 header; skipping")
+                continue
+            if len(packet) > max_bytes:
+                logger.warning(
+                    "downlink opus packet %d bytes exceeds max %d",
+                    len(packet),
+                    max_bytes,
+                )
+            await self.websocket.send_bytes(packet)
+            packet_count += 1
+            if yield_seconds > 0:
+                await asyncio.sleep(yield_seconds)
+        if packet_count == 0:
+            logger.warning("no opus packets produced for %s", mp3_path)
 
     async def _start_realtime_asr_if_needed(self) -> None:
         """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""

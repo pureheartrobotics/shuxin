@@ -160,10 +160,19 @@ async def run_smoke(args: argparse.Namespace) -> int:
         print("ERROR: no downlink opus frames received", file=sys.stderr)
         return 1
 
+    max_packet_bytes = max(len(packet) for packet in downlink_packets)
+    if max_packet_bytes > 4096:
+        print(
+            f"ERROR: downlink packet too large: {max_packet_bytes} bytes (max 4096)",
+            file=sys.stderr,
+        )
+        return 1
+
     write_opus_packets_as_wav(downlink_packets, args.output, sample_rate=DOWNLINK_SAMPLE_RATE)
     print(f"STT: {stt_final!r}")
     print(f"Agent: {agent_reply!r}")
     print(f"Downlink opus frames: {len(downlink_packets)}")
+    print(f"Max downlink packet bytes: {max_packet_bytes}")
     print(f"WAV written: {args.output}")
     return 0
 

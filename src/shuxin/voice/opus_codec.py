@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import struct
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 DEFAULT_FRAME_DURATION_MS = 60
@@ -149,15 +150,14 @@ def _ffmpeg_binary() -> str:
     return ffmpeg
 
 
-def ffmpeg_pcm16_from_file(
+def _ffmpeg_pcm16_cmd(
     path: Path,
     *,
     sample_rate: int,
     channels: int = DEFAULT_CHANNELS,
-) -> bytes:
-    ffmpeg = _ffmpeg_binary()
-    cmd = [
-        ffmpeg,
+) -> list[str]:
+    return [
+        _ffmpeg_binary(),
         "-nostdin",
         "-hide_banner",
         "-loglevel",
@@ -174,7 +174,19 @@ def ffmpeg_pcm16_from_file(
         str(sample_rate),
         "pipe:1",
     ]
-    result = subprocess.run(cmd, check=True, capture_output=True)
+
+
+def ffmpeg_pcm16_from_file(
+    path: Path,
+    *,
+    sample_rate: int,
+    channels: int = DEFAULT_CHANNELS,
+) -> bytes:
+    result = subprocess.run(
+        _ffmpeg_pcm16_cmd(path, sample_rate=sample_rate, channels=channels),
+        check=True,
+        capture_output=True,
+    )
     return result.stdout
 
 
@@ -184,6 +196,38 @@ def extract_opus_packets_from_ogg(path: Path, *, sample_rate: int = UPLINK_SAMPL
     return encode_pcm_to_opus_frames(pcm, sample_rate=sample_rate)
 
 
+def iter_transcode_mp3_to_opus_frames(
+    mp3_path: Path,
+    *,
+    sample_rate: int = DOWNLINK_SAMPLE_RATE,
+    frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS,
+    bitrate: int | None = None,
+    pcm_read_size: int = 4096,
+) -> Iterator[bytes]:
+    """Stream MP3 through ffmpeg pipe and yield raw Opus packets without buffering all PCM."""
+    encoder = OpusStreamEncoder(
+        sample_rate=sample_rate,
+        frame_duration_ms=frame_duration_ms,
+        bitrate=bitrate,
+    )
+    cmd = _ffmpeg_pcm16_cmd(mp3_path, sample_rate=sample_rate)
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        assert proc.stdout is not None
+        while True:
+            pcm_chunk = proc.stdout.read(pcm_read_size)
+            if not pcm_chunk:
+                break
+            for packet in encoder.encode_chunk(pcm_chunk):
+                yield packet
+        stderr = proc.stderr.read() if proc.stderr is not None else b""
+        if proc.wait() != 0:
+            raise RuntimeError(
+                f"ffmpeg transcoding failed: {stderr.decode('utf-8', errors='replace')}"
+            )
+    for packet in encoder.encode_chunk(b"", end_of_stream=True):
+        yield packet
+
+
 def transcode_mp3_to_opus_frames(
     mp3_path: Path,
     *,
@@ -191,12 +235,13 @@ def transcode_mp3_to_opus_frames(
     frame_duration_ms: int = DEFAULT_FRAME_DURATION_MS,
     bitrate: int | None = None,
 ) -> list[bytes]:
-    pcm = ffmpeg_pcm16_from_file(mp3_path, sample_rate=sample_rate)
-    return encode_pcm_to_opus_frames(
-        pcm,
-        sample_rate=sample_rate,
-        frame_duration_ms=frame_duration_ms,
-        bitrate=bitrate,
+    return list(
+        iter_transcode_mp3_to_opus_frames(
+            mp3_path,
+            sample_rate=sample_rate,
+            frame_duration_ms=frame_duration_ms,
+            bitrate=bitrate,
+        )
     )
 
 

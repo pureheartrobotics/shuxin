@@ -262,15 +262,22 @@ Agent 完整回复：
 
 每句 TTS 在 `tts/sentence_start` 与 `tts/sentence_stop` 之间发送音频：
 
-- **Opus 模式**：多帧 raw Opus packet（24 kHz / 60 ms），每帧一条 binary 消息
-- **PCM 兼容模式**：整段 mp3 字节（单条 binary）
+- **Opus 模式（硬件必须）**：多帧 raw Opus packet（24 kHz / 60 ms），**每帧一条** WebSocket binary 消息；服务端流式转码，边编码边下发，不会把整句 mp3 塞进一条 binary。
+- **PCM 兼容模式**：整段 mp3 字节（单条 binary），仅浏览器 Web 测试台使用。
 
 ```text
-<opus packet bytes> ...   # format=opus，sentence_start/stop 之间
-<mp3 audio bytes>         # format=pcm 或未声明 audio_params
+<opus packet bytes> ...   # format=opus，sentence_start/stop 之间，逐包流式
+<mp3 audio bytes>         # format=pcm，Web 测试台整段 mp3
 ```
 
-Opus 模式下固件应逐帧解码播放；mp3 模式可缓存整段后播放。
+硬件固件应逐帧解码播放。每条下行 binary 对应 **一个** Opus packet，典型 1–2 KB，**不得超过 4 KB**。带 `device_secret` 的 hello 即使未声明 `audio_params`，服务端也会 **强制 Opus 下行**。
+
+可选环境变量（Docker `.env`）：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SHUXIN_WS_DOWNLINK_MAX_BYTES` | `2048` | 单包告警阈值（上限 4096）；Opus 包不可分割 |
+| `SHUXIN_WS_DOWNLINK_YIELD_MS` | `0` | 硬件会话每发一包后的 `asyncio.sleep` 毫秒数，缓解 ESP32 接收队列积压 |
 
 ## 7. 微信小程序绑定
 
