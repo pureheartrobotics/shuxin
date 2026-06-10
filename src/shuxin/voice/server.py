@@ -77,6 +77,14 @@ def _ws_downlink_yield_seconds() -> float:
     return max(0.0, raw) / 1000.0
 
 
+def _skip_quota_check() -> bool:
+    return os.environ.get("SHUXIN_VOICE_SKIP_QUOTA_CHECK", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _negotiate_audio_params(client_params: dict | None) -> dict[str, int | str]:
     params = client_params if isinstance(client_params, dict) else {}
     fmt = str(params.get("format") or "pcm").strip().lower()
@@ -1109,6 +1117,7 @@ class _VoiceWebSocketSession:
             sentence_index = 0
             allow_weak_punctuation = True
 
+            await self._assert_llm_quota()
             await self._send_json({"type": "agent", "state": "thinking"})
             if self.agent is not None:
                 self.agent.context.metadata.pop("llm_error_kind", None)
@@ -1264,6 +1273,7 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "stt", "state": "final", "text": text, "elapsed_ms": 0})
 
             agent_started = time.perf_counter()
+            await self._assert_llm_quota()
             await self._send_json({"type": "agent", "state": "thinking"})
             loop = asyncio.get_event_loop()
             reply = await loop.run_in_executor(None, lambda: self.agent.chat(text).strip())
@@ -1478,10 +1488,10 @@ class _VoiceWebSocketSession:
         )
         sentence_started = time.perf_counter()
         speech_path = await self.tts.synthesize(text, output_path)
-        if self.audio_wire_format == "opus" or self.hardware_session:
+        if self._uses_opus_downlink():
             await self._send_opus_downlink_stream(speech_path)
         else:
-            await self.websocket.send_bytes(speech_path.read_bytes())
+            await self._send_downlink_bytes(speech_path.read_bytes())
         await self._send_json(
             {
                 "type": "tts",
@@ -1494,10 +1504,46 @@ class _VoiceWebSocketSession:
         )
         return speech_path
 
+    def _uses_opus_downlink(self) -> bool:
+        client_id = self.client_id or "web-demo"
+        return (
+            self.audio_wire_format == "opus"
+            or self.hardware_session
+            or client_id != "web-demo"
+        )
+
+    async def _assert_llm_quota(self) -> None:
+        if _skip_quota_check():
+            return
+        if hasattr(self.repo, "assert_user_quota_available"):
+            await self.repo.assert_user_quota_available(self.user_id)
+
+    async def _send_downlink_bytes(self, data: bytes) -> None:
+        """Chunk downlink binary for hardware (default 2KB, hard cap 4KB per frame)."""
+        if not data:
+            return
+        client_id = self.client_id or "web-demo"
+        use_chunks = self.hardware_session or client_id != "web-demo"
+        if not use_chunks:
+            await self.websocket.send_bytes(data)
+            return
+        chunk_size = _ws_downlink_max_bytes()
+        if len(data) > HARD_WS_DOWNLINK_MAX_BYTES:
+            logger.warning(
+                "downlink binary %d bytes exceeds %d; streaming in %d-byte chunks",
+                len(data),
+                HARD_WS_DOWNLINK_MAX_BYTES,
+                chunk_size,
+            )
+        yield_seconds = _ws_downlink_yield_seconds()
+        for offset in range(0, len(data), chunk_size):
+            await self.websocket.send_bytes(data[offset : offset + chunk_size])
+            if yield_seconds > 0:
+                await asyncio.sleep(yield_seconds)
+
     async def _send_opus_downlink_stream(self, mp3_path: Path) -> None:
         """Send one Opus packet per WebSocket binary frame (streamed transcoding)."""
         max_bytes = _ws_downlink_max_bytes()
-        yield_seconds = _ws_downlink_yield_seconds() if self.hardware_session else 0.0
         packet_count = 0
         for packet in iter_transcode_mp3_to_opus_frames(
             mp3_path,
@@ -1513,18 +1559,18 @@ class _VoiceWebSocketSession:
                     len(packet),
                     max_bytes,
                 )
-            await self.websocket.send_bytes(packet)
+            await self._send_downlink_bytes(packet)
             packet_count += 1
-            if yield_seconds > 0:
-                await asyncio.sleep(yield_seconds)
         if packet_count == 0:
             logger.warning("no opus packets produced for %s", mp3_path)
 
     async def _start_realtime_asr_if_needed(self) -> None:
         """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
-        await self._ensure_runtime()
+        if self.device is None:
+            self.device = await self.repo.get_device(self.device_id)
         if self.device is None or not is_tencent_realtime_stt(self.device.stt):
             return
+        await self._ensure_runtime()
         if self.realtime_asr is not None:
             await self.realtime_asr.close()
         self.realtime_stt_started = time.perf_counter()
@@ -1575,8 +1621,6 @@ class _VoiceWebSocketSession:
                 self.user_settings.llm_config,
             )
         if self.agent is None:
-            if hasattr(self.repo, "assert_user_quota_available"):
-                await self.repo.assert_user_quota_available(self.user_id)
             if not self.device.llm.api_key:
                 raise ValueError("LLM api_key is not configured for this device/user")
             if is_tencent_realtime_stt(self.device.stt):

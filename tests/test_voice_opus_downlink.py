@@ -73,3 +73,24 @@ def test_hardware_session_uses_opus_downlink_not_whole_mp3():
     asyncio.run(run())
     assert len(session.sent_bytes) > 1
     assert not any(looks_like_mp3(packet) for packet in session.sent_bytes)
+
+
+def test_send_downlink_bytes_chunks_large_blob_for_hardware():
+    session = _make_downlink_session()
+    blob = b"x" * 9000
+
+    async def run() -> None:
+        await session._send_downlink_bytes(blob)
+
+    asyncio.run(run())
+    assert len(session.sent_bytes) > 1
+    assert sum(len(chunk) for chunk in session.sent_bytes) == len(blob)
+    assert all(len(chunk) <= SERVER_HARD_MAX for chunk in session.sent_bytes)
+
+
+def test_uses_opus_downlink_for_non_web_demo_client():
+    session = _make_downlink_session()
+    session.client_id = "opus-smoke-client"
+    session.hardware_session = False
+    session.audio_wire_format = "pcm"
+    assert session._uses_opus_downlink()

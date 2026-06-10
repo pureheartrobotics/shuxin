@@ -103,8 +103,15 @@ async def run_smoke(args: argparse.Namespace) -> int:
             return 1
 
         await ws.send(json.dumps({"type": "listen", "state": "start"}))
-        ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=args.timeout))
-        print("listen:", ack)
+        listen_ok = False
+        while not listen_ok:
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=args.timeout))
+            print("listen phase:", ack)
+            if ack.get("type") == "error":
+                print("ERROR: listen start failed:", ack, file=sys.stderr)
+                return 1
+            if ack.get("type") == "listen" and ack.get("state") == "start":
+                listen_ok = True
 
         for index, packet in enumerate(uplink_frames, start=1):
             await ws.send(packet)
