@@ -20,9 +20,12 @@ from shuxin.voice.dmx_client import (
     QUOTA_EXHAUSTED_MESSAGE,
     create_user_token,
     dmx_admin_configured,
+    dmx_token_resolvable,
     get_token_balance,
+    is_usable_dmx_api_key,
     merge_platform_llm_defaults,
     top_up_token_by_api_key,
+    top_up_token_by_name,
     voice_test_mode_enabled,
 )
 
@@ -240,7 +243,19 @@ class VoicePostgresRepository:
         if not api_key:
             raise PermissionError("user has no DMX api_key; ask user to login first")
 
-        top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=amount)
+        try:
+            top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=amount)
+        except PermissionError as exc:
+            message = str(exc)
+            if "api_key is not a DMX user token" in message or "invalid for api_key" in message:
+                logger.warning(
+                    "DMX top-up by api_key failed for %s (%s); falling back to name",
+                    selected_id,
+                    message,
+                )
+                top_up_result = await top_up_token_by_name(name=selected_id, add_yuan=amount)
+            else:
+                raise
         note_text = str(note or "").strip()
         if note_text:
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -2035,6 +2050,11 @@ class VoicePostgresRepository:
             llm_config = _merge_dict(_json_obj(existing_llm), llm_config)
         if not llm_config.get("api_key"):
             llm_config.pop("api_key", None)
+        api_key_raw = str(llm_config.get("api_key") or "").strip()
+        if api_key_raw and not is_usable_dmx_api_key(api_key_raw):
+            raise ValueError(
+                "LLM api_key is masked or invalid; leave empty to auto-provision a DMX user token"
+            )
         agent_id = payload.get("agent_id")
         if agent_id is not None:
             agent_id = str(agent_id).strip() or None
@@ -2094,7 +2114,22 @@ class VoicePostgresRepository:
             json.dumps(metadata or {}, ensure_ascii=False),
             agent_id,
         )
-        if not str(llm_config.get("api_key") or "").strip():
+        saved_api_key = str(llm_config.get("api_key") or "").strip()
+        if not saved_api_key:
+            await self.ensure_user_dmx_llm(user_id)
+        elif dmx_admin_configured() and not await dmx_token_resolvable(saved_api_key):
+            logger.warning("invalid DMX api_key for %s; reprovisioning token", user_id)
+            reprovision_config = merge_platform_llm_defaults(dict(llm_config))
+            reprovision_config.pop("api_key", None)
+            await self.pool.execute(
+                """
+                UPDATE users
+                SET llm_config = $2::jsonb, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+                json.dumps(reprovision_config, ensure_ascii=False),
+            )
             await self.ensure_user_dmx_llm(user_id)
         await self.audit("upsert_user", "user", user_id, _mask_secrets({**payload, "token": "***"}))
         return {"user_id": user_id}
