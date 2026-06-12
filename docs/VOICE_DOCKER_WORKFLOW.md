@@ -5,21 +5,22 @@
 ## 原则
 
 1. **仅 Docker**：构建、重部署、生成试听候选、跑 voice 服务，均通过 `bash scripts/redeploy_docker.sh` 或 `docker exec shuxin-voice-demo-pg ...`。
-2. **新依赖须先批准**：新增或升级 Python 包（改 `requirements-voice-heavy.txt` / `requirements-voice-app.txt`）或 apt 包（改 `Dockerfile`）前，须说明用途与所在层，**征得维护者同意后再改**。
-3. **两层 pip + 一个镜像**：全部依赖预装在 `shuxin-voice-demo:latest`；compose 里不同服务可共用同一镜像、不同 `command`。
+2. **新依赖须先批准**：新增或升级 Python 包（改 `requirements-voice-heavy.txt` / `requirements-voice-app.txt`）或 apt 包（改 `Dockerfile` 首层 `apt-get install`）前，须说明用途与所在层，**征得维护者同意后再改**。
+3. **两层 pip + apt + 一个镜像**：全部依赖预装在 `shuxin-voice-demo:latest`；compose 里不同服务可共用同一镜像、不同 `command`。
 
 ## 依赖层（Docker tier）
 
 | 层 ID | 文件 | 内容 | rebuild 量级 |
 |-------|------|------|----------------|
-| voice-heavy | `requirements-voice-heavy.txt` | numpy、pydub、soundfile、torch、funasr、modelscope | **重**（极少改） |
+| voice-heavy | `requirements-voice-heavy.txt` + Dockerfile | numpy、pydub、soundfile、torch（CPU wheel）、funasr、modelscope | **重**（极少改） |
 | voice-app | `requirements-voice-app.txt` | mem0、librosa、edge-tts、Agent 核心、FastAPI、websockets、Opus、设备绑定等 | 轻–中（日常改） |
+| apt | `Dockerfile` 首层 | `ffmpeg`（MP3→PCM，硬件 Opus 下行） | **轻**（~100MB apt，不重 pip） |
 
-Dockerfile 安装顺序：**heavy** → **app** → 应用代码。
+Dockerfile 安装顺序：**apt（含 ffmpeg）** → **heavy** → **app** → 应用代码。
 
-`requirements-voice-stack.txt` = `-r heavy` + `-r app`，供本机一次性安装或文档引用。
+`requirements-voice-stack.txt` = `-r heavy` + `-r app`，供本机一次性安装或文档引用（不含 apt 层）。
 
-`scripts/redeploy_docker.sh` 按上述两个文件 hash 决定是否 `docker compose build`；日志例如 `依赖 tier 变更: app(voice-app)`。改 app 层 **不会** 重下 torch。
+`scripts/redeploy_docker.sh` 默认 `docker compose build`，依赖 Docker 层缓存；`--skip-build` 仅重启容器，`--build` 全量 `--no-cache`。改 app/apt 层 **不会** 重下 torch。
 
 ### 新包写入哪一层？
 
@@ -32,8 +33,9 @@ Dockerfile 安装顺序：**heavy** → **app** → 应用代码。
 | 微信 / 腾讯 / WS / Opus 硬件联调 | `requirements-voice-app.txt` | voice-cloud |
 | Mem0 / Qdrant 客户端 | `requirements-voice-app.txt` | voice-memory |
 | Karen DSP / librosa | `requirements-voice-app.txt` | voice-fx |
+| 硬件 TTS MP3→Opus 转码 | `Dockerfile` apt 层 | apt（非 pip） |
 
-本机一次性安装全部语音依赖：`pip install -r requirements-voice-stack.txt`。
+本机一次性安装全部语音依赖：`pip install -r requirements-voice-stack.txt`（ffmpeg 仍需系统 apt 或 Docker 镜像内 apt 层）。
 
 ## 常用命令
 
@@ -86,6 +88,7 @@ docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
 |----|------|------|------|
 | librosa | 0.10.2 | `requirements-voice-app.txt` | Karen DSP 音调平坦化 |
 | opuslib_next | 1.1.5 | `requirements-voice-app.txt` | 硬件 WebSocket Opus |
+| ffmpeg | Bookworm 5.1.x | `Dockerfile` apt 层 | 硬件下行 MP3→PCM→Opus |
 
 ## 相关文档
 

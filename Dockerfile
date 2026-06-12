@@ -16,6 +16,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     build-essential \
     gcc \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
@@ -36,7 +37,12 @@ WORKDIR /app
 COPY requirements-voice-heavy.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements-voice-heavy.txt && \
+    pip install torch==2.2.2+cpu torchaudio==2.2.2+cpu \
+      -i https://mirrors.aliyun.com/pypi/simple/ \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      --trusted-host mirrors.aliyun.com \
+      --trusted-host download.pytorch.org && \
+      pip install --progress-bar on -r requirements-voice-heavy.txt -v && \
     find /usr/local/lib/python3.11/site-packages -type d -name tests -prune -exec rm -rf {} + && \
     find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
@@ -47,11 +53,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     find /usr/local/lib/python3.11/site-packages -type d -name tests -prune -exec rm -rf {} + && \
     find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
+
 COPY pyproject.toml README.md SOUL.md ./
 COPY src ./src
 COPY scripts ./scripts
 
 RUN pip install --no-cache-dir --no-deps -e . \
  && mkdir -p /app/data /app/models /app/samples /app/outputs
+
+
 
 CMD ["python", "-m", "shuxin.voice.cli", "--help"]

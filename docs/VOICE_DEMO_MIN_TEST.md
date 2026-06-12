@@ -871,6 +871,7 @@ docker exec shuxin-voice-demo-pg python scripts/ws_opus_smoke_test.py \
 | 现象 | 排查 |
 |------|------|
 | `opus support requires opuslib_next` | `bash scripts/redeploy_docker.sh`（检查 `requirements-voice-app.txt`） |
+| `ffmpeg is required for audio transcoding` | `bash scripts/redeploy_docker.sh`（检查 `Dockerfile` apt 层 ffmpeg）；验收 `docker exec shuxin-voice-demo-pg ffmpeg -version` |
 | `invalid device secret` / 未绑定 | §9 设备绑定与 `SHUXIN_DEVICE_SHARED_SECRET` |
 | 下行仍是 mp3 | `hello` 未带 `audio_params.format=opus` |
 | `no stt/final` | 腾讯 STT 凭证或 `activation.ogg` 内容过短 |

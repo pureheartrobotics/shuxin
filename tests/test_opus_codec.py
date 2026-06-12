@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,8 @@ def test_opus_stream_encoder_decoder_single_frame():
 
 
 def test_transcode_mp3_to_opus_frames_when_sample_exists():
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
     if not VOLC_DEMO_MP3.exists():
         pytest.skip("outputs/volc-demo.mp3 not found")
     frames = transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)
@@ -81,6 +84,8 @@ def test_transcode_mp3_to_opus_frames_when_sample_exists():
 
 
 def test_iter_transcode_matches_batch_packet_count():
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
     if not VOLC_DEMO_MP3.exists():
         pytest.skip("outputs/volc-demo.mp3 not found")
     batch = transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)
@@ -92,6 +97,8 @@ def test_iter_transcode_matches_batch_packet_count():
 
 
 def test_transcode_opus_packets_within_downlink_limit():
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
     if not VOLC_DEMO_MP3.exists():
         pytest.skip("outputs/volc-demo.mp3 not found")
     frames = transcode_mp3_to_opus_frames(VOLC_DEMO_MP3, sample_rate=DOWNLINK_SAMPLE_RATE)

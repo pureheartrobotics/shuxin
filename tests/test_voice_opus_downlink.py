@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -47,6 +48,8 @@ def test_ws_downlink_max_bytes_clamped():
 
 @pytest.mark.skipif(not opus_available(), reason="opuslib_next not installed")
 def test_send_opus_downlink_stream_multiple_small_frames():
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
     if not VOLC_DEMO_MP3.exists():
         pytest.skip("outputs/volc-demo.mp3 not found")
     session = _make_downlink_session()
@@ -63,6 +66,8 @@ def test_send_opus_downlink_stream_multiple_small_frames():
 
 @pytest.mark.skipif(not opus_available(), reason="opuslib_next not installed")
 def test_hardware_session_uses_opus_downlink_not_whole_mp3():
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
     if not VOLC_DEMO_MP3.exists():
         pytest.skip("outputs/volc-demo.mp3 not found")
     session = _make_downlink_session()

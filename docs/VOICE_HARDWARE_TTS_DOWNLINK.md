@@ -12,7 +12,7 @@
 
 | 不需要 | 原因 |
 |--------|------|
-| **ffmpeg** | MP3 转 Opus 在 **舒心 Docker 服务端** 内完成，与 ESP32 无关 |
+| **ffmpeg** | MP3 转 Opus 在 **舒心 Docker 服务端** 内完成（[`Dockerfile`](../Dockerfile) apt 层），与 ESP32 无关 |
 | **火山 / 豆包 API Key** | 服务端代调，固件只连 WebSocket |
 | **MP3 解码器（下行）** | 下行永远是 **裸 Opus packet**，不是 MP3、不是 Ogg 文件 |
 | **直连互联网语音云** | 所有合成经 `ws://<host>:8765/ws/voice` |
@@ -139,7 +139,7 @@ sequenceDiagram
 | 有 `sentence_start` 无声音 | Opus 解码采样率是否 24 kHz；是否在等 MP3 | 火山 Key、音色、`VOLCENGINE_TTS_*` |
 | 完全没有 `tts/start` | 是否已收到 `agent/delta` / `agent/reply` | LLM 是否空回复、`error_kind` |
 | `hello` 报 opus | — | Docker 缺 `opuslib_next`，需 redeploy |
-| 误装 ffmpeg | **不需要**，删掉相关依赖即可 | — |
+| 误装 ffmpeg | **不需要**，删掉相关依赖即可 | 服务端缺 ffmpeg：`bash scripts/redeploy_docker.sh`（检查 `Dockerfile` apt 层） |
 
 ---
 
