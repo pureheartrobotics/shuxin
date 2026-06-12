@@ -112,7 +112,7 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 ### 语音 Docker 运维脚本
 
 - **Docker 内开发与 TTS 试听**（不在宿主机 pip 装包；新依赖须先批准）：[`docs/VOICE_DOCKER_WORKFLOW.md`](docs/VOICE_DOCKER_WORKFLOW.md)。
-- `scripts/redeploy_docker.sh`：日常重部署；Compose 项目名固定为 `shuxin`（`docker compose -p shuxin`）。
+- `scripts/redeploy_docker.sh`：日常重部署；默认 `compose build`（Docker 层缓存）；`--skip-build` 仅重启；`--build` 全量 `--no-cache`。Compose 项目名固定为 `shuxin`（`docker compose -p shuxin`）。
 - `scripts/export_pack.sh` / `scripts/import_deploy.sh`：环境迁移（代码、bind mount、`pg_dump`、Qdrant 卷；**不含** `.env` 与 Docker 镜像）。`import` 默认安装到**当前目录**，可用第二参数或 `INSTALL_DIR` 覆盖。
 - 共用函数：`scripts/lib/docker_compose.sh`。
 - 打包/导入验收：[`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §12–14。

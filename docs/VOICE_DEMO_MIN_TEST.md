@@ -734,24 +734,20 @@ bash /path/to/shuxin/scripts/import_deploy.sh /tmp/shuxin_voice_export_test/shux
 bash scripts/redeploy_docker.sh
 ```
 
-这个命令默认是日常重启，不会重新安装 `torch`、`funasr`、`modelscope` 等大包。只有以下情况会触发 Docker build：
+默认会执行 `docker compose build`；Dockerfile / requirements 未变的层会命中缓存，**不会**重装 `torch`、`funasr`、`modelscope` 等大包。
 
-- 本地没有 `shuxin-voice-demo:latest` 镜像。
-- `requirements-voice-heavy.txt` 或 `requirements-voice-app.txt` 的依赖 hash 变化。
-- 显式执行 `bash scripts/redeploy_docker.sh --build`。
+| 场景 | 命令 |
+|------|------|
+| 日常（代码或依赖层有变） | `bash scripts/redeploy_docker.sh` |
+| 仅改 `.env`、只想重启容器 | `bash scripts/redeploy_docker.sh --skip-build` |
+| 改 apt/pip 层后强制全量重建 | `bash scripts/redeploy_docker.sh --build`（`--no-cache`） |
 
-日常小包（Opus、websockets、设备绑定等）写入 `requirements-voice-app.txt`，只会 rebuild app 层，不会重下 torch。
-
-如果只想强制跳过 build，可以使用：
-
-```bash
-bash scripts/redeploy_docker.sh --no-build
-```
+日常小包（Opus、websockets、设备绑定等）写入 `requirements-voice-app.txt`，只会 rebuild app 层，不会重下 torch。`torch` / `torchaudio` 由 Dockerfile 从 PyTorch CPU index 安装，不在 `requirements-voice-heavy.txt` 中 pin。
 
 验收标准：
 
 - Docker Desktop 中 `shuxin-voice-demo-pg` 显示 Running。
-- 普通代码变更后，终端输出「仅代码变更，跳过依赖层构建」。
+- 部署后终端可看到 `ffmpeg version ...`；无 `opuslib_next` / ffmpeg 警告。
 - `models/`、`samples/`、`outputs/` 等挂载数据不会因为重部署丢失。
 
 ## 16. 火山 TTS + Agent 切换实时验收
@@ -825,7 +821,7 @@ curl -s -X PATCH -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/
 
 ```bash
 bash scripts/redeploy_docker.sh
-# 预期：依赖 tier 变更: app(voice-app)（若 app 层有变更）
+# 预期：未变层 CACHED；容器内 opuslib_next import ok
 docker exec shuxin-voice-demo-pg python -c "import opuslib_next; print('ok')"
 ```
 
