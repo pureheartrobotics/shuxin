@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import asyncio
 import json
 import logging
@@ -155,8 +156,13 @@ def _pop_speakable_segments(
     segments: list[str] = []
     while buffer:
         cut_at = -1
+        in_parentheses = False
         for index, char in enumerate(buffer):
-            if char in delimiters:
+            if char in ("（", "("):
+                in_parentheses = True
+            elif char in ("）", ")"):
+                in_parentheses = False
+            elif char in delimiters and not in_parentheses:
                 cut_at = index + 1
                 break
         if cut_at < 0 and force:
@@ -170,6 +176,12 @@ def _pop_speakable_segments(
         if segment:
             segments.append(segment)
     return segments, buffer
+
+
+def clean_action_text(text: str) -> str:
+    """去除中英文括号及其包含的动作文本。"""
+    cleaned = re.sub(r"[\(（][^\)）]*[\)）]", "", text)
+    return cleaned.strip()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1492,8 +1504,24 @@ class _VoiceWebSocketSession:
                 "total_elapsed_ms": _elapsed_ms(turn_started),
             }
         )
+        clean_text = clean_action_text(text)
+        if not clean_text:
+            output_path.write_bytes(b"")
+            await asyncio.sleep(0.01)
+            await self._send_json(
+                {
+                    "type": "tts",
+                    "state": "sentence_stop",
+                    "text": text,
+                    "index": sentence_index,
+                    "elapsed_ms": 10,
+                    "total_elapsed_ms": _elapsed_ms(turn_started),
+                }
+            )
+            return output_path
+
         sentence_started = time.perf_counter()
-        speech_path = await self.tts.synthesize(text, output_path)
+        speech_path = await self.tts.synthesize(clean_text, output_path)
         if self._uses_opus_downlink():
             await self._send_opus_downlink_stream(speech_path)
         else:

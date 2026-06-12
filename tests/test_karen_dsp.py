@@ -30,6 +30,7 @@ def test_flatten_pitch_short_audio_no_crash():
 
 def test_apply_karen_dsp_short_segment():
     pytest.importorskip("librosa")
+    pytest.importorskip("pydub")
     from pydub import AudioSegment
     from pydub.generators import Sine
 
