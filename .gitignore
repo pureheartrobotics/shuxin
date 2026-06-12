@@ -66,3 +66,10 @@ samples/*
 apps/app.md
 /project.config.json
 /project.private.config.json
+
+# Patent drafting docs (local only)
+docs/*盲盒人格*.md
+docs/交底书修订*.md
+docs/math_figures/
+docs/patent-filing/
+scripts/fill_proposal_docx.py

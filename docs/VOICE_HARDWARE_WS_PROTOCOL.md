@@ -229,6 +229,8 @@ Agent 完整回复：
 
 开始语音合成：
 
+> 固件向通俗说明（谁合成、Opus 从哪来、**不需要 ffmpeg**）：见 [VOICE_HARDWARE_TTS_DOWNLINK.md](VOICE_HARDWARE_TTS_DOWNLINK.md)。
+
 ```json
 {"type":"tts","state":"start"}
 ```
@@ -239,6 +241,11 @@ Agent 完整回复：
 {"type":"tts","state":"sentence_start","text":"你好，","index":1,"total_elapsed_ms":2500}
 {"type":"tts","state":"sentence_stop","text":"你好，","index":1,"elapsed_ms":900,"total_elapsed_ms":3400}
 ```
+
+> **动作文本与纯动作分句说明**：
+> 1. 为了让硬件能捕获动作神态指令以触发对应的实体动作，`tts/sentence_start` 和 `tts/sentence_stop` 广播事件中的 `text` 字段会**保持包含动作括号的原始文本**（如 `"（耳朵微微竖起）你还好吗？"`）。硬件客户端应当解析此字段中的括号来驱动舵机或屏幕显示。
+> 2. 合成 TTS 时，括号内的文本会被剥离过滤掉，不会读出声音。
+> 3. 当某个分句仅由动作括弧组成、无任何台词时（例如 `"（眼睛笑成月牙，轻轻蹭了蹭你）"`），服务端**依旧会发送 `sentence_start` 和 `sentence_stop` 状态事件**，但**完全跳过 TTS 语音合成且不下发任何音频二进制包**（下发二进制帧数量为 0）。硬件应当在此情况下直接触发物理动作，而不应因为收不到音频而判断为超时或异常。
 
 结束语音合成：
 
