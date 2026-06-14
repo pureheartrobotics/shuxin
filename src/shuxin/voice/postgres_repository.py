@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hmac
 import json
 import logging
@@ -14,6 +14,15 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from shuxin.voice.payment_config import (
+    DEFAULT_CREDIT_RATIO,
+    DISPLAY_BALANCE_METADATA_KEY,
+    PAYMENT_CREDIT_RATIO_SETTING_KEY,
+    PaymentPlan,
+    compute_payment_credits,
+    normalize_credit_ratio,
+    plan_from_row,
+)
 from shuxin.voice.dmx_client import (
     DEFAULT_QUOTA_YUAN,
     MAX_TOP_UP_YUAN,
@@ -125,17 +134,20 @@ class VoicePostgresRepository:
             logger.info("DMX skip %s: admin credentials not configured", selected_id)
             return
         row = await self.pool.fetchrow(
-            "SELECT llm_config FROM users WHERE user_id = $1 AND deleted_at IS NULL",
+            "SELECT llm_config, metadata FROM users WHERE user_id = $1 AND deleted_at IS NULL",
             selected_id,
         )
         if row is None:
             logger.info("DMX skip %s: user row not found", selected_id)
             return
         llm_config = _json_obj(row["llm_config"])
+        metadata = _json_obj(row["metadata"])
         api_key = str(llm_config.get("api_key") or "").strip()
+        newly_provisioned = False
         if not api_key:
             try:
                 api_key = await create_user_token(name=selected_id, quota_yuan=DEFAULT_QUOTA_YUAN)
+                newly_provisioned = True
                 logger.info("DMX provisioned token for %s", selected_id)
             except Exception as exc:
                 logger.warning("DMX token provisioning failed for %s: %s", selected_id, exc)
@@ -143,23 +155,205 @@ class VoicePostgresRepository:
             llm_config["api_key"] = api_key
         else:
             logger.info("DMX skipped provision for %s: existing api_key", selected_id)
+        if newly_provisioned:
+            metadata[DISPLAY_BALANCE_METADATA_KEY] = round(
+                float(metadata.get(DISPLAY_BALANCE_METADATA_KEY) or 0) + DEFAULT_QUOTA_YUAN,
+                4,
+            )
         llm_config = merge_platform_llm_defaults(llm_config)
         await self.pool.execute(
             """
             UPDATE users
-            SET llm_config = $2::jsonb, updated_at = now()
+            SET llm_config = $2::jsonb,
+                metadata = $3::jsonb,
+                updated_at = now()
             WHERE user_id = $1 AND deleted_at IS NULL
             """,
             selected_id,
             json.dumps(llm_config, ensure_ascii=False),
+            json.dumps(metadata, ensure_ascii=False),
         )
         logger.info("DMX saved llm_config for %s", selected_id)
 
-    async def get_user_quota_by_user_id(self, user_id: str) -> dict[str, Any]:
+    async def get_credit_ratio(self) -> float:
+        row = await self.pool.fetchrow(
+            """
+            SELECT value
+            FROM platform_settings
+            WHERE key = $1
+            """,
+            PAYMENT_CREDIT_RATIO_SETTING_KEY,
+        )
+        if row is None:
+            return DEFAULT_CREDIT_RATIO
+        payload = _json_obj(row["value"])
+        try:
+            return normalize_credit_ratio(float(payload.get("ratio") or DEFAULT_CREDIT_RATIO))
+        except ValueError:
+            return DEFAULT_CREDIT_RATIO
+
+    async def set_credit_ratio(self, ratio: float) -> dict[str, Any]:
+        normalized = normalize_credit_ratio(ratio)
+        await self.pool.execute(
+            """
+            INSERT INTO platform_settings (key, value, updated_at)
+            VALUES ($1, $2::jsonb, now())
+            ON CONFLICT (key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = now()
+            """,
+            PAYMENT_CREDIT_RATIO_SETTING_KEY,
+            json.dumps({"ratio": normalized}, ensure_ascii=False),
+        )
+        return {"credit_ratio": normalized}
+
+    async def get_payment_settings(self) -> dict[str, Any]:
+        ratio = await self.get_credit_ratio()
+        return {"credit_ratio": ratio}
+
+    async def list_payment_plans(self, *, include_disabled: bool = False) -> list[PaymentPlan]:
+        rows = await self.pool.fetch(
+            """
+            SELECT plan_id, name, description, amount_fen, sort_order, enabled
+            FROM payment_plans
+            WHERE ($1::boolean OR enabled = true)
+            ORDER BY sort_order ASC, plan_id ASC
+            """,
+            include_disabled,
+        )
+        if rows:
+            return [plan_from_row(row) for row in rows]
+        from shuxin.voice.payment_config import load_payment_plans
+
+        return load_payment_plans()
+
+    async def get_payment_plan(self, plan_id: str) -> PaymentPlan:
+        selected = str(plan_id or "").strip()
+        row = await self.pool.fetchrow(
+            """
+            SELECT plan_id, name, description, amount_fen, sort_order, enabled
+            FROM payment_plans
+            WHERE plan_id = $1
+            """,
+            selected,
+        )
+        if row is not None:
+            plan = plan_from_row(row)
+            if not plan.enabled:
+                raise ValueError(f"payment plan disabled: {selected}")
+            return plan
+        count = await self.pool.fetchval("SELECT COUNT(*) FROM payment_plans")
+        if int(count or 0) > 0:
+            raise ValueError(f"unknown payment plan: {selected}")
+        from shuxin.voice.payment_config import get_payment_plan as get_plan_fallback
+
+        return get_plan_fallback(selected)
+
+    async def create_payment_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
+        plan_id = str(payload.get("plan_id") or payload.get("id") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        amount_fen = int(payload.get("amount_fen") or 0)
+        if not plan_id or not name:
+            raise ValueError("plan_id and name are required")
+        if amount_fen <= 0:
+            raise ValueError("amount_fen must be positive")
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO payment_plans (
+                plan_id, name, description, amount_fen, sort_order, enabled, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, now())
+            RETURNING plan_id, name, description, amount_fen, sort_order, enabled
+            """,
+            plan_id,
+            name,
+            str(payload.get("description") or ""),
+            amount_fen,
+            int(payload.get("sort_order") or 0),
+            bool(payload.get("enabled", True)),
+        )
+        await self.audit("create_payment_plan", "payment_plan", plan_id, {"name": name})
+        return plan_from_row(row).to_admin_dict()
+
+    async def update_payment_plan(self, plan_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        selected = str(plan_id or "").strip()
+        existing = await self.pool.fetchrow(
+            "SELECT plan_id FROM payment_plans WHERE plan_id = $1",
+            selected,
+        )
+        if existing is None:
+            raise ValueError(f"payment plan not found: {selected}")
+        name = payload.get("name")
+        description = payload.get("description")
+        amount_fen = payload.get("amount_fen")
+        sort_order = payload.get("sort_order")
+        enabled = payload.get("enabled")
+        row = await self.pool.fetchrow(
+            """
+            UPDATE payment_plans
+            SET name = COALESCE($2, name),
+                description = COALESCE($3, description),
+                amount_fen = COALESCE($4, amount_fen),
+                sort_order = COALESCE($5, sort_order),
+                enabled = COALESCE($6, enabled),
+                updated_at = now()
+            WHERE plan_id = $1
+            RETURNING plan_id, name, description, amount_fen, sort_order, enabled
+            """,
+            selected,
+            str(name).strip() if name is not None else None,
+            str(description) if description is not None else None,
+            int(amount_fen) if amount_fen is not None else None,
+            int(sort_order) if sort_order is not None else None,
+            bool(enabled) if enabled is not None else None,
+        )
+        await self.audit("update_payment_plan", "payment_plan", selected, payload)
+        return plan_from_row(row).to_admin_dict()
+
+    async def soft_delete_payment_plan(self, plan_id: str) -> dict[str, Any]:
+        selected = str(plan_id or "").strip()
+        row = await self.pool.fetchrow(
+            """
+            UPDATE payment_plans
+            SET enabled = false, updated_at = now()
+            WHERE plan_id = $1
+            RETURNING plan_id, name, description, amount_fen, sort_order, enabled
+            """,
+            selected,
+        )
+        if row is None:
+            raise ValueError(f"payment plan not found: {selected}")
+        await self.audit("disable_payment_plan", "payment_plan", selected, {})
+        return plan_from_row(row).to_admin_dict()
+
+    async def _get_display_balance(self, metadata: dict[str, Any]) -> float:
+        return round(float(metadata.get(DISPLAY_BALANCE_METADATA_KEY) or 0), 4)
+
+    async def _persist_display_balance(self, conn, user_id: str, metadata: dict[str, Any], amount: float) -> None:
+        metadata[DISPLAY_BALANCE_METADATA_KEY] = round(max(float(amount), 0), 4)
+        await conn.execute(
+            """
+            UPDATE users
+            SET metadata = $2::jsonb, updated_at = now()
+            WHERE user_id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            json.dumps(metadata, ensure_ascii=False),
+        )
+
+    async def _add_display_balance(self, conn, user_id: str, *, delta: float, metadata: dict[str, Any]) -> float:
+        current = await self._get_display_balance(metadata)
+        updated = round(current + float(delta), 4)
+        await self._persist_display_balance(conn, user_id, metadata, updated)
+        return updated
+
+    async def get_user_quota_by_user_id(
+        self, user_id: str, *, admin_detail: bool = False
+    ) -> dict[str, Any]:
         selected_id = validate_user_id(user_id)
         row = await self.pool.fetchrow(
             """
-            SELECT llm_config
+            SELECT llm_config, metadata
             FROM users
             WHERE user_id = $1 AND enabled = true AND deleted_at IS NULL
             """,
@@ -174,6 +368,8 @@ class VoicePostgresRepository:
                 "used_yuan": None,
                 "message": "",
             }
+        metadata = _json_obj(row["metadata"])
+        stored_display = await self._get_display_balance(metadata)
         api_key = str(_json_obj(row["llm_config"]).get("api_key") or "").strip()
         if not api_key:
             return {
@@ -184,8 +380,14 @@ class VoicePostgresRepository:
                 "used_yuan": None,
                 "message": "",
             }
+        dmx_remain_yuan: float | None = None
+        used_yuan = None
+        dmx_exhausted = False
         try:
             balance = await get_token_balance(api_key)
+            dmx_remain_yuan = balance.get("remain_yuan")
+            used_yuan = balance.get("used_yuan")
+            dmx_exhausted = bool(balance.get("exhausted"))
         except Exception as exc:
             logger.warning("DMX balance query failed for %s: %s", selected_id, exc)
             balance = {
@@ -195,12 +397,61 @@ class VoicePostgresRepository:
                 "used_yuan": None,
                 "unlimited_quota": False,
             }
-        exhausted = bool(balance.get("exhausted"))
-        return {
+            if stored_display <= 0:
+                return {
+                    "user_id": selected_id,
+                    **balance,
+                    "remain_yuan": stored_display,
+                    "message": "",
+                }
+            return {
+                "user_id": selected_id,
+                **balance,
+                "remain_yuan": stored_display,
+                "message": "",
+            }
+
+        credit_ratio = await self.get_credit_ratio()
+        effective_display = stored_display
+        if (
+            stored_display <= 0
+            and dmx_remain_yuan is not None
+            and float(dmx_remain_yuan) > 0
+        ):
+            stored_display = round(float(dmx_remain_yuan), 4)
+            await self._persist_display_balance(
+                self.pool,
+                selected_id,
+                metadata,
+                stored_display,
+            )
+            effective_display = stored_display
+        elif dmx_remain_yuan is not None and credit_ratio > 0:
+            max_display = round(float(dmx_remain_yuan) / credit_ratio, 4)
+            effective_display = min(stored_display, max_display)
+            if effective_display < stored_display:
+                await self._persist_display_balance(
+                    self.pool,
+                    selected_id,
+                    metadata,
+                    effective_display,
+                )
+        display_exhausted = effective_display <= 0
+        exhausted = display_exhausted or dmx_exhausted
+        result = {
             "user_id": selected_id,
-            **balance,
+            "configured": True,
+            "exhausted": exhausted,
+            "remain_yuan": effective_display,
+            "used_yuan": used_yuan,
+            "unlimited_quota": False,
             "message": QUOTA_EXHAUSTED_MESSAGE if exhausted else "",
         }
+        if admin_detail:
+            result["display_balance_yuan"] = effective_display
+            result["dmx_remain_yuan"] = dmx_remain_yuan
+            result["credit_ratio"] = credit_ratio
+        return result
 
     async def get_user_quota_by_session(self, session_token: str) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
@@ -209,7 +460,12 @@ class VoicePostgresRepository:
 
     async def assert_user_quota_available(self, user_id: str) -> None:
         quota = await self.get_user_quota_by_user_id(user_id)
-        if quota.get("configured") and quota.get("exhausted"):
+        if not quota.get("configured"):
+            return
+        if quota.get("exhausted"):
+            raise PermissionError(QUOTA_EXHAUSTED_MESSAGE)
+        remain = quota.get("remain_yuan")
+        if remain is not None and float(remain) <= 0:
             raise PermissionError(QUOTA_EXHAUSTED_MESSAGE)
 
     async def top_up_user_dmx_quota(
@@ -228,7 +484,7 @@ class VoicePostgresRepository:
 
         row = await self.pool.fetchrow(
             """
-            SELECT llm_config, quota_note
+            SELECT llm_config, quota_note, metadata
             FROM users
             WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
             """,
@@ -240,32 +496,313 @@ class VoicePostgresRepository:
         if not api_key:
             raise PermissionError("user has no DMX api_key; ask user to login first")
 
-        top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=amount)
-        note_text = str(note or "").strip()
-        if note_text:
-            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            line = f"{stamp} +{amount:g}元 {note_text}"
-            existing_note = str(row["quota_note"] or "").strip()
-            merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
-            await self.pool.execute(
-                """
-                UPDATE users
-                SET quota_note = $2, updated_at = now()
-                WHERE user_id = $1 AND deleted_at IS NULL
-                """,
+        credit_ratio = await self.get_credit_ratio()
+        display_credit = round(amount, 4)
+        dmx_credit = round(amount * credit_ratio, 4)
+        metadata = _json_obj(row["metadata"])
+        async with self.pool.acquire() as conn:
+            await self._add_display_balance(
+                conn,
                 selected_id,
-                merged_note,
+                delta=display_credit,
+                metadata=metadata,
             )
+        top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=dmx_credit)
+        note_text = str(note or "").strip()
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        line = f"{stamp} +{display_credit:g}元(用户)/{dmx_credit:g}元(DMX) admin"
+        if note_text:
+            line = f"{line} {note_text}"
+        existing_note = str(row["quota_note"] or "").strip()
+        merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
+        await self.pool.execute(
+            """
+            UPDATE users
+            SET quota_note = $2, updated_at = now()
+            WHERE user_id = $1 AND deleted_at IS NULL
+            """,
+            selected_id,
+            merged_note,
+        )
 
         await self.audit(
             "dmx_top_up",
             "user",
             selected_id,
-            {"add_yuan": amount, "note": note_text, **top_up_result},
+            {
+                "add_yuan": display_credit,
+                "display_credited": display_credit,
+                "dmx_credited": dmx_credit,
+                "credit_ratio": credit_ratio,
+                "note": note_text,
+                **top_up_result,
+            },
         )
-        quota = await self.get_user_quota_by_user_id(selected_id)
-        quota["add_yuan"] = amount
+        quota = await self.get_user_quota_by_user_id(selected_id, admin_detail=True)
+        quota["add_yuan"] = display_credit
+        quota["dmx_credited"] = dmx_credit
         return quota
+
+    async def create_payment_order(
+        self,
+        *,
+        session_token: str,
+        plan_id: str,
+    ) -> dict[str, Any]:
+        plan = await self.get_payment_plan(plan_id)
+        credit_ratio = await self.get_credit_ratio()
+        pay_yuan, display_credit, dmx_credit = compute_payment_credits(plan.amount_fen, credit_ratio)
+        async with self.pool.acquire() as conn:
+            user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+            order_id = uuid.uuid4().hex
+            out_trade_no = f"sx{uuid.uuid4().hex[:28]}"
+            row = await conn.fetchrow(
+                """
+                INSERT INTO payment_orders (
+                    order_id, user_id, out_trade_no, plan_id, plan_name,
+                    amount_fen, add_yuan, duration_days, status,
+                    pay_yuan, display_credited, dmx_credited, credit_ratio
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'pending', $8, $9, $10, $11)
+                RETURNING order_id, out_trade_no, plan_id, plan_name, amount_fen, add_yuan,
+                          duration_days, status, created_at, pay_yuan, display_credited,
+                          dmx_credited, credit_ratio
+                """,
+                order_id,
+                user_id,
+                out_trade_no,
+                plan.id,
+                plan.name,
+                plan.amount_fen,
+                display_credit,
+                pay_yuan,
+                display_credit,
+                dmx_credit,
+                credit_ratio,
+            )
+        return {
+            "order_id": str(row["order_id"]),
+            "user_id": user_id,
+            "out_trade_no": str(row["out_trade_no"]),
+            "plan": plan.to_public_dict(),
+            "status": str(row["status"]),
+            "created_at": _dt(row["created_at"]),
+        }
+
+    async def attach_prepay_id(self, *, out_trade_no: str, prepay_id: str) -> None:
+        await self.pool.execute(
+            """
+            UPDATE payment_orders
+            SET wx_prepay_id = $2, updated_at = now()
+            WHERE out_trade_no = $1
+            """,
+            out_trade_no,
+            prepay_id,
+        )
+
+    async def list_payment_orders_by_session(
+        self,
+        session_token: str,
+        *,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        selected_limit = max(1, min(int(limit), 50))
+        async with self.pool.acquire() as conn:
+            user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+            rows = await conn.fetch(
+                """
+                SELECT order_id, out_trade_no, plan_id, plan_name, amount_fen, add_yuan,
+                       duration_days, status, wx_transaction_id, created_at, paid_at
+                FROM payment_orders
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                user_id,
+                selected_limit,
+            )
+        return {
+            "user_id": user_id,
+            "items": [_payment_order_item(row) for row in rows],
+        }
+
+    async def fulfill_payment_order(
+        self,
+        *,
+        out_trade_no: str,
+        wx_transaction_id: str,
+        notify_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        selected_trade_no = str(out_trade_no or "").strip()
+        if not selected_trade_no:
+            raise ValueError("out_trade_no is required")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT order_id, user_id, plan_id, plan_name, amount_fen, add_yuan,
+                           duration_days, status, wx_transaction_id, pay_yuan,
+                           display_credited, dmx_credited, credit_ratio
+                    FROM payment_orders
+                    WHERE out_trade_no = $1
+                    FOR UPDATE
+                    """,
+                    selected_trade_no,
+                )
+                if row is None:
+                    raise ValueError(f"payment order not found: {selected_trade_no}")
+                if str(row["status"]) == "paid":
+                    return {
+                        "order_id": str(row["order_id"]),
+                        "user_id": str(row["user_id"]),
+                        "status": "paid",
+                        "already_fulfilled": True,
+                    }
+
+                amount = dict(notify_payload.get("amount") or {})
+                paid_total = int(amount.get("total") or 0)
+                if paid_total != int(row["amount_fen"]):
+                    raise ValueError(
+                        f"paid amount mismatch: expected {row['amount_fen']}, got {paid_total}"
+                    )
+
+                user_id = str(row["user_id"])
+                credit_ratio = float(row["credit_ratio"] or DEFAULT_CREDIT_RATIO)
+                if row["display_credited"] is not None and row["dmx_credited"] is not None:
+                    display_credit = float(row["display_credited"])
+                    dmx_credit = float(row["dmx_credited"])
+                else:
+                    _, display_credit, dmx_credit = compute_payment_credits(
+                        int(row["amount_fen"]),
+                        credit_ratio,
+                    )
+
+                user_row = await conn.fetchrow(
+                    """
+                    SELECT llm_config, quota_note, metadata
+                    FROM users
+                    WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                    FOR UPDATE
+                    """,
+                    user_id,
+                )
+                if user_row is None:
+                    raise PermissionError("user is disabled or not found")
+                api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
+                if not api_key:
+                    raise PermissionError("user has no DMX api_key; ask user to login first")
+
+                metadata = _json_obj(user_row["metadata"])
+                await self._add_display_balance(
+                    conn,
+                    user_id,
+                    delta=display_credit,
+                    metadata=metadata,
+                )
+                top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=dmx_credit)
+                note_text = f"wxpay:{selected_trade_no}"
+                stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                line = f"{stamp} +{display_credit:g}元(用户)/{dmx_credit:g}元(DMX) {note_text}"
+                existing_note = str(user_row["quota_note"] or "").strip()
+                merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
+                await conn.execute(
+                    """
+                    UPDATE users
+                    SET quota_note = $2, updated_at = now()
+                    WHERE user_id = $1 AND deleted_at IS NULL
+                    """,
+                    user_id,
+                    merged_note,
+                )
+
+                await conn.execute(
+                    """
+                    UPDATE payment_orders
+                    SET status = 'paid',
+                        wx_transaction_id = $2,
+                        notify_payload = $3::jsonb,
+                        paid_at = now(),
+                        updated_at = now(),
+                        pay_yuan = $4,
+                        display_credited = $5,
+                        dmx_credited = $6,
+                        credit_ratio = $7,
+                        add_yuan = $5
+                    WHERE out_trade_no = $1
+                    """,
+                    selected_trade_no,
+                    str(wx_transaction_id or ""),
+                    json.dumps(notify_payload, ensure_ascii=False),
+                    float(row["pay_yuan"] or display_credit),
+                    display_credit,
+                    dmx_credit,
+                    credit_ratio,
+                )
+        await self.audit(
+            "payment_fulfilled",
+            "payment_order",
+            selected_trade_no,
+            {
+                "user_id": user_id,
+                "display_credited": display_credit,
+                "dmx_credited": dmx_credit,
+                "credit_ratio": credit_ratio,
+                "wx_transaction_id": wx_transaction_id,
+                **top_up_result,
+            },
+        )
+        return {
+            "order_id": str(row["order_id"]),
+            "user_id": user_id,
+            "status": "paid",
+            "already_fulfilled": False,
+            "display_credited": display_credit,
+            "dmx_credited": dmx_credit,
+            "add_yuan": display_credit,
+        }
+
+    async def _extend_subscription(
+        self,
+        conn,
+        *,
+        user_id: str,
+        duration_days: int,
+    ) -> None:
+        row = await conn.fetchrow(
+            """
+            SELECT metadata
+            FROM users
+            WHERE user_id = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            user_id,
+        )
+        if row is None:
+            return
+        metadata = _json_obj(row["metadata"])
+        now = datetime.now(timezone.utc)
+        current_raw = str(metadata.get("subscription_expires_at") or "").strip()
+        base = now
+        if current_raw:
+            try:
+                current = datetime.fromisoformat(current_raw.replace("Z", "+00:00"))
+                if current.tzinfo is None:
+                    current = current.replace(tzinfo=timezone.utc)
+                if current > now:
+                    base = current
+            except ValueError:
+                base = now
+        expires_at = base + timedelta(days=duration_days)
+        metadata["subscription_expires_at"] = expires_at.isoformat()
+        await conn.execute(
+            """
+            UPDATE users
+            SET metadata = $2::jsonb, updated_at = now()
+            WHERE user_id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            json.dumps(metadata, ensure_ascii=False),
+        )
 
     async def provision_device(self, device_code: str) -> dict[str, Any]:
         """工厂烧录时登记设备，并生成只给用户扫码认领用的 claim_code。"""
@@ -2576,6 +3113,23 @@ def _json_obj(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return json.loads(value) if value else {}
     return dict(value)
+
+
+def _payment_order_item(row: Any) -> dict[str, Any]:
+    return {
+        "order_id": str(row["order_id"]),
+        "out_trade_no": str(row["out_trade_no"]),
+        "plan_id": str(row["plan_id"]),
+        "plan_name": str(row["plan_name"]),
+        "amount_fen": int(row["amount_fen"]),
+        "amount_yuan": round(int(row["amount_fen"]) / 100, 2),
+        "add_yuan": float(row["add_yuan"]),
+        "duration_days": int(row["duration_days"] or 0),
+        "status": str(row["status"]),
+        "wx_transaction_id": str(row["wx_transaction_id"] or ""),
+        "created_at": _dt(row["created_at"]),
+        "paid_at": _dt(row["paid_at"]) if row["paid_at"] else "",
+    }
 
 
 def _dt(value: Any) -> str:
