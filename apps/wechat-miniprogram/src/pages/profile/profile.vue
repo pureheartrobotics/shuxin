@@ -14,11 +14,12 @@
         </view>
       </view>
       <view class="row">
-        <view>
+        <view class="balance-block">
           <view class="label">账户余额</view>
           <view class="value" :class="{ exhausted: quotaExhausted }">{{ balanceLabel }}</view>
-          <view v-if="quotaExhausted" class="hint">额度已用尽，请联系客服</view>
+          <view v-if="quotaExhausted" class="hint">额度已用尽，请充值后继续使用</view>
         </view>
+        <button class="mini recharge" :disabled="loading || paying" @tap="openPaymentSheet">充值</button>
       </view>
       <view class="row">
         <view>
@@ -30,6 +31,30 @@
       <button class="danger" @tap="logout">退出登录</button>
       <view v-if="message" class="message">{{ message }}</view>
     </view>
+
+    <view v-if="showPaymentSheet" class="sheet-mask" @tap="closePaymentSheet">
+      <view class="sheet" @tap.stop>
+        <view class="sheet-title">选择订阅套餐</view>
+        <view class="sheet-subtitle">支付成功后自动充值到账户余额</view>
+        <view v-if="plansLoading" class="sheet-hint">加载套餐中...</view>
+        <view v-else-if="!plans.length" class="sheet-hint">暂无可用套餐</view>
+        <view v-else class="plan-list">
+          <view
+            v-for="plan in plans"
+            :key="plan.id"
+            class="plan-card"
+            @tap="purchasePlan(plan)"
+          >
+            <view>
+              <view class="plan-name">{{ plan.name }}</view>
+              <view class="plan-desc">{{ plan.description || `${plan.duration_days} 天订阅` }}</view>
+            </view>
+            <view class="plan-price">¥{{ plan.amount_yuan }}</view>
+          </view>
+        </view>
+        <button class="sheet-close" :disabled="paying" @tap="closePaymentSheet">取消</button>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -37,14 +62,28 @@
 import { onShow } from "@dcloudio/uni-app";
 import { computed, ref } from "vue";
 
+type PaymentPlan = {
+  id: string;
+  name: string;
+  description?: string;
+  amount_fen: number;
+  amount_yuan: number;
+  add_yuan: number;
+  duration_days: number;
+};
+
 const apiBase = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
 const loading = ref(false);
+const paying = ref(false);
+const plansLoading = ref(false);
 const message = ref("");
 const userId = ref("");
 const deviceCount = ref(0);
 const remainYuan = ref<number | null>(null);
 const quotaConfigured = ref(false);
 const quotaExhausted = ref(false);
+const showPaymentSheet = ref(false);
+const plans = ref<PaymentPlan[]>([]);
 const loggedIn = computed(() => Boolean(sessionToken()));
 const maskedUserId = computed(() => maskUserId(userId.value || String(uni.getStorageSync("shuxin_user_id") || "")));
 const balanceLabel = computed(() => {
@@ -83,6 +122,23 @@ function request(path: string, data: Record<string, unknown>): Promise<any> {
   });
 }
 
+function requestGet(path: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    uni.request({
+      url: `${apiBase}${path}`,
+      method: "GET",
+      success: (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
+          resolve(res.data);
+        } else {
+          reject(new Error(res.data?.error || `请求失败: ${res.statusCode}`));
+        }
+      },
+      fail: (error) => reject(new Error(error.errMsg || "请求失败"))
+    });
+  });
+}
+
 async function loadProfile() {
   const token = sessionToken();
   if (!token) {
@@ -104,10 +160,69 @@ async function loadProfile() {
     if (quotaExhausted.value && quota.message) {
       message.value = quota.message;
     }
-  } catch (error) {
+  } catch (error: any) {
     message.value = error.message || String(error);
   } finally {
     loading.value = false;
+  }
+}
+
+async function openPaymentSheet() {
+  showPaymentSheet.value = true;
+  plansLoading.value = true;
+  message.value = "";
+  try {
+    const data = await requestGet("/api/payment/plans");
+    plans.value = Array.isArray(data.items) ? data.items : [];
+  } catch (error: any) {
+    message.value = error.message || String(error);
+    plans.value = [];
+  } finally {
+    plansLoading.value = false;
+  }
+}
+
+function closePaymentSheet() {
+  if (paying.value) return;
+  showPaymentSheet.value = false;
+}
+
+async function purchasePlan(plan: PaymentPlan) {
+  const token = sessionToken();
+  if (!token) {
+    uni.redirectTo({ url: "/pages/login/login" });
+    return;
+  }
+  paying.value = true;
+  message.value = "";
+  try {
+    const result = await request("/api/payment/create-order", {
+      session_token: token,
+      plan_id: plan.id
+    });
+    const params = result.pay_params || {};
+    await new Promise<void>((resolve, reject) => {
+      uni.requestPayment({
+        provider: "wxpay",
+        timeStamp: String(params.timeStamp || ""),
+        nonceStr: String(params.nonceStr || ""),
+        package: String(params.package || ""),
+        signType: String(params.signType || "RSA"),
+        paySign: String(params.paySign || ""),
+        success: () => resolve(),
+        fail: (error) => reject(new Error(error.errMsg || "支付失败"))
+      });
+    });
+    message.value = "支付成功，余额更新中";
+    showPaymentSheet.value = false;
+    await loadProfile();
+  } catch (error: any) {
+    const text = error.message || String(error);
+    if (!text.includes("cancel")) {
+      message.value = text;
+    }
+  } finally {
+    paying.value = false;
   }
 }
 
@@ -176,6 +291,10 @@ function maskUserId(value: string): string {
   border-bottom: 1rpx solid rgba(128, 94, 69, 0.12);
 }
 
+.balance-block {
+  flex: 1;
+}
+
 .label {
   color: #82786d;
   font-size: 24rpx;
@@ -199,7 +318,8 @@ function maskUserId(value: string): string {
 }
 
 .mini,
-.danger {
+.danger,
+.sheet-close {
   height: 68rpx;
   line-height: 68rpx;
   font-size: 24rpx;
@@ -209,6 +329,11 @@ function maskUserId(value: string): string {
   flex: 0 0 132rpx;
   color: #2f604f;
   background: #e4eee8;
+}
+
+.mini.recharge {
+  color: #fffaf3;
+  background: #2f604f;
 }
 
 .danger {
@@ -222,5 +347,82 @@ function maskUserId(value: string): string {
   margin-top: 20rpx;
   color: #9e3b35;
   font-size: 26rpx;
+}
+
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(36, 33, 28, 0.42);
+  display: flex;
+  align-items: flex-end;
+  z-index: 20;
+}
+
+.sheet {
+  width: 100%;
+  padding: 36rpx 32rpx 48rpx;
+  background: #fffaf3;
+  border-radius: 28rpx 28rpx 0 0;
+  box-shadow: 0 -12rpx 40rpx rgba(70, 48, 32, 0.12);
+}
+
+.sheet-title {
+  color: #24211c;
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.sheet-subtitle {
+  color: #82786d;
+  font-size: 24rpx;
+  margin-top: 10rpx;
+}
+
+.sheet-hint {
+  color: #82786d;
+  font-size: 26rpx;
+  padding: 36rpx 0;
+}
+
+.plan-list {
+  margin-top: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.plan-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 28rpx;
+  border-radius: 20rpx;
+  background: #f5efe6;
+  border: 1rpx solid rgba(128, 94, 69, 0.14);
+}
+
+.plan-name {
+  color: #24211c;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.plan-desc {
+  color: #82786d;
+  font-size: 22rpx;
+  margin-top: 6rpx;
+}
+
+.plan-price {
+  color: #2f604f;
+  font-size: 34rpx;
+  font-weight: 700;
+}
+
+.sheet-close {
+  width: 100%;
+  margin-top: 28rpx;
+  color: #6f665b;
+  background: #ece7df;
 }
 </style>
