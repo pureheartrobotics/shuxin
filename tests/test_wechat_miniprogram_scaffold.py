@@ -116,5 +116,6 @@ def test_wechat_build_script_reuses_dev_script_without_installing_dependencies()
     script = Path("scripts/wechat_miniprogram_build.sh").read_text(encoding="utf-8")
 
     assert "wechat_miniprogram_dev.sh" in script
+    assert "build-local" in script
     assert "build" in script
     assert "\npnpm install" not in script

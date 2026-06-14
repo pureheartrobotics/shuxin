@@ -42,7 +42,27 @@ check_page_outputs() {
   fi
 }
 
-API_BASE="${SHUXIN_API_BASE:-$DEFAULT_API_BASE}"
+print_build_hints() {
+  local local_mode="$1"
+  echo ""
+  echo "Build OK. API baked: $API_BASE"
+  echo "Open in WeChat DevTools: $APP_DIR/dist/build/mp-weixin"
+  if [ "$local_mode" = "1" ]; then
+    echo "DevTools: 详情 → 本地设置 → 勾选「不校验合法域名…」"
+    echo "支付 notify 仍走 trycloudflare（SHUXIN_WXPAY_NOTIFY_URL）；tunnel 变更只需 redeploy，无需重编小程序"
+  else
+    echo "WeChat DevTools: 改 API 地址后须重新 build 并在工具内点「编译」"
+  fi
+}
+
+LOCAL_BUILD=0
+if [ "$MODE" = "build-local" ]; then
+  MODE=build
+  LOCAL_BUILD=1
+  API_BASE="${SHUXIN_API_BASE:-$DEFAULT_API_BASE}"
+else
+  API_BASE="${SHUXIN_API_BASE:-$DEFAULT_API_BASE}"
+fi
 
 cd "$APP_DIR"
 
@@ -64,13 +84,17 @@ echo "AppID: $APPID"
 echo "API: $API_BASE"
 check_api_base
 if [ "$MODE" = "build" ]; then
-  echo "Open in WeChat DevTools: $APP_DIR/dist/build/mp-weixin"
   VITE_SHUXIN_API_BASE="$API_BASE" pnpm build:mp-weixin
-  check_no_stale_localhost "$APP_DIR/dist/build/mp-weixin"
+  if [ "$LOCAL_BUILD" != "1" ]; then
+    check_no_stale_localhost "$APP_DIR/dist/build/mp-weixin"
+  fi
   check_page_outputs "$APP_DIR/dist/build/mp-weixin"
+  print_build_hints "$LOCAL_BUILD"
 else
   echo "Open in WeChat DevTools: $APP_DIR/dist/dev/mp-weixin"
   clean_dev_output
   VITE_SHUXIN_API_BASE="$API_BASE" pnpm dev:mp-weixin
-  check_no_stale_localhost "$APP_DIR/dist/dev/mp-weixin"
+  if [ "$LOCAL_BUILD" != "1" ]; then
+    check_no_stale_localhost "$APP_DIR/dist/dev/mp-weixin"
+  fi
 fi
