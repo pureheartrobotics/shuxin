@@ -22,6 +22,19 @@
 - [ ] `VOICE_DEMO_PORT` 与防火墙/反向代理一致
 - [ ] `DATABASE_URL` 指向生产 Postgres
 
+## 微信支付（小程序充值）
+
+本地联调细节见 [`PAYMENT_DEV_SETUP.md`](PAYMENT_DEV_SETUP.md)。上线核对：
+
+- [ ] `data/certs/` 已迁移：`apiclient_key.pem`、`pub_key.pem`（公钥模式）
+- [ ] `.env` 中 `SHUXIN_WXPAY_NOTIFY_URL=https://你的域名/api/payment/notify`（**勿**留 trycloudflare）
+- [ ] 其余 `SHUXIN_WXPAY_*`、`SHUXIN_WECHAT_APPID` / `SECRET` 与联调环境一致（同一商户号）
+- [ ] Nginx 转发 `/api/payment/notify` 并保留 `Wechatpay-*` 签名头
+- [ ] 微信公众平台 request 合法域名已添加生产 API 域名
+- [ ] 小程序已用 `SHUXIN_API_BASE=https://你的域名` 重编译并发布
+- [ ] `data/payment_plans.json` 已从 0.01 元测试价改为正式套餐（若需要）
+- [ ] 冒烟：真实支付 → `payment_orders.status=paid` → 用户余额增加
+
 ## 环境迁移（可选）
 
 开发机迁到生产机时使用 `export_pack.sh` / `import_deploy.sh`（详见 [`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §12–13）：
