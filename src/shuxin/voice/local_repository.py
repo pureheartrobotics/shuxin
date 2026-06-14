@@ -81,6 +81,29 @@ class VoiceLocalRepository:
     ) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for admin writes")
 
+    async def create_payment_order(self, *, session_token: str, plan_id: str) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for payment")
+
+    async def attach_prepay_id(self, *, out_trade_no: str, prepay_id: str) -> None:
+        raise RuntimeError("DATABASE_URL is required for payment")
+
+    async def list_payment_orders_by_session(
+        self,
+        session_token: str,
+        *,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for payment")
+
+    async def fulfill_payment_order(
+        self,
+        *,
+        out_trade_no: str,
+        wx_transaction_id: str,
+        notify_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for payment")
+
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         return self.user_provider.authenticate(user_id, token)
 

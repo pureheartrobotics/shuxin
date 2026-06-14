@@ -48,6 +48,10 @@ data/docker_deps.hash
 data/shuxin_home/
 data/device_assets/**/_tmp/
 data/device_assets.zip
+data/certs/*.pem
+data/certs/wxpay_platform/
+!data/certs/.gitkeep
+data/payment_plans.json
 data/pic/
 data/test/
 models/*
