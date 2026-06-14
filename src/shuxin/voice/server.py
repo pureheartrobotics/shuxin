@@ -369,6 +369,106 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.get("/api/payment/plans")
+    async def payment_plans():
+        try:
+            plans = await repo().list_payment_plans(include_disabled=False)
+            return JSONResponse({"items": [plan.to_public_dict() for plan in plans]})
+        except Exception as exc:
+            from shuxin.voice.payment_config import list_payment_plan_dicts
+
+            return JSONResponse({"items": list_payment_plan_dicts()})
+
+    @app.post("/api/payment/create-order")
+    async def payment_create_order(request: Request):
+        from shuxin.voice.wechat_pay import create_jsapi_payment, wechat_pay_configured, wechat_pay_mock_mode
+
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            plan_id = str(payload.get("plan_id") or "")
+            if not session_token:
+                return JSONResponse({"error": "session_token is required"}, status_code=400)
+            if not plan_id:
+                return JSONResponse({"error": "plan_id is required"}, status_code=400)
+            if wechat_pay_mock_mode():
+                return JSONResponse(
+                    {"error": "WeChat Pay is disabled while SHUXIN_WECHAT_MOCK=1"},
+                    status_code=503,
+                )
+            if not wechat_pay_configured():
+                return JSONResponse({"error": "WeChat Pay is not configured"}, status_code=503)
+
+            order = await repo().create_payment_order(session_token=session_token, plan_id=plan_id)
+            plan_payload = dict(order.get("plan") or {})
+            amount_fen = int(plan_payload.get("amount_fen") or 0)
+            plan_name = str(plan_payload.get("name") or plan_id)
+            if amount_fen <= 0:
+                raise ValueError(f"invalid plan amount for: {plan_id}")
+            prepay = create_jsapi_payment(
+                description=f"舒心{plan_name}",
+                out_trade_no=str(order["out_trade_no"]),
+                amount_fen=amount_fen,
+                payer_openid=str(order["user_id"]),
+            )
+            await repo().attach_prepay_id(
+                out_trade_no=str(order["out_trade_no"]),
+                prepay_id=str(prepay["prepay_id"]),
+            )
+            pay_params = dict(prepay.get("pay_params") or {})
+            return JSONResponse(
+                {
+                    "order": order,
+                    "prepay_id": prepay["prepay_id"],
+                    "pay_params": pay_params,
+                }
+            )
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("payment create-order failed")
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/payment/orders")
+    async def payment_orders(request: Request):
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            if not session_token:
+                return JSONResponse({"error": "session_token is required"}, status_code=400)
+            limit = int(payload.get("limit") or 20)
+            return JSONResponse(
+                await repo().list_payment_orders_by_session(session_token, limit=limit)
+            )
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/payment/notify")
+    async def payment_notify(request: Request):
+        from shuxin.voice.wechat_pay import parse_payment_notify
+
+        body = await request.body()
+        headers = {key: value for key, value in request.headers.items()}
+        try:
+            payload = parse_payment_notify(headers, body)
+            out_trade_no = str(payload.get("out_trade_no") or "")
+            wx_transaction_id = str(payload.get("transaction_id") or "")
+            if not out_trade_no:
+                return JSONResponse({"code": "FAIL", "message": "missing out_trade_no"}, status_code=400)
+            await repo().fulfill_payment_order(
+                out_trade_no=out_trade_no,
+                wx_transaction_id=wx_transaction_id,
+                notify_payload=payload,
+            )
+            return JSONResponse({"code": "SUCCESS", "message": "成功"})
+        except Exception as exc:
+            logger.exception("payment notify failed")
+            return JSONResponse({"code": "FAIL", "message": str(exc)}, status_code=400)
+
     @app.post("/api/devices/bind")
     async def bind_device(request: Request):
         try:
@@ -724,7 +824,60 @@ def create_app(
     async def admin_user_quota(request: Request, user_id: str):
         try:
             require_admin(request)
-            return JSONResponse(await repo().get_user_quota_by_user_id(user_id))
+            return JSONResponse(await repo().get_user_quota_by_user_id(user_id, admin_detail=True))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/payment/plans")
+    async def admin_list_payment_plans(request: Request):
+        try:
+            require_admin(request)
+            plans = await repo().list_payment_plans(include_disabled=True)
+            return JSONResponse({"items": [plan.to_admin_dict() for plan in plans]})
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/admin/api/payment/plans")
+    async def admin_create_payment_plan(request: Request):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().create_payment_plan(payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.patch("/admin/api/payment/plans/{plan_id}")
+    async def admin_update_payment_plan(request: Request, plan_id: str):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            return JSONResponse(await repo().update_payment_plan(plan_id, payload))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.delete("/admin/api/payment/plans/{plan_id}")
+    async def admin_delete_payment_plan(request: Request, plan_id: str):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().soft_delete_payment_plan(plan_id))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/platform/payment-settings")
+    async def admin_get_payment_settings(request: Request):
+        try:
+            require_admin(request)
+            return JSONResponse(await repo().get_payment_settings())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.patch("/admin/api/platform/payment-settings")
+    async def admin_update_payment_settings(request: Request):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            ratio = float(payload.get("credit_ratio") or 0)
+            return JSONResponse(await repo().set_credit_ratio(ratio))
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -1870,6 +2023,7 @@ def _admin_html(authenticated: bool) -> str:
         <button id="tabDevices" class="active" onclick="showTab('devices')">设备</button>
         <button id="tabUsers" onclick="showTab('users')">用户</button>
         <button id="tabAgents" onclick="showTab('agents')">Agent</button>
+        <button id="tabPaymentPlans" onclick="showTab('paymentPlans')">充值套餐</button>
         <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
         <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
       </div>
@@ -1955,6 +2109,34 @@ def _admin_html(authenticated: bool) -> str:
           </div>
           <div id="agentList" class="table"></div>
           <div id="agentsPager" class="pager"></div>
+        </div>
+      </div>
+      <div id="paymentPlans" class="stack" style="display:none">
+        <div class="panel">
+          <h2>全局到账比例</h2>
+          <div class="form-row compact">
+            <label><span class="hint">credit_ratio（0.01–1.00）</span><input id="creditRatio" type="number" min="0.01" max="1" step="0.01" value="0.95" /></label>
+            <button onclick="saveCreditRatio()">保存比例</button>
+          </div>
+          <p class="hint" style="margin:8px 0 0">用户付 100 元 → 界面余额 +100，DMX 实际 +100×比例。仅影响<strong>新创建</strong>订单；履约使用下单时快照。</p>
+        </div>
+        <div class="panel">
+          <h2>新增充值档位</h2>
+          <div class="form-row compact">
+            <label><span class="hint">plan_id</span><input id="newPlanId" placeholder="plan_100" /></label>
+            <label><span class="hint">名称</span><input id="newPlanName" placeholder="100 元档" /></label>
+            <label><span class="hint">支付价（分）</span><input id="newPlanAmountFen" type="number" min="1" placeholder="10000" /></label>
+            <label><span class="hint">排序</span><input id="newPlanSort" type="number" value="0" /></label>
+            <label><span class="hint">描述</span><input id="newPlanDesc" placeholder="可选" /></label>
+          </div>
+          <div class="toolbar" style="margin-top:12px"><button onclick="createPaymentPlan()">保存档位</button></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>充值套餐列表</h2>
+            <button class="secondary" onclick="loadPaymentPlans()">刷新</button>
+          </div>
+          <div id="paymentPlanList" class="table"></div>
         </div>
       </div>
       <div id="bindings" class="grid" style="display:none">
@@ -2237,9 +2419,10 @@ def _admin_html(authenticated: bool) -> str:
       authenticated = true; boot();
     }}
     function showTab(name) {{
-      for (const id of ['devices','users','agents','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
-      for (const id of ['tabDevices','tabUsers','tabAgents','tabBindings','tabAdapters']) $(id).classList.remove('active');
+      for (const id of ['devices','users','agents','paymentPlans','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
+      for (const id of ['tabDevices','tabUsers','tabAgents','tabPaymentPlans','tabBindings','tabAdapters']) $(id).classList.remove('active');
       $('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
+      if (name === 'paymentPlans' && authenticated) loadPaymentPlans();
       if (name === 'bindings' && authenticated) {{
         loadBindUsers();
         loadBindDevices();
@@ -2295,7 +2478,7 @@ def _admin_html(authenticated: bool) -> str:
     }}
     async function loadAll() {{
       await Promise.all([
-        loadMbtiTypes(), loadDevices(), loadUsers(), loadAgents(), loadBindings(), loadAdapters(),
+        loadMbtiTypes(), loadDevices(), loadUsers(), loadAgents(), loadPaymentPlans(), loadBindings(), loadAdapters(),
         loadBindUsers(), loadBindDevices(),
       ]);
     }}
@@ -2352,6 +2535,87 @@ def _admin_html(authenticated: bool) -> str:
         </div>`;
       }}).join('');
       renderPager('agents', agents.length);
+    }}
+    async function loadPaymentPlans() {{
+      const settingsRes = await fetch('/admin/api/platform/payment-settings', {{headers: headers(), credentials: 'same-origin'}});
+      const settings = await settingsRes.json();
+      if (settingsRes.ok && settings.credit_ratio != null) {{
+        $('creditRatio').value = settings.credit_ratio;
+      }}
+      const res = await fetch('/admin/api/payment/plans', {{headers: headers(), credentials: 'same-origin'}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        $('paymentPlanList').innerHTML = `<p class="hint">${{esc(data.error || '加载失败')}}</p>`;
+        return;
+      }}
+      const plans = data.items || [];
+      $('paymentPlanList').innerHTML = `<div class="table-row table-head"><div>档位</div><div>支付价(元)</div><div>排序</div><div>启用</div><div>操作</div></div>` + plans.map(p => {{
+        const q = jsQuote(p.plan_id || p.id);
+        const pid = esc(p.plan_id || p.id);
+        const yuan = (Number(p.amount_fen || 0) / 100).toFixed(2);
+        return `<div class="table-row">
+          <div><strong>${{esc(p.name)}}</strong><div class="meta">${{pid}} · ${{esc(p.description || '')}}</div></div>
+          <input id="planAmount_${{pid}}" type="number" min="1" value="${{esc(String(p.amount_fen || 0))}}" />
+          <input id="planSort_${{pid}}" type="number" value="${{esc(String(p.sort_order ?? 0))}}" />
+          <select id="planEnabled_${{pid}}"><option value="true" ${{p.enabled !== false ? 'selected' : ''}}>启用</option><option value="false" ${{p.enabled === false ? 'selected' : ''}}>停用</option></select>
+          <div class="toolbar">
+            <input id="planName_${{pid}}" value="${{esc(p.name)}}" placeholder="名称" style="min-width:80px" />
+            <button class="secondary" onclick="savePaymentPlanRow('${{q}}')">保存</button>
+            <button class="danger" onclick="disablePaymentPlan('${{q}}')" ${{p.enabled === false ? 'disabled' : ''}}>停用</button>
+          </div>
+        </div>`;
+      }}).join('') || '<div class="hint">暂无套餐</div>';
+    }}
+    async function saveCreditRatio() {{
+      const ratio = Number($('creditRatio').value || 0);
+      const res = await fetch('/admin/api/platform/payment-settings', {{
+        method: 'PATCH',
+        headers: headers(),
+        credentials: 'same-origin',
+        body: JSON.stringify({{credit_ratio: ratio}}),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) {{ alert(data.error || '保存失败'); return; }}
+      $('creditRatio').value = data.credit_ratio;
+      alert('到账比例已保存：' + data.credit_ratio);
+    }}
+    async function createPaymentPlan() {{
+      const payload = {{
+        plan_id: $('newPlanId').value.trim(),
+        name: $('newPlanName').value.trim(),
+        amount_fen: Number($('newPlanAmountFen').value || 0),
+        sort_order: Number($('newPlanSort').value || 0),
+        description: $('newPlanDesc').value.trim(),
+        enabled: true,
+      }};
+      const res = await fetch('/admin/api/payment/plans', {{method:'POST', headers:headers(), body:JSON.stringify(payload)}});
+      const data = await res.json();
+      if (!res.ok || data.error) {{ alert(data.error || '创建失败'); return; }}
+      $('newPlanId').value = ''; $('newPlanName').value = ''; $('newPlanAmountFen').value = ''; $('newPlanDesc').value = '';
+      await loadPaymentPlans();
+    }}
+    async function savePaymentPlanRow(planId) {{
+      const payload = {{
+        name: $('planName_' + planId).value.trim(),
+        amount_fen: Number($('planAmount_' + planId).value || 0),
+        sort_order: Number($('planSort_' + planId).value || 0),
+        enabled: $('planEnabled_' + planId).value === 'true',
+      }};
+      const res = await fetch('/admin/api/payment/plans/' + encodeURIComponent(planId), {{
+        method: 'PATCH', headers: headers(), body: JSON.stringify(payload),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '保存失败');
+      else await loadPaymentPlans();
+    }}
+    async function disablePaymentPlan(planId) {{
+      if (!confirm('停用套餐 ' + planId + '？小程序将不再展示。')) return;
+      const res = await fetch('/admin/api/payment/plans/' + encodeURIComponent(planId), {{
+        method: 'DELETE', headers: headers(),
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '停用失败');
+      else await loadPaymentPlans();
     }}
     async function createAgent() {{
       const payload = {{
@@ -2518,7 +2782,7 @@ def _admin_html(authenticated: bool) -> str:
       const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
       users = data.items || [];
       listState.users.nextCursor = data.next_cursor || '';
-      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>DMX余额</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>用户余额 / DMX</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
         const q = jsQuote(u.user_id);
         const agentSel = `<select id="agent_${{esc(u.user_id)}}" onchange="saveUserAgent('${{q}}', this.value)">${{agentOptionsHtml(u.agent_id || 'shuxin')}}</select>`;
         return `<div class="table-row users">
@@ -2540,6 +2804,7 @@ def _admin_html(authenticated: bool) -> str:
         </div>`;
       }}).join('');
       renderPager('users', users.length);
+      await Promise.all(users.map(u => refreshUserQuota(u.user_id)));
     }}
     async function loadBindUsers() {{
       const data = await (await fetch(listUrl('bindUsers', '/admin/api/users'))).json();
@@ -2712,12 +2977,19 @@ def _admin_html(authenticated: bool) -> str:
       if (!res.ok || data.error) alert(data.error || 'mbti update failed');
       await loadDevices();
     }}
-    function formatDmxBalance(quota) {{
+    function formatDualBalance(quota) {{
       if (!quota || !quota.configured) return '未配置 DMX';
       if (quota.unlimited_quota) return '无限';
-      if (quota.remain_yuan == null) return '查询失败';
+      const display = quota.display_balance_yuan ?? quota.remain_yuan;
+      const dmx = quota.dmx_remain_yuan;
+      if (display == null && dmx == null) return '查询失败';
+      const displayText = display != null ? `${{display}} 元` : '—';
+      const dmxText = dmx != null ? `${{dmx}} 元` : '—';
       const suffix = quota.exhausted ? '（已用尽）' : '';
-      return `${{quota.remain_yuan}} 元${{suffix}}`;
+      return `用户 ${{displayText}} / DMX ${{dmxText}}${{suffix}}`;
+    }}
+    function formatDmxBalance(quota) {{
+      return formatDualBalance(quota);
     }}
     async function refreshUserQuota(userId) {{
       const el = $('dmxBalance_' + userId);
@@ -2733,11 +3005,11 @@ def _admin_html(authenticated: bool) -> str:
     function openUserTopUpModal(userId) {{
       const q = jsQuote(userId);
       openAdminModal({{
-        title: `DMX 充值 · ${{userId}}`,
+        title: `用户充值 · ${{userId}}`,
         bodyHtml: `<div class="llm-form">
-          <label><span class="hint">增加金额（元）</span><input id="topUpAmount" type="number" min="0.01" step="0.01" value="10" /></label>
+          <label><span class="hint">用户可见金额（元）</span><input id="topUpAmount" type="number" min="0.01" step="0.01" value="10" /></label>
           <label><span class="hint">备注（可选）</span><input id="topUpNote" placeholder="微信收款单号等" /></label>
-          <p class="hint">增量充值：在当前 DMX 余额上增加指定金额。</p>
+          <p class="hint">双账本：用户余额 += 填写金额；DMX 实际 += 金额 × 当前到账比例（与微信支付一致）。</p>
         </div>`,
         actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="submitUserTopUp('${{q}}')">确认充值</button>`,
       }});
