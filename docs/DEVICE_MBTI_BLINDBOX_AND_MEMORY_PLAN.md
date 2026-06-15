@@ -1,11 +1,11 @@
-# 舒心硬件机器人：盲盒 MBTI 与设备级记忆 — 产品需求与实施规划
+# 初心硬件机器人：盲盒 MBTI 与设备级记忆 — 产品需求与实施规划
 
 > **⚠️ 内部文档**：含架构、存储、接口等实现细节，**请勿对外或交给 GPT 评审**。  
 > 对外请使用：[MBTI_BLINDBOX_PRODUCT_CONCEPT.md](MBTI_BLINDBOX_PRODUCT_CONCEPT.md)
 
 > **文档用途**：团队内部评审与开发排期。  
 > **状态**：v0.2 — Phase 2–4（盲盒内容 / 状态机 / 开箱 UX）已在 Voice + 小程序落地；Phase 1 设备级记忆、Admin 重置盲盒仍为后续。  
-> **关联项目**：舒心（ShuXin）语音硬件 + 陪伴型 Agent 框架。  
+> **关联项目**：初心（ChuXin）语音硬件 + 陪伴型 Agent 框架。  
 > **相关文档**：[VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md)、[COMPANION_ROBOT_PERSONALITY_DESIGN.md](COMPANION_ROBOT_PERSONALITY_DESIGN.md)（长期人格成长，本期不实施）
 
 ---
@@ -14,7 +14,7 @@
 
 ### 1.1 产品是什么
 
-「舒心」是一个**陪伴型 AI 智能体**，面向实体硬件机器人场景：
+「初心」是一个**陪伴型 AI 智能体**，面向实体硬件机器人场景：
 
 - 用户通过微信小程序绑定设备；
 - 设备通过 WebSocket 与云端语音服务通信（STT → LLM Agent → TTS）；
@@ -201,7 +201,7 @@ type: INFJ
 display_name: 提倡者
 tagline: "安静而神秘，记得你说过的小事"
 soul_snippet: |
-  你是 INFJ 气质的舒心：……
+  你是 INFJ 气质的初心：……
 companion_factor_delta:   # 可选
   empathy: 0.02
 ```

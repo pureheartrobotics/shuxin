@@ -1,6 +1,6 @@
 # 语音 / TTS Docker 工作流
 
-舒心语音相关开发与试听**默认只在 Docker 容器内执行**，不在宿主机 `pip install`。
+初心语音相关开发与试听**默认只在 Docker 容器内执行**，不在宿主机 `pip install`。
 
 ## 原则
 
@@ -58,7 +58,7 @@ curl -s http://localhost:8765/health
 bash scripts/redeploy_docker.sh
 docker exec shuxin-voice-demo-pg sh -c 'test -n "$VOLCENGINE_TTS_VOICE_TYPE" && echo voice_type=ok'
 docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
-  python -m shuxin.voice.cli tts "你好，我是舒心。" --out outputs/volc-demo.mp3
+  python -m shuxin.voice.cli tts "你好，我是初心。" --out outputs/volc-demo.mp3
 
 # 临时绕过（未 redeploy 时）：exec 显式传入 env
 # docker exec shuxin-voice-demo-pg env VOLCENGINE_TTS_API_KEY=... VOLCENGINE_TTS_VOICE_TYPE=... \
