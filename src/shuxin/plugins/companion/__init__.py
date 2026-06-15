@@ -1,6 +1,6 @@
-"""舒心陪伴插件 — 插件入口
+"""初心陪伴插件 — 插件入口
 
-注册到舒心框架的插件系统，通过 hooks 和命令与核心交互。
+注册到初心框架的插件系统，通过 hooks 和命令与核心交互。
 
 注册的 Hooks：
 - pre_llm_call: 注入情感、用户画像和自尊状态
@@ -83,7 +83,7 @@ class CompanionPlugin:
             **kwargs: 插件系统传入的上下文参数。
 
         Returns:
-            Optional[str]: 注入的系统提示块，包含舒心当前状态。
+            Optional[str]: 注入的系统提示块，包含初心当前状态。
         """
         if not self._initialized:
             self.initialize()
@@ -112,7 +112,7 @@ class CompanionPlugin:
         )
         return (
             micro_anchor_block
-            + f"## 舒心当前状态\n\n"
+            + f"## 初心当前状态\n\n"
             + f"{esteem_status}\n\n"
             + f"{emotion_context}\n\n"
             + f"{profile_context}\n\n"
@@ -131,7 +131,18 @@ class CompanionPlugin:
         base = Path(self.data_dir)
         personality_path = base / "personality.json"
         summary_path = base.parent / "summaries" / "shared_memory.json"
+        user_home = base.parent
         lines = ["## 长期成长"]
+
+        try:
+            from shuxin.voice.user_profile import format_profile_context, load_profile
+
+            profile_block = format_profile_context(load_profile(user_home))
+            if profile_block.strip():
+                lines.append("")
+                lines.append(profile_block)
+        except Exception:
+            pass
 
         try:
             personality = json.loads(personality_path.read_text(encoding="utf-8"))
@@ -254,6 +265,16 @@ class CompanionPlugin:
         # 4. 更新用户模型
         self.user_model.record_interaction(message)
 
+        # 4b. 更新常驻用户画像（不受 7 日 summary 窗口限制）
+        if self.data_dir:
+            try:
+                from shuxin.voice.user_profile import update_profile_from_text
+
+                user_home = Path(self.data_dir).parent
+                update_profile_from_text(user_home, message)
+            except Exception:
+                pass
+
         # 5. 守护系统评估
         guardian_result = self.guardian.evaluate(message)
         if guardian_result and agent:
@@ -270,7 +291,7 @@ class CompanionPlugin:
     # ---- 命令 ----
 
     def cmd_status(self, args: str, **kwargs: Any) -> str:
-        """查看舒心完整状态。
+        """查看初心完整状态。
 
         Args:
             args: 命令参数（未使用）。
@@ -280,7 +301,7 @@ class CompanionPlugin:
             str: 格式化的完整状态文本。
         """
         return (
-            f"## 舒心状态总览\n\n"
+            f"## 初心状态总览\n\n"
             f"### 自尊系统\n{self.self_esteem.get_status_text()}\n"
             f"### 情感状态\n{self.emotion.get_status_text()}\n"
             f"### 守护系统\n{self.guardian.get_status_text()}\n"
@@ -338,7 +359,7 @@ class CompanionPlugin:
             str: 帮助文本。
         """
         return (
-            "## 舒心陪伴系统命令\n\n"
+            "## 初心陪伴系统命令\n\n"
             "/shuxin status    — 查看完整状态\n"
             "/shuxin emotion   — 查看情感状态\n"
             "/shuxin reset     — 重置自尊系统\n"

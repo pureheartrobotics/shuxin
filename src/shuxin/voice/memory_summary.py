@@ -22,7 +22,7 @@ SUMMARY_EVERY_N_ENV = "SHUXIN_SUMMARY_EVERY_N"
 SUMMARY_MODEL_ENV = "SHUXIN_SUMMARY_MODEL"
 SUMMARY_MAX_TOKENS_ENV = "SHUXIN_SUMMARY_MAX_TOKENS"
 DEFAULT_SUMMARY_EVERY_N = 5
-DEFAULT_SUMMARY_MAX_TOKENS = 256
+DEFAULT_SUMMARY_MAX_TOKENS = 512
 
 _TOPIC_PATTERNS = (
     re.compile(r"(?:关于|聊聊|说说)([^，。,.!！?？\s]{2,24})"),
@@ -127,7 +127,7 @@ def format_recent_turns(turns: Iterable[dict[str, Any]]) -> str:
             continue
         lines.append(f"用户: {user_text}")
         if reply_text:
-            lines.append(f"舒心: {reply_text}")
+            lines.append(f"初心: {reply_text}")
     return "\n".join(lines)
 
 
@@ -140,9 +140,10 @@ def build_merge_messages(
     topics_text = "、".join(recent_topics[:5]) if recent_topics else "无"
     turns_text = format_recent_turns(recent_turns) or "无"
     system = (
-        "你是舒心的记忆整理助手。请把「已有 7 日概况」与「新增对话」合并成一段简洁中文摘要，"
+        "你是初心的记忆整理助手。请把「已有 7 日概况」与「新增对话」合并成一段简洁中文摘要，"
         f"只保留最近 {SUMMARY_WINDOW_DAYS} 天内对用户陪伴有价值的信息（情绪、关系、近况、偏好、未完成话题）。"
-        "不要编造；没有新信息则保留原摘要。控制在 200 字以内。"
+        "不要编造；没有新信息则保留原摘要。控制在 400 字以内。"
+        "姓名、城市、长期喜好等常驻信息已由 user_profile 单独保存，摘要侧重近期情绪与未完成话题。"
     )
     user = (
         f"【已有 7 日概况】\n{existing_summary or '（暂无）'}\n\n"
@@ -228,3 +229,8 @@ def finalize_summary_after_merge(summary: dict[str, Any], merged_text: str) -> d
     updated["turns_since_summary"] = 0
     updated.setdefault("summary_window_days", SUMMARY_WINDOW_DAYS)
     return updated
+
+
+async def force_summary_trigger(repo: Any, user_settings: Any, device: Any | None = None) -> dict[str, Any]:
+    """E2E / 测试用：在 session 结束时强制触发 rolling_summary 合并。"""
+    return await repo.maybe_merge_rolling_summary(user_settings, device, force=True)
