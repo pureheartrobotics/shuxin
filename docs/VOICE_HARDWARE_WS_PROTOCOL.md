@@ -6,6 +6,8 @@
 
 **STT/TTS 由初心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权。已绑定设备可进入语音识别与合成；**未绑定但 `provisioned` 的设备**可走工厂验收会话（`hello_ok.factory_acceptance=true`），仅支持 `factory_verify` / `ping` / `abort`，不可对话。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
 
+固件如何获取 `<host>`、局域网双路径联调、出厂验收认知边界见 [VOICE_HARDWARE_HANDBOOK.md §2.10–§2.11](VOICE_HARDWARE_HANDBOOK.md)。
+
 ## 1. 服务地址
 
 默认地址：

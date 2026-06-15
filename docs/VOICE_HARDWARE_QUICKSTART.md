@@ -6,11 +6,20 @@
 
 ## 1. 服务地址
 
-| 用途 | 地址 |
-|------|------|
-| WebSocket 语音 | `ws://<host>:8765/ws/voice` |
-| 健康检查 | `http://<host>:8765/health` |
-| 浏览器测试台 | `http://<host>:8765/voice-demo`（PCM/mp3，非 Opus） |
+| 用途 | 地址 | host 来源 |
+|------|------|-----------|
+| WebSocket 语音（**固件唯一运行时通道**） | `ws://<host>:8765/ws/voice` | 工厂 IT / 现场运维下发；当前无公网域名时多为局域网 `192.168.x.x` |
+| 健康检查 | `http://<host>:8765/health` | 同上 |
+| 浏览器测试台 | `http://<host>:8765/voice-demo`（PCM/mp3，非 Opus） | 同上 |
+
+**固件不调用 HTTP `/api/...`**；`device_code` + `device_secret` 来自 Admin 制码后烧录；`claim_code` 仅贴外壳，不进固件。
+
+**当前局域网阶段（双路径）**：
+
+1. **固件**：配置 `host=<LAN_IP>` → 连 `ws://<LAN_IP>:8765/ws/voice`
+2. **QA 小程序**：编译前设 `SHUXIN_API_BASE=http://<LAN_IP>:8765`，与固件指向**同一台** Voice 服务
+
+详表与步骤清单见 [VOICE_HARDWARE_HANDBOOK.md §2.10](VOICE_HARDWARE_HANDBOOK.md)；出厂验收认知边界见 [§2.11](VOICE_HARDWARE_HANDBOOK.md)。
 
 ## 2. 前置条件
 

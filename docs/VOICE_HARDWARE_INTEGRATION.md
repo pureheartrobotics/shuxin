@@ -7,6 +7,8 @@
 - **用户绑定后对话**：须完成设备鉴权与 active binding（见 §4.2）。
 - **出厂工厂验收**：`provisioned` 且未绑定设备可走 `factory_acceptance` 路径，仅 `factory_verify` / `ping` / `abort`，禁止对话。见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)。
 
+固件如何获取 `<host>`、局域网双路径联调、出厂验收认知边界见 [VOICE_HARDWARE_HANDBOOK.md §2.10–§2.11](VOICE_HARDWARE_HANDBOOK.md)。
+
 协议字段与下行消息格式见 [语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。架构与绑定模型见 [初心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md) §6.1。
 
 ## 1. 一句话说明

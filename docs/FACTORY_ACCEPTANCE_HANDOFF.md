@@ -19,6 +19,44 @@
 | 对话 | 禁止 `listen` / 音频帧 | 正常 STT/LLM/TTS |
 | 固件动作 | 收 `factory_verify` → 回 ack | 正常语音对话 |
 
+### 1.1 信息认知边界（固件收什么 / 不收什么）
+
+出厂验收时，**HTTP 仅 QA 小程序使用**；固件只走 WebSocket。下列表说明各方各自知道什么：
+
+| 数据 | 固件 | QA 小程序 | 盒内卡片 | 验收后 DB |
+|------|------|-----------|----------|-----------|
+| `device_id` | 烧录 + hello 回显 | PASS 响应 | 无 | 有 |
+| `claim_code` | **不知** | 扫码输入 | 无（在外壳） | 有 |
+| MBTI | **不知**（sealed） | PASS 时显示 | 印刷 | sealed |
+| `factory_verify` | **收**（仅触发） | 不直接收 | 无 | 日志 |
+
+**固件会收到**：
+
+- `hello ok`：`device_id`、`factory_acceptance: true`（**无 MBTI**）
+- `factory_verify`：仅 `verify_id` + `timestamp`（**无 device_id、无 MBTI、无 PASS**）
+
+**固件不会收到**：`claim_code`、MBTI 性格、PASS/FAIL 详情。性格核对是 QA 人眼（手机 vs 卡片）；用户绑定后才揭晓 MBTI。
+
+局域网 host 获取与 QA 双路径联调见 [VOICE_HARDWARE_HANDBOOK.md §2.10](VOICE_HARDWARE_HANDBOOK.md)。
+
+```mermaid
+sequenceDiagram
+    participant HW as 固件设备
+    participant WS as Voice服务
+    participant QA as 小程序QA
+
+    HW->>WS: hello device_code+device_secret
+    WS-->>HW: hello_ok factory_acceptance=true device_id
+    Note over HW: 知道 device_id<br/>不知 claim_code 与 MBTI
+    QA->>WS: POST /api/factory/verify claim_code
+    Note over QA: HTTP 仅 QA 使用
+    WS->>HW: factory_verify verify_id only
+    Note over HW: 无 MBTI，本地 PASS 提示
+    HW->>WS: factory_verify_ack
+    WS-->>QA: PASS + mbti
+    Note over QA: 人眼对比盒内卡片
+```
+
 ## 2. 烧录与制码数据
 
 Admin 批量制码每条 `items[]` 含：
@@ -79,6 +117,8 @@ ws://<host>:8765/ws/voice
 - **不要**期待 MBTI 揭晓 TTS
 
 ### 3.4 监听 `factory_verify`
+
+**`factory_verify` 不含 MBTI**；性格仅在 QA 小程序的 HTTP PASS 响应中展示，供与盒内卡片核对。固件侧只需把此消息当作「验收通过」触发。
 
 QA 扫外壳码后云端下发（任意固件状态均可处理）：
 
