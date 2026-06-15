@@ -1,4 +1,4 @@
-"""舒心记忆系统
+"""初心记忆系统
 
 短期：会话消息列表（进程内）。
 长期：Mem0 + Qdrant（``SHUXIN_MEM0_ENABLED=1``）或 legacy ``facts.json``。
@@ -108,7 +108,7 @@ class MemoryManager:
         self._pending_user_text: str = ""
         self._mem0_client: Any = None
         self._mem0_init_attempted = False
-        self._mem0_top_k = max(1, int(os.environ.get("SHUXIN_MEM0_SEARCH_TOP_K", "5") or "5"))
+        self._mem0_top_k = max(1, int(os.environ.get("SHUXIN_MEM0_SEARCH_TOP_K", "8") or "8"))
 
         self._load_facts()
         if self._mem0_enabled():
@@ -247,13 +247,11 @@ class MemoryManager:
         if not q:
             return []
         try:
-            raw = self._mem0_client.search(q, user_id=self._user_id, limit=self._mem0_top_k)
-        except TypeError:
-            try:
-                raw = self._mem0_client.search(q, filters={"user_id": self._user_id}, limit=self._mem0_top_k)
-            except Exception as exc:
-                logger.warning("Mem0 search 失败: %s", exc)
-                return []
+            raw = self._mem0_client.search(
+                q,
+                filters={"user_id": self._user_id},
+                top_k=self._mem0_top_k,
+            )
         except Exception as exc:
             logger.warning("Mem0 search 失败: %s", exc)
             return []
@@ -279,7 +277,8 @@ class MemoryManager:
             )
             if text and str(text).strip():
                 lines.append(str(text).strip())
-        return lines
+        # 防御性截断：即使 Mem0 端忽略 top_k 也不会超注入上限
+        return lines[: self._mem0_top_k]
 
     def _recent_user_text(self) -> str:
         with self._lock:
