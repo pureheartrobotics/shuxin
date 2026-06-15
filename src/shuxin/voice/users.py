@@ -11,6 +11,7 @@ import yaml
 
 USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 DEFAULT_USER_ID = "demo-user"
+FACTORY_PROBE_USER_ID = "factory_probe"
 DEFAULT_AUDIO_QUOTA_MB = 512
 
 

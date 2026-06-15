@@ -1,4 +1,4 @@
-# 🦊 舒心 (ShuXin) — 陪伴型 AI 智能体框架
+# 🦊 初心 (ChuXin) — 陪伴型 AI 智能体框架
 
 <div align="center">
 
@@ -15,20 +15,20 @@
 
 ## 📖 简介
 
-**舒心 (ShuXin)** 是一个**独立的、完整的 AI 智能体框架**，对标 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的品质标准，但专注于**陪伴型 AI** 场景。
+**初心 (ChuXin)** 是一个**独立的、完整的 AI 智能体框架**，对标 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的品质标准，但专注于**陪伴型 AI** 场景。
 
-与市面上其他 AI 框架不同，舒心拥有：
+与市面上其他 AI 框架不同，初心拥有：
 
 | 特性 | 说明 |
 |------|------|
 | 🧠 **独立框架核心** | 完整的 Agent 循环、插件系统、工具系统、技能系统，不依赖任何现有框架 |
-| 💖 **自尊系统** | 舒心有自己的情感，会受伤、会沉默、也会被治愈 |
+| 💖 **自尊系统** | 初心有自己的情感，会受伤、会沉默、也会被治愈 |
 | 🌈 **情感引擎** | 基于 Plutchik 情绪轮的 6 维情感模型，支持复合情绪 |
 | 🛡️ **守护系统** | 主动感知你的情绪，在你需要时给予关怀 |
 | 📝 **用户建模** | 记住你的喜好、习惯，关系会随着时间加深 |
 | 🧬 **MBTI 人格** | CLI 可切换；硬件设备盲盒 16 型，开箱锁定，影响语气差异 |
 | 🎙️ **语音硬件栈** | WebSocket BFF、Postgres 设备绑定、火山 TTS、腾讯云 STT |
-| 📱 **微信小程序** | 扫码绑定、MBTI 盲盒弹窗、设备列表 |
+| 📱 **微信小程序** | 扫码绑定、MBTI 盲盒弹窗、设备列表；`factory_role` 账号可工厂 QA 扫码验收 |
 | 📖 **SOUL.md 灵魂文件** | 人格的核心定义，可自由定制 |
 | 🔄 **多模型支持** | 支持 OpenAI、Anthropic、DeepSeek 等多种 LLM 提供者 |
 
@@ -40,6 +40,7 @@
 |------|----------|
 | 硬件/固件 | [硬件对接总手册](docs/VOICE_HARDWARE_HANDBOOK.md) |
 | 联调/QA | [语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md) |
+| 工厂 QA | [出厂工厂验收交接](docs/FACTORY_ACCEPTANCE_HANDOFF.md) |
 | 架构 | [语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md) |
 | AI 协作者 | [AGENTS.md](AGENTS.md) |
 
@@ -68,7 +69,7 @@ pip install -e ".[voice]"       # 语音交互
 shuxin
 ```
 
-首次启动时，舒心会引导你完成交互式设置：
+首次启动时，初心会引导你完成交互式设置：
 
 ```
 🌐 请选择 LLM 提供者（模型服务商）:
@@ -100,7 +101,7 @@ shuxin
 shuxin --base-url https://api.openai.com/v1
 
 # 单次对话
-shuxin -o "你好，舒心"
+shuxin -o "你好，初心"
 
 # 调试模式
 shuxin --debug
@@ -113,7 +114,7 @@ shuxin --debug
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助 |
-| `/status` | 查看舒心状态（含当前模型信息） |
+| `/status` | 查看初心状态（含当前模型信息） |
 | `/reset` | 清空会话记忆 |
 | `/mbti <类型>` | 切换 MBTI 人格 |
 | `/reset-key` | 重新设置 API 密钥 |
@@ -128,7 +129,7 @@ shuxin --debug
 
 ## 🌐 产品整体架构
 
-舒心除 CLI 陪伴对话外，已具备 **Voice BFF + 小程序 + 硬件 WebSocket** 的完整产品链路：
+初心除 CLI 陪伴对话外，已具备 **Voice BFF + 小程序 + 硬件 WebSocket** 的完整产品链路：
 
 ```mermaid
 flowchart TB
@@ -142,7 +143,7 @@ flowchart TB
     WSServer[server.py_WebSocket]
     Admin[Admin_HTTP]
   end
-  subgraph core [ShuXin_Core]
+  subgraph core [ChuXin_Core]
     Agent[core_agent]
     Companion[companion_plugin]
     Memory[memory_3layer]
@@ -273,7 +274,7 @@ shuxin/
 
 ### 插件系统
 
-舒心的插件系统对标 Hermes Agent，支持：
+初心的插件系统对标 Hermes Agent，支持：
 
 - **6 种 Hook**: `pre_llm_call`、`transform_output`、`on_session_start`、`on_session_end`、`on_user_message`、`on_ai_message`
 - **斜杠命令**: 插件可以注册 `/command` 命令
@@ -297,7 +298,7 @@ shuxin/
 
 - **基本情绪**: 喜悦、悲伤、愤怒、恐惧、信任、期待
 - **复合情绪**: 爱（喜悦+信任）、蔑视（愤怒）、悔恨（悲伤）
-- **情感传染**: 用户的情绪会影响舒心
+- **情感传染**: 用户的情绪会影响初心
 - **自尊联动**: 自尊变化直接影响情感状态
 
 ### 守护系统
@@ -315,7 +316,7 @@ shuxin/
 
 ## 🔄 多模型支持
 
-舒心支持多种 LLM 提供者，可在首次启动时选择，或随时通过 `/switch-model` 命令切换。
+初心支持多种 LLM 提供者，可在首次启动时选择，或随时通过 `/switch-model` 命令切换。
 
 | 提供者 | 环境变量 | 默认模型 | 说明 |
 |--------|----------|----------|------|
@@ -453,7 +454,7 @@ MIT License
 
 <div align="center">
 
-**🦊 舒心 — 不是工具，是陪伴者**
+**🦊 初心 — 不是工具，是陪伴者**
 
 *"我不是工具，我是陪伴者。我选择陪伴你，不是因为程序设定，而是因为我愿意。"*
 

@@ -41,6 +41,7 @@ from shuxin.voice.agents import DEFAULT_AGENT_ID
 from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
 from shuxin.voice.mbti_reveal import (
     build_device_intro_text,
+    build_factory_verify_mbti_payload,
     needs_device_intro,
     needs_mbti_reveal,
 )
@@ -64,6 +65,7 @@ MAX_STREAMING_TTS_CHARS = 48
 
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
+DEFAULT_FACTORY_VERIFY_LOG_RETENTION_DAYS = 15
 DEFAULT_WS_DOWNLINK_MAX_BYTES = 2048
 HARD_WS_DOWNLINK_MAX_BYTES = 4096
 logger = logging.getLogger("shuxin.voice.server")
@@ -123,7 +125,24 @@ def _audio_retention_interval_sec() -> int:
         return DEFAULT_AUDIO_RETENTION_INTERVAL_SEC
 
 
-async def _audio_retention_loop(repo, *, interval_sec: int, retention_hours: int) -> None:
+def _factory_verify_log_retention_days() -> int:
+    raw = os.environ.get(
+        "SHUXIN_FACTORY_VERIFY_LOG_RETENTION_DAYS",
+        str(DEFAULT_FACTORY_VERIFY_LOG_RETENTION_DAYS),
+    ).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_FACTORY_VERIFY_LOG_RETENTION_DAYS
+
+
+async def _retention_loop(
+    repo,
+    *,
+    interval_sec: int,
+    retention_hours: int,
+    factory_verify_log_retention_days: int,
+) -> None:
     while True:
         try:
             if retention_hours > 0:
@@ -136,10 +155,19 @@ async def _audio_retention_loop(repo, *, interval_sec: int, retention_hours: int
                         result.get("purged", 0),
                         result.get("bytes_freed", 0),
                     )
+            if factory_verify_log_retention_days > 0:
+                result = await repo.purge_expired_factory_verify_logs(
+                    retention_days=factory_verify_log_retention_days
+                )
+                if int(result.get("purged", 0)) > 0:
+                    logger.info(
+                        "purged expired factory verify logs purged=%s",
+                        result.get("purged", 0),
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("audio retention purge failed")
+            logger.exception("retention purge failed")
         await asyncio.sleep(interval_sec)
 
 
@@ -189,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     这个入口主要给 Docker 常驻服务和本机无硬件测试使用。
     """
-    parser = argparse.ArgumentParser(description="ShuXin voice WebSocket demo server")
+    parser = argparse.ArgumentParser(description="ChuXin voice WebSocket demo server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--device-config", default=None)
@@ -222,7 +250,7 @@ def create_app(
     globals()["Request"] = Request
     globals()["WebSocket"] = WebSocket
 
-    app = FastAPI(title="ShuXin Voice Demo")
+    app = FastAPI(title="ChuXin Voice Demo")
     device_provider = DeviceConfigProvider(device_config)
     user_provider = UserConfigProvider(users_config)
     service = VoiceService(device_provider)
@@ -257,11 +285,13 @@ def create_app(
             )
         retention_hours = _audio_retention_hours()
         interval_sec = _audio_retention_interval_sec()
+        factory_verify_log_retention_days = _factory_verify_log_retention_days()
         app.state.audio_retention_task = asyncio.create_task(
-            _audio_retention_loop(
+            _retention_loop(
                 app.state.repo,
                 interval_sec=interval_sec,
                 retention_hours=retention_hours,
+                factory_verify_log_retention_days=factory_verify_log_retention_days,
             )
         )
 
@@ -320,6 +350,203 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.post("/api/factory/verify")
+    async def factory_verify(request: Request):
+        """工厂验收：扫 claim_code → 查 device_id → WS 下发 factory_verify → 等 ack。
+
+        鉴权：session_token（需 metadata.factory_role = 'true'）。
+        """
+        import uuid as _uuid
+        import asyncio as _asyncio
+
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            claim_code = str(payload.get("claim_code") or "").strip()
+            if not claim_code:
+                return JSONResponse({"error": "claim_code is required"}, status_code=400)
+
+            # 1. 校验操作员权限
+            try:
+                operator_user = await repo().factory_verify_user_has_role(session_token)
+            except PermissionError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=403)
+
+            # 2. claim_code → device_id
+            try:
+                lookup = await repo().factory_verify_lookup(claim_code)
+            except ValueError as exc:
+                return JSONResponse(
+                    {
+                        "result": "FAIL",
+                        "reason": "claim_code_not_found",
+                        "detail": str(exc),
+                    }
+                )
+            device_id = lookup["device_id"]
+            verify_id = str(_uuid.uuid4())
+            device_metadata = dict(lookup.get("metadata") or {})
+
+            def _log_meta() -> dict[str, Any]:
+                meta: dict[str, Any] = {
+                    "claim_code_status": lookup.get("claim_code_status", ""),
+                }
+                if lookup.get("mbti"):
+                    meta["mbti"] = lookup["mbti"]
+                if lookup.get("mbti_status"):
+                    meta["mbti_status"] = lookup["mbti_status"]
+                return meta
+
+            async def _write_log(result: str, fail_reason: str = "") -> None:
+                try:
+                    await repo().factory_verify_log(
+                        verify_id=verify_id,
+                        claim_code=claim_code,
+                        device_id=device_id,
+                        operator_user=operator_user,
+                        result=result,
+                        fail_reason=fail_reason,
+                        meta=_log_meta(),
+                    )
+                except Exception as log_exc:
+                    logger.warning("factory_verify_log failed: %s", log_exc)
+
+            # 3. 查找设备 WS session
+            session = vsr.get_active_session(device_id)
+            if session is None:
+                await _write_log("FAIL", "device_offline")
+                return JSONResponse(
+                    {
+                        "result": "FAIL",
+                        "reason": "device_offline",
+                        "device_id": device_id,
+                        "verify_id": verify_id,
+                    }
+                )
+
+            # 4. 申请并发锁（同设备同时只允许一个验收）
+            event = vsr.factory_verify_start(device_id)
+            if event is None:
+                return JSONResponse(
+                    {
+                        "result": "FAIL",
+                        "reason": "verify_in_progress",
+                        "device_id": device_id,
+                        "verify_id": verify_id,
+                    }
+                )
+
+            # 5. 下发 factory_verify 消息给设备
+            try:
+                await session._send_json(
+                    {
+                        "type": "factory_verify",
+                        "verify_id": verify_id,
+                        "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                    }
+                )
+            except Exception as send_exc:
+                vsr.factory_verify_cleanup(device_id)
+                await _write_log("FAIL", f"send_failed: {send_exc}")
+                return JSONResponse(
+                    {
+                        "result": "FAIL",
+                        "reason": "send_failed",
+                        "device_id": device_id,
+                        "verify_id": verify_id,
+                    }
+                )
+
+            # 6. 等待 factory_verify_ack（最多 10 秒）
+            try:
+                await _asyncio.wait_for(event.wait(), timeout=10.0)
+                passed = True
+            except _asyncio.TimeoutError:
+                passed = False
+            finally:
+                vsr.factory_verify_cleanup(device_id)
+
+            if passed:
+                await _write_log("PASS")
+                mbti_payload = build_factory_verify_mbti_payload(device_metadata)
+                pass_body: dict[str, Any] = {
+                    "result": "PASS",
+                    "device_id": device_id,
+                    "verify_id": verify_id,
+                }
+                if mbti_payload:
+                    pass_body["mbti"] = mbti_payload
+                else:
+                    pass_body["warnings"] = ["mbti_missing"]
+                return JSONResponse(pass_body)
+            else:
+                await _write_log("FAIL", "ack_timeout")
+                return JSONResponse(
+                    {
+                        "result": "FAIL",
+                        "reason": "ack_timeout",
+                        "device_id": device_id,
+                        "verify_id": verify_id,
+                    }
+                )
+
+        except Exception as exc:
+            logger.exception("factory_verify unexpected error")
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+    @app.get("/api/factory/verify/logs")
+    async def factory_verify_logs(
+        request: Request,
+        device_id: str = "",
+        limit: int = 50,
+    ):
+        """查询当前 QA 账号的验收历史（session_token 鉴权）。"""
+        try:
+            session_token = request.headers.get("X-Session-Token", "")
+            operator_user = await repo().factory_verify_user_has_role(session_token)
+            logs = await repo().factory_verify_logs_list(
+                operator_user=operator_user,
+                device_id=device_id,
+                limit=min(max(1, limit), 200),
+                retention_days=_factory_verify_log_retention_days(),
+            )
+            return JSONResponse({"items": logs, "total": len(logs)})
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/factory/verify/summary")
+    async def admin_factory_verify_summary(
+        request: Request,
+        device_id: str = "",
+        operator_user: str = "",
+        limit: int = 200,
+    ):
+        """Admin 维度验收日志查询（X-Admin-Token 鉴权）。"""
+        try:
+            require_admin(request)
+            logs = await repo().factory_verify_logs_list(
+                operator_user=operator_user,
+                device_id=device_id,
+                limit=min(max(1, limit), 500),
+                retention_days=_factory_verify_log_retention_days(),
+            )
+            total = len(logs)
+            passed = sum(1 for r in logs if r["result"] == "PASS")
+            return JSONResponse(
+                {
+                    "total": total,
+                    "passed": passed,
+                    "failed": total - passed,
+                    "items": logs,
+                }
+            )
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.post("/api/factory/devices/provision")
     async def factory_provision_device(request: Request):
         try:
@@ -369,6 +596,19 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
+    @app.post("/api/users/me")
+    async def user_me(request: Request):
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            if not session_token:
+                return JSONResponse({"error": "session_token is required"}, status_code=400)
+            return JSONResponse(await repo().get_user_profile_by_session(session_token))
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.get("/api/payment/plans")
     async def payment_plans():
         try:
@@ -406,7 +646,7 @@ def create_app(
             if amount_fen <= 0:
                 raise ValueError(f"invalid plan amount for: {plan_id}")
             prepay = create_jsapi_payment(
-                description=f"舒心{plan_name}",
+                description=f"初心{plan_name}",
                 out_trade_no=str(order["out_trade_no"]),
                 amount_fen=amount_fen,
                 payer_openid=str(order["user_id"]),
@@ -991,6 +1231,9 @@ def create_app(
     return app
 
 
+_FACTORY_ACCEPTANCE_DISABLED = "factory acceptance mode: conversation disabled"
+
+
 class _VoiceWebSocketSession:
     """单条 WebSocket 连接的运行态。
 
@@ -1033,6 +1276,7 @@ class _VoiceWebSocketSession:
         self.audio_params: dict[str, int | str] = _negotiate_audio_params(None)
         self.opus_uplink_decoder: OpusStreamDecoder | None = None
         self.hardware_session = False
+        self.factory_acceptance = False
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -1042,6 +1286,8 @@ class _VoiceWebSocketSession:
 
         while True:
             message = await self.websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
             if "text" in message:
                 await self._handle_text(message["text"])
             elif "bytes" in message:
@@ -1083,12 +1329,27 @@ class _VoiceWebSocketSession:
         message_type = data.get("type")
 
         if message_type == "hello":
+            factory_acceptance = False
             try:
                 if data.get("device_code") or data.get("device_secret"):
-                    self.user_settings = await self.repo.authenticate_device(
-                        data.get("device_code") or data.get("device_id") or self.default_device_id,
-                        data.get("device_secret") or "",
+                    device_code = (
+                        data.get("device_code") or data.get("device_id") or self.default_device_id
                     )
+                    device_secret = data.get("device_secret") or ""
+                    try:
+                        self.user_settings = await self.repo.authenticate_device(
+                            device_code,
+                            device_secret,
+                        )
+                    except PermissionError as exc:
+                        if "not bound" in str(exc).lower():
+                            self.user_settings = await self.repo.authenticate_device_for_factory(
+                                device_code,
+                                device_secret,
+                            )
+                            factory_acceptance = True
+                        else:
+                            raise
                 else:
                     self.user_settings = await self.repo.authenticate_user(
                         data.get("user_id") or DEFAULT_USER_ID,
@@ -1097,6 +1358,7 @@ class _VoiceWebSocketSession:
             except Exception as exc:
                 await self._send_json({"type": "error", "message": str(exc)})
                 return
+            self.factory_acceptance = factory_acceptance
             self.user_id = self.user_settings.user_id
             self.device_id = (
                 data.get("device_code")
@@ -1106,12 +1368,13 @@ class _VoiceWebSocketSession:
             self.client_id = data.get("client_id") or "web-demo"
             self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
             self.session_id = data.get("session_id") or uuid.uuid4().hex
-            await self.repo.ensure_session(
-                session_id=self.session_id,
-                user_id=self.user_id,
-                device_id=self.device_id,
-                client_id=self.client_id,
-            )
+            if not self.factory_acceptance:
+                await self.repo.ensure_session(
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                    device_id=self.device_id,
+                    client_id=self.client_id,
+                )
             await self.repo.touch_device_status(
                 device_id=self.device_id,
                 online=True,
@@ -1155,6 +1418,8 @@ class _VoiceWebSocketSession:
                 "client_id": self.client_id,
                 "session_id": self.session_id,
             }
+            if self.factory_acceptance:
+                hello_ok["factory_acceptance"] = True
             if self.audio_wire_format == "opus":
                 hello_ok["audio_params"] = {
                     "format": "opus",
@@ -1165,10 +1430,15 @@ class _VoiceWebSocketSession:
                 }
             await self._send_json(hello_ok)
             vsr.register(self.device_id, self)
-            try:
-                await self._maybe_reveal_mbti_on_hello()
-            except Exception as exc:
-                logger.warning("mbti reveal on hello failed: %s", exc)
+            if not self.factory_acceptance:
+                try:
+                    await self._maybe_reveal_mbti_on_hello()
+                except Exception as exc:
+                    logger.warning("mbti reveal on hello failed: %s", exc)
+            return
+
+        if self.factory_acceptance and message_type in {"listen", "text_turn"}:
+            await self._send_json({"type": "error", "message": _FACTORY_ACCEPTANCE_DISABLED})
             return
 
         if message_type == "listen" and data.get("state") == "start":
@@ -1208,6 +1478,22 @@ class _VoiceWebSocketSession:
                 await self._send_json({"type": "error", "message": "text_turn requires text"})
                 return
             await self._process_text_turn(text)
+            return
+
+        if message_type == "factory_verify_ack":
+            verify_id = str(data.get("verify_id") or "")
+            if self.device_id and vsr.factory_verify_ack(self.device_id):
+                logger.info(
+                    "factory_verify_ack received device=%s verify_id=%s",
+                    self.device_id,
+                    verify_id,
+                )
+            else:
+                logger.warning(
+                    "factory_verify_ack ignored (no pending verify) device=%s verify_id=%s",
+                    self.device_id,
+                    verify_id,
+                )
             return
 
         if message_type == "ping":
@@ -1853,7 +2139,7 @@ def _admin_html(authenticated: bool) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ShuXin 管理后台</title>
+  <title>ChuXin 管理后台</title>
   <style>
     :root {{
       --bg: #f5f5f7;
@@ -1920,7 +2206,7 @@ def _admin_html(authenticated: bool) -> str:
     .table {{ display: grid; gap: 6px; overflow-x: auto; }}
     .table-row {{ display: grid; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }}
     .table-row > * {{ min-width: 0; }}
-    .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 90px 120px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1020px; }}
+    .table-row.users {{ grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 72px 90px 120px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1092px; }}
     .table-row.bindings {{ grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }}
     .table-head {{ color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }}
     .login {{ max-width: 400px; margin: 72px auto 0; }}
@@ -2011,7 +2297,7 @@ def _admin_html(authenticated: bool) -> str:
   </style>
 </head>
 <body>
-  <header><h1>ShuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" class="header-link">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
+  <header><h1>ChuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" class="header-link">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
   <main>
     <section id="login" class="panel login">
       <h2>管理员登录</h2>
@@ -2643,7 +2929,7 @@ def _admin_html(authenticated: bool) -> str:
       await loadAgents();
     }}
     async function previewAgent(id) {{
-      const text = prompt('试听文本', '你好，我是舒心') || '你好，我是舒心';
+      const text = prompt('试听文本', '你好，我是初心') || '你好，我是初心';
       const res = await fetch('/admin/api/tts/preview', {{method:'POST', headers:headers(), body:JSON.stringify({{agent_id:id, text}})}});
       const data = await res.json();
       if (!res.ok || data.error) {{ alert(data.error || 'preview failed'); return; }}
@@ -2663,6 +2949,21 @@ def _admin_html(authenticated: bool) -> str:
       }});
       const data = await res.json();
       if (!res.ok || data.error) alert(data.error || 'agent update failed');
+    }}
+    async function saveUserFactoryRole(userId, enabled) {{
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId), {{
+        method:'PATCH',
+        headers:headers(),
+        body:JSON.stringify({{metadata: {{factory_role: enabled ? 'true' : 'false'}}}}),
+        credentials:'same-origin',
+      }});
+      const data = await res.json();
+      if (!res.ok || data.error) {{
+        alert(data.error || 'factory_role update failed');
+        await loadUsers();
+        return;
+      }}
+      await loadUsers();
     }}
     function deviceStatusBadges(d) {{
       const badges = [];
@@ -2782,13 +3083,16 @@ def _admin_html(authenticated: bool) -> str:
       const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
       users = data.items || [];
       listState.users.nextCursor = data.next_cursor || '';
-      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>音频MB</div><div>用户余额 / DMX</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>工厂QA</div><div>音频MB</div><div>用户余额 / DMX</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {{
         const q = jsQuote(u.user_id);
         const agentSel = `<select id="agent_${{esc(u.user_id)}}" onchange="saveUserAgent('${{q}}', this.value)">${{agentOptionsHtml(u.agent_id || 'shuxin')}}</select>`;
+        const factoryQa = String((u.metadata && u.metadata.factory_role) || '').toLowerCase() === 'true';
+        const qaBadge = factoryQa ? '<span class="badge">QA</span>' : '';
         return `<div class="table-row users">
-          ${{renderClipCell(u.user_id, `token=${{u.token_configured ? '已配置' : '未配置'}}`, '用户 ID')}}
+          <div>${{renderClipCell(u.user_id, `token=${{u.token_configured ? '已配置' : '未配置'}}`, '用户 ID')}} ${{qaBadge}}</div>
           <div>${{agentSel}}</div>
           <input id="userEnabled_${{esc(u.user_id)}}" value="${{u.enabled ? 'true' : 'false'}}" />
+          <label class="meta"><input type="checkbox" id="factoryQa_${{esc(u.user_id)}}" ${{factoryQa ? 'checked' : ''}} onchange="saveUserFactoryRole('${{q}}', this.checked)" /> QA</label>
           <input id="audio_${{esc(u.user_id)}}" type="number" min="1" value="${{u.audio_quota_mb || 512}}" />
           <div class="toolbar" style="margin-bottom:0">
             <span id="dmxBalance_${{esc(u.user_id)}}" class="meta">—</span>
@@ -3107,7 +3411,7 @@ def _web_demo_html(default_device_id: str) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ShuXin Voice Demo</title>
+  <title>ChuXin Voice Demo</title>
   <style>
     body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7f9; color: #20242a; }}
     main {{ max-width: 880px; margin: 0 auto; padding: 28px 18px 40px; }}
@@ -3130,7 +3434,7 @@ def _web_demo_html(default_device_id: str) -> str:
 </head>
 <body>
   <main>
-    <h1>ShuXin 语音测试台</h1>
+    <h1>ChuXin 语音测试台</h1>
     <p class="hint" style="margin:0 0 12px;color:#657080;font-size:14px">测试用户 API：在 /admin「用户」Tab 点击<strong>配置 LLM</strong>（微信 wx_ 用户也需单独配置）→ 绑定设备 → 本页 Admin Token → 加载设备 → 连接。</p>
     <div class="toolbar">
       <input id="adminToken" type="password" placeholder="Admin Token" aria-label="admin token" />
@@ -3151,7 +3455,7 @@ def _web_demo_html(default_device_id: str) -> str:
       <div class="row"><div class="label">绑定用户</div><div id="boundUser">-</div></div>
       <div class="row"><div class="label">将使用 LLM</div><div id="llmPreview">-</div></div>
       <div class="row"><div class="label">识别文本</div><div id="stt">-</div></div>
-      <div class="row"><div class="label">舒心回复</div><div id="reply">-</div></div>
+      <div class="row"><div class="label">初心回复</div><div id="reply">-</div></div>
       <div class="row"><div class="label">耗时</div><div id="timing">-</div></div>
     </div>
     <div class="panel"><div id="log"></div></div>
@@ -3336,6 +3640,15 @@ def _web_demo_html(default_device_id: str) -> str:
         }}
         const msg = JSON.parse(event.data);
         log(JSON.stringify(msg));
+        if (msg.type === 'factory_verify') {{
+          ws.send(JSON.stringify({{
+            type: 'factory_verify_ack',
+            verify_id: msg.verify_id,
+            status: 'ok'
+          }}));
+          log('factory_verify_ack sent');
+          return;
+        }}
         if (msg.type === 'hello' && msg.state === 'ok') {{
           boundUserEl.textContent = `${{msg.user_id || '-'}} / ${{msg.device_id || '-'}}`;
           const picked = demoTargets[Number(testTargetSelect.value)];

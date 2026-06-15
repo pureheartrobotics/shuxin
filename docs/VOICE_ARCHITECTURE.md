@@ -1,6 +1,6 @@
-# 舒心语音闭环与硬件接口架构
+# 初心语音闭环与硬件接口架构
 
-本文档说明当前语音 demo 的边界：我们参考小智项目的成熟服务端形态，但不复制它的产品核心。舒心自己的核心仍然是 Agent 主循环、人格、记忆、插件和陪伴编排。
+本文档说明当前语音 demo 的边界：我们参考小智项目的成熟服务端形态，但不复制它的产品核心。初心自己的核心仍然是 Agent 主循环、人格、记忆、插件和陪伴编排。
 
 **硬件方入口**：[VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)（流程与状态机）。协议字段见 [VOICE_HARDWARE_WS_PROTOCOL.md](VOICE_HARDWARE_WS_PROTOCOL.md)。
 
@@ -15,7 +15,7 @@
 - TTS 音频帧按节奏下发。
 - `device_id / client_id / per-device config` 的设备配置思路。
 
-舒心自己保留的部分：
+初心自己保留的部分：
 
 - `Agent` 主循环。
 - `SOUL.md` 和 personality。
@@ -43,7 +43,7 @@
   -> 输入用户音频文件路径
   -> STT
   -> 用户文字
-  -> ShuXin Agent
+  -> ChuXin Agent
   -> 回复文字
   -> TTS
   -> outputs/session/reply-001.mp3
@@ -139,7 +139,7 @@ http://localhost:8765/voice-demo
 低延时实时 STT provider：
 
 - STT：腾讯云实时语音识别 WebSocket，配置类型为 `tencent-realtime`。
-- 浏览器/硬件仍向舒心服务端发送 16k mono PCM16；服务端在 `listen start` 后连接腾讯云 ASR，并在录音期间持续转发 PCM。
+- 浏览器/硬件仍向初心服务端发送 16k mono PCM16；服务端在 `listen start` 后连接腾讯云 ASR，并在录音期间持续转发 PCM。
 - 腾讯云返回的中间结果会下发为 `stt partial`，稳定句子结果下发为 `stt sentence_final`；`listen stop` 后用累积文本进入 Agent 和 TTS。
 - 需要环境变量 `TENCENT_ASR_APPID`、`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`，设备配置示例见 `data/devices.yaml.example`。
 
@@ -206,7 +206,7 @@ voice-demo 人工验收步骤见 [VOICE_DEMO_MIN_TEST.md §11](VOICE_DEMO_MIN_TE
 | `users.agent_id` | 引用 `agents.agent_id`（默认 `shuxin`） |
 | `SHUXIN_TTS_TIMEOUT_SECONDS` | HTTP 合成超时（默认 30） |
 
-试听：`python -m shuxin.voice.cli tts "你好，我是舒心。" --out outputs/volc-demo.mp3`（需配置 `VOLCENGINE_TTS_API_KEY` 与 `VOLCENGINE_TTS_VOICE_TYPE`）。
+试听：`python -m shuxin.voice.cli tts "你好，我是初心。" --out outputs/volc-demo.mp3`（需配置 `VOLCENGINE_TTS_API_KEY` 与 `VOLCENGINE_TTS_VOICE_TYPE`）。
 
 Edge TTS + karen FX 仅保留于 `scripts/generate_voiceover_candidates.py` 等试听脚本，不再用于生产 WebSocket 路径。
 
@@ -251,7 +251,7 @@ DeviceSession
 - 文件输出替换成 WebSocket/Opus 音频帧下发。
 - `DeviceSession` 继续保存 `device_id`、`client_id`、会话状态和 Agent 配置。
 
-不要为了接硬件重写舒心 Agent/STT/TTS 主链路。
+不要为了接硬件重写初心 Agent/STT/TTS 主链路。
 
 ## 5. 未来硬件协议形态
 
@@ -288,7 +288,7 @@ audio frame bytes
 服务端下行文本消息：
 
 ```json
-{"type":"stt","text":"你好，舒心"}
+{"type":"stt","text":"你好，初心"}
 ```
 
 ```json
@@ -344,7 +344,7 @@ tts audio frame bytes
 - 管理后台批量生成 `device_id`、一次性可见的 `device_secret` 和外壳公开 `claim_code`。
 - 后端把设备和公开码写入数据库，`device_secret` 只保存 hash。
 - 工人把 `device_id + device_secret` 烧录进设备，外部条形码只暴露 `claim_code`。
-- 用户小程序先调用 `/api/wechat/login` 换取舒心 `session_token`，扫码后再提交 `session_token + claim_code` 建立 active binding。
+- 用户小程序先调用 `/api/wechat/login` 换取初心 `session_token`，扫码后再提交 `session_token + claim_code` 建立 active binding。
 - 设备 WebSocket `hello` 使用 `device_code + device_secret`；后端鉴权通过后才允许访问绑定用户资产和模型 API。
 
 数据库使用 `devices.auth_mode` 和 `device_secret_hash` 支持逐台设备独立密钥。
@@ -376,6 +376,11 @@ tts audio frame bytes
 |------|------|
 | `POST /api/factory/devices/provision` | 单台登记设备，生成一次性 `device_secret` 和 `claim_code` |
 | `POST /admin/api/factory/devices/batch` | 后台批量生成 `device_id + device_secret + claim_code` 并入库 |
+| `POST /api/users/quota` | 小程序查询当前用户余额摘要 |
+| `POST /api/users/me` | 小程序当前用户资料：`user_id`、`roles.factory_qa`、嵌套 `quota` |
+| `POST /api/factory/verify` | 工厂 QA：扫 `claim_code` → WS `factory_verify` → 等 `factory_verify_ack` → PASS + MBTI |
+| `GET /api/factory/verify/logs` | QA 验收历史（`X-Session-Token` 或 body `session_token`） |
+| `GET /admin/api/factory/verify/summary` | Admin 验收记录汇总 |
 | `GET /admin/api/claim-codes/{claim_code}/barcode.png` | 返回外壳公开码的 Code128 PNG |
 | `POST /api/barcodes/decode` | 小程序上传条形码图片后端识别，返回公开码文本 |
 | `POST /api/wechat/login` | 小程序提交 `wx_code`，服务端换 openid 并返回自定义 `session_token` |
@@ -429,4 +434,4 @@ Web 测试台现在区分三类数据：
 
 - 只新增 WebSocket transport。
 - 复用现有 `VoiceSessionRunner` 或其会话编排思想。
-- 不替换舒心 Agent 核心。
+- 不替换初心 Agent 核心。

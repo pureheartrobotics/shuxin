@@ -4,7 +4,7 @@
 
 ## 一句话
 
-**硬件只收 Opus 小包；火山合成、MP3 转 Opus 全在舒心云端完成。固件不需要 ffmpeg，也不需要火山 API Key。**
+**硬件只收 Opus 小包；火山合成、MP3 转 Opus 全在初心云端完成。固件不需要 ffmpeg，也不需要火山 API Key。**
 
 ---
 
@@ -12,7 +12,7 @@
 
 | 不需要 | 原因 |
 |--------|------|
-| **ffmpeg** | MP3 转 Opus 在 **舒心 Docker 服务端** 内完成（[`Dockerfile`](../Dockerfile) apt 层），与 ESP32 无关 |
+| **ffmpeg** | MP3 转 Opus 在 **初心 Docker 服务端** 内完成（[`Dockerfile`](../Dockerfile) apt 层），与 ESP32 无关 |
 | **火山 / 豆包 API Key** | 服务端代调，固件只连 WebSocket |
 | **MP3 解码器（下行）** | 下行永远是 **裸 Opus packet**，不是 MP3、不是 Ogg 文件 |
 | **直连互联网语音云** | 所有合成经 `ws://<host>:8765/ws/voice` |
@@ -101,9 +101,9 @@ sequenceDiagram
 
 | 步骤 | 谁做 | 说明 |
 |------|------|------|
-| 1. 分句 | 舒心服务端 | LLM 边出字边按句号等切成短句，不必等整段说完 |
+| 1. 分句 | 初心服务端 | LLM 边出字边按句号等切成短句，不必等整段说完 |
 | 2. 合成 | 火山引擎 **OpenSpeech 语音复刻** | HTTP API，返回 **MP3**（团队口语有时叫「豆包 TTS」，指同一套字节语音能力，**不是**豆包大模型对话 API） |
-| 3. 转 Opus | 舒心 **Docker 容器内** | MP3 → PCM 24 kHz → Opus 60 ms 帧；用容器自带工具，**固件不参与** |
+| 3. 转 Opus | 初心 **Docker 容器内** | MP3 → PCM 24 kHz → Opus 60 ms 帧；用容器自带工具，**固件不参与** |
 | 4. 下发 | WebSocket | 每个 Opus 帧单独一条 binary 消息 |
 
 **重要**：火山是 **整句合成完** 再开始切 Opus 推送，不是 token 级边合成边推 Opus。首包延迟 ≈ 该句火山耗时 + 转码时间。

@@ -13,7 +13,7 @@
 
 当前 demo 不测试真实量产硬件、WebSocket 流式打断、OTA、MQTT 和生产级并发。
 
-语音闭环和硬件接口设计见：[舒心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md)。
+语音闭环和硬件接口设计见：[初心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md)。
 
 硬件接入总览（三码、鉴权、STT/TTS 不由固件直连）：[硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
 
@@ -127,14 +127,14 @@ Docker 方式：
 
 ```bash
 docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
-  python -m shuxin.voice.cli tts "你好，我是舒心" -o /tmp/volc-demo.mp3
+  python -m shuxin.voice.cli tts "你好，我是初心" -o /tmp/volc-demo.mp3
 docker cp shuxin-voice-demo-pg:/tmp/volc-demo.mp3 ./outputs/volc-demo.mp3
 ```
 
 本机方式（需已 export 火山 env）：
 
 ```bash
-PYTHONPATH=src python3 -m shuxin.voice.cli tts "你好，我是舒心" --out outputs/volc-demo.mp3
+PYTHONPATH=src python3 -m shuxin.voice.cli tts "你好，我是初心" --out outputs/volc-demo.mp3
 ```
 
 验收标准：
@@ -334,7 +334,7 @@ demo-device-streaming-001
 
 - 页面连接状态显示已连接。
 - 松手后页面显示识别文本。
-- 页面显示舒心回复文本。
+- 页面显示初心回复文本。
 - 浏览器播放回复 mp3。
 - 页面日志能看到 STT、Agent、TTS 状态消息和耗时。
 
@@ -484,7 +484,7 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 验收标准：
 
 - 小程序可以通过 `wx.login()` 获取 code。
-- 小程序调用 `/api/wechat/login` 后获得舒心自定义 `session_token`，响应不包含微信 `session_key`。
+- 小程序调用 `/api/wechat/login` 后获得初心自定义 `session_token`，响应不包含微信 `session_key`。
 - 本地 `SHUXIN_WECHAT_MOCK=1` 时，后端可以 mock openid 并用 `session_token` 完成绑定。
 - 绑定后 `/api/devices/my` 使用 `session_token` 能返回该设备。
 - 旧包即使把 `claim_code` 误放进 `device_code` 字段，后端也会兜底识别并完成绑定。
@@ -509,7 +509,56 @@ PYTHONPATH=src pytest tests/test_ensure_runtime_after_mbti_prefetch.py \
   tests/test_device_intro_and_registry.py -q
 ```
 
+### 9.2.2 工厂验收（三码 + MBTI 卡片核对）
+
+> 固件对接一页交接：[FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)
+
+MBTI 在**批量制码时**由后端随机写入 `devices.metadata`（`mbti` + `mbti_status=sealed`），与用户扫码无关。制码 API 每条 `items[]` 已含 `mbti` 字段，可用于印刷盒内人格卡片；外壳条形码仍只贴 `claim_code`。
+
+**前置条件**
+
+1. QA 微信账号 `users.metadata.factory_role = true`：推荐在 Admin **用户 Tab → 工厂 QA** 开关开启（或 PATCH / SQL）。
+2. 已执行迁移 `010_factory_verify.sql`（`factory_verify_logs` 表）。
+3. 设备 WebSocket 在线（真机出厂验收：`provisioned` 且未绑定设备可直接 `hello`，响应含 `factory_acceptance: true`；已绑定设备或本地 voice-demo 模拟亦可）。
+4. 小程序编译 `pages/factory/verify`，`bash scripts/wechat_miniprogram_dev.sh build` 后重编。
+
+**小程序入口**：个人中心 → **工厂验收**（仅 `factory_role` 账号可见；普通用户无入口）。
+
+**流程（真实出厂）**
+
+1. Admin 批量制码 → 保存 JSON 中的 `claim_code` + `device_secret` + `mbti`，印刷盒内卡片与外壳码；烧录固件，**不要**小程序绑定。
+2. 设备上电联网 → `hello` 成功（`hello_ok.factory_acceptance=true`，`mbti_status` 仍为 `sealed`）。
+3. QA 小程序「工厂验收」扫外壳 `claim_code` → `POST /api/factory/verify`。
+4. 设备收到 `factory_verify` 后本地提示 PASS 并回 `factory_verify_ack`。
+5. **PASS** 时页面展示云端 MBTI（如 `INFJ · 提倡者` + tagline），QA **肉眼对比**盒内卡片是否一致。
+6. 验收记录写入 `factory_verify_logs.meta`（含 `mbti`、`mbti_status`）；日志默认保留 15 天（`SHUXIN_FACTORY_VERIFY_LOG_RETENTION_DAYS`，小程序与 Admin 同限）。
+
+**流程（本地 voice-demo 联调，可选）**
+
+1. 先绑定设备并打开 [voice-demo](http://localhost:8765/voice-demo) 保持连接（voice-demo 已内置 `factory_verify_ack` 自动回包）。
+2. 其余步骤同上。
+
+**验收标准**
+
+- PASS 响应含 `mbti: { mbti, display_name, tagline, mbti_status }`。
+- 出厂验收后 DB 中 `mbti_status` 仍为 `sealed`，且无 `device_bindings` 记录。
+- 无 `factory_role` 仍返回 403。
+- 普通用户 `sealed` 设备在 bind 前 `/api/devices/my` 仍不返回 `mbti`（盲盒规则不变）。
+
+```bash
+PYTHONPATH=src pytest tests/test_factory_verify.py tests/test_users_me_api.py -q
+```
+
 常见失败原因：
+
+- `device_offline`：设备未连 WebSocket，或 `device_code` 与 `claim_code` 查出的不一致。
+- `ack_timeout`：固件/voice-demo 未回 `factory_verify_ack`（voice-demo 已内置自动回包）。
+- PASS 但无 MBTI 展示：制码时 `metadata.mbti` 缺失，响应带 `warnings: ["mbti_missing"]`。
+- 个人中心无「工厂验收」或 `user_id` 显示为 `wx_xxx...` 截断：小程序未重编译 → `bash scripts/wechat_miniprogram_dev.sh build` 后微信开发者工具重新编译（详见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md) §10.3）。
+- `/api/users/me` 404：Docker 未 redeploy 含该路由的版本 → `bash scripts/redeploy_docker.sh`。
+- 个人中心 `user is disabled or not found`：Admin 用户 Tab「启用」为 `false` 或未保存 → 设为 `true` 并点「保存」（与「工厂 QA」无关）。
+
+**9.2.1 绑定常见失败：**
 
 - hello 后有 MBTI 自我介绍文字但无 `tts/start`、首轮对话报 `'NoneType' object has no attribute 'chat_stream'`：2026-06-08 前版本在 MBTI 路径预填 `device` 后未初始化 agent；升级至含 `_ensure_runtime` 修复的版本后应消失。
 - 控制台提示 `wx.getSystemInfoSync is deprecated`：这是基础库兼容警告，通常不是本次绑定失败根因。
@@ -569,7 +618,7 @@ WebSocket 日志里若出现 `{"type":"agent","state":"error","error_kind":"conn
 | 层 | 命令/入口 | 证明什么 |
 |----|-----------|----------|
 | L0 单元 | `pytest tests/test_voice_memory_summary.py -q` | 字段、每 N 轮触发、JSON 同步 |
-| L1 人工 | http://localhost:8765/voice-demo 固定剧本 | 重连后舒心回复关联上次主题 |
+| L1 人工 | http://localhost:8765/voice-demo 固定剧本 | 重连后初心回复关联上次主题 |
 | L2 快照 | `GET /voice/export` | `rolling_summary`、`recent_topics` 客观写入 |
 
 ### 11.2 前置条件
@@ -577,8 +626,24 @@ WebSocket 日志里若出现 `{"type":"agent","state":"error","error_kind":"conn
 与 §9 相同，并确认：
 
 1. `curl -s http://localhost:8765/health` 中 `"storage":"postgres"`（Docker Compose + `DATABASE_URL`）。
-2. http://localhost:8765/admin 中绑定用户（如 `demo-user`）已配置 **LLM**（model/base_url/api_key）。摘要合并与对话共用该 LLM；无 key 时 `rolling_summary` 不会更新。
-3. voice-demo 填写 Admin Token（默认 `dev-admin-token`），加载设备并连接。
+2. 根目录 `.env` 已配置 **公司** `DEMO_LLM_API_KEY` / `DEMO_LLM_BASE_URL`（建议 `https://www.dmxapi.cn/v1`），改后 `bash scripts/redeploy_docker.sh`。
+3. 记忆 E2E 脚本默认 `--use-demo-llm`（见 §11.7），**不**使用 Postgres 里微信用户的 DMX 子 token。
+4. `SHUXIN_MEM0_ENABLED=1` 且 Qdrant 可达（Docker Compose 默认已配）；Mem0 search 按 `user_id` 隔离（`users/{user_id}/memory` → Qdrant filter）。
+5. voice-demo 填写 Admin Token（默认 `dev-admin-token`），加载设备并连接。
+
+验证容器内 Demo LLM 环境变量（不打印 key 明文）：
+
+```bash
+docker exec shuxin-voice-demo-pg sh -c \
+  'echo DEMO=$DEMO_LLM_BASE_URL DMX=$DMX_API_BASE_URL model=$DEMO_LLM_MODEL key_len=${#DEMO_LLM_API_KEY}'
+```
+
+测试用户 `demo-user` 建议将 `llm_config` 置空 `{}`，避免 Admin 里旧 key 覆盖设备默认（自动化脚本已默认忽略，人工 voice-demo 仍可能读到用户配置）：
+
+```bash
+docker exec shuxin-postgres psql -U shuxin -d shuxin -c \
+  "UPDATE users SET llm_config='{}'::jsonb, enabled=true, deleted_at=NULL WHERE user_id='demo-user';"
+```
 
 可选加速（少按几次麦克风即触发摘要）：
 
@@ -593,7 +658,7 @@ SHUXIN_SUMMARY_EVERY_N=2
 |------|------|------|
 | `SHUXIN_SUMMARY_EVERY_N` | 5 | 每 N 轮异步 LLM 合并摘要 |
 | `SHUXIN_SUMMARY_MODEL` | （空） | 摘要专用模型，空则用设备/用户 LLM |
-| `SHUXIN_SUMMARY_MAX_TOKENS` | 256 | 摘要输出 token 上限 |
+| `SHUXIN_SUMMARY_MAX_TOKENS` | 512 | 摘要输出 token 上限 |
 
 ### 11.3 观测：curl 导出 shared_memory
 
@@ -630,7 +695,7 @@ curl -s -H "X-Admin-Token: dev-admin-token" \
 
 「我上次跟你说的那件事，后来怎么样了？」
 
-**人工通过标准**：舒心回复中明确关联会话 A 的主题（如「面试」「产品经理」「准备」），而非像第一次见面。若完全泛化寒暄，判为失败。
+**人工通过标准**：初心回复中明确关联会话 A 的主题（如「面试」「产品经理」「准备」），而非像第一次见面。若完全泛化寒暄，判为失败。
 
 更直白可再问：「我们之前说的面试怎么样了？」
 
@@ -646,7 +711,9 @@ curl -s -H "X-Admin-Token: dev-admin-token" \
 
 ### 11.6 自动化 E2E（无需麦克风）
 
-在 Docker voice 容器内一键跑固定剧本（直连 Postgres + Agent，与 voice-demo 共用用户记忆目录）：
+在 Docker voice 容器内一键跑固定剧本（直连 Postgres + Agent，与 voice-demo 共用用户记忆目录）。
+
+**默认跑双用户隔离测试**（`e2e-user-alice` / INFJ + `e2e-user-bob` / ENTP），并写入 JSON + Markdown 报告：
 
 ```bash
 docker exec shuxin-voice-demo-pg \
@@ -654,7 +721,41 @@ docker exec shuxin-voice-demo-pg \
   python /app/scripts/test_voice_memory_e2e.py
 ```
 
-通过标准：脚本输出 `PASS`，且 `rolling_summary` 非空、会话 B 回复含「面试」等关键词。
+报告默认落在容器内 `/app/scripts/e2e_reports/<run_id>/`：
+
+- `report.json` — 机器可解析：元数据、每轮完整对话、rolling_summary、Mem0 检索、隔离检查、PASS/FAIL
+- `report.md` — 人可读摘要
+
+宿主机查看最近一次报告（bind mount 同步时）：
+
+```bash
+ls -lt scripts/e2e_reports/
+cat scripts/e2e_reports/*/report.md
+```
+
+仅跑单个用户（兼容旧 `demo-user`）：
+
+```bash
+docker exec shuxin-voice-demo-pg \
+  env PYTHONPATH=/app/src \
+  python /app/scripts/test_voice_memory_e2e.py --user-id demo-user --device-id demo-device-001
+```
+
+**E2E 专用用户**（脚本启动时自动 `INSERT ... ON CONFLICT` + 绑定设备）：
+
+| user_id | device_id | MBTI | token |
+|---------|-----------|------|-------|
+| `e2e-user-alice` | `demo-device-002` | INFJ | `e2e-test-token` |
+| `e2e-user-bob` | `demo-device-003` | ENTP | `e2e-test-token` |
+
+两者 `llm_config` 强制置空 `{}`；对话 LLM 走 `--use-demo-llm`（公司 `DEMO_LLM_*`）。
+
+通过标准：
+
+1. 启动日志含 `LLM source: DEMO_LLM env`
+2. 每用户 `rolling_summary` 非空、会话 B 回复含「面试」等关键词
+3. Alice 跑完后、Bob 开聊前：Bob 的 Mem0 不得命中 Alice 的面试记忆（`isolation_check: PASS`）
+4. 脚本退出码 0，输出 `PASS: three-tier memory E2E (direct mode)`
 
 可选 WebSocket 模式（走真实 `/ws/voice`，需重启服务并开启开发开关）：
 
@@ -668,7 +769,20 @@ docker exec shuxin-voice-demo-pg \
   python /app/scripts/test_voice_memory_e2e.py --ws ws://127.0.0.1:8765/ws/voice
 ```
 
-### 11.7 与 pytest 的关系
+### 11.7 DEMO_LLM 与 DMX_API 分工（记忆测试必读）
+
+同一域名 `dmxapi.cn` 下有两套凭证，**不要混用**：
+
+| 变量 | 用途 | 记忆 E2E / Mem0 |
+|------|------|-----------------|
+| `DEMO_LLM_API_KEY` + `DEMO_LLM_BASE_URL` | **公司** Demo：对话、中期摘要、Mem0 抽取/embed、`data/devices.yaml` | **必须用这套** |
+| `DMX_API_BASE_URL` + `DMX_SYSTEM_TOKEN` | **个人** DMX 管理：微信开户、发子 token、充值查余额 | **不参与** E2E 对话 |
+
+- Mem0（`SHUXIN_MEM0_ENABLED=1`）始终读 `DEMO_LLM_*`，不读 `DMX_API_BASE_URL`。
+- 微信登录用户在 Postgres `users.llm_config` 存的是 DMX **子 token**；不要用 `oZsN76-...` 这类用户跑记忆 E2E。
+- 自动化脚本默认 `--use-demo-llm`；若需复现生产用户 LLM 合并逻辑，加 `--no-use-demo-llm`。
+
+### 11.8 与 pytest 的关系
 
 发版前建议：
 
@@ -677,6 +791,51 @@ pytest tests/test_voice_memory_summary.py tests/test_voice_users_storage.py -q
 ```
 
 通过 pytest **不能代替** §11.4 人工剧本；可用 `SHUXIN_RUN_VOICE_E2E=1 pytest tests/test_voice_memory_e2e.py` 在具备 `DATABASE_URL` 的环境跑 §11.6 自动化脚本。
+
+### 11.9 YAML 场景套件（smoke / full）
+
+场景定义在 `data/e2e/memory_scenarios.yaml` 与 `data/e2e/mbti_drift_scenarios.yaml`。每场景使用独立 `user_id`，跑前全清洗（Qdrant + Postgres `shared_memory` + `~/.shuxin/users/{id}/` 本地文件）。多个场景共用 `demo-device-002` / `demo-device-003` 时，脚本会自动 force rebind（先解绑旧用户再绑当前场景用户），与 legacy `e2e-user-alice` 不冲突。
+
+**smoke**（CI 快路径，约 2 场景）：
+
+```bash
+docker exec shuxin-voice-demo-pg \
+  env PYTHONPATH=/app/src \
+  python /app/scripts/test_voice_memory_e2e.py --suite smoke
+```
+
+**full**（夜间 / 发版前，含递进记忆、fact 更新、常驻画像、MBTI 漂移）：
+
+```bash
+docker exec shuxin-voice-demo-pg \
+  env PYTHONPATH=/app/src \
+  python /app/scripts/test_voice_memory_e2e.py --suite full
+```
+
+可选 LLM-as-Judge 夜间判分（`memory_recall` / `mbti_fidelity` / `personalization` 各 1–5 分）：
+
+```bash
+python /app/scripts/test_voice_memory_e2e.py --suite full --llm-judge
+```
+
+**断言分层**：
+
+| 层级 | 内容 | 运行时机 |
+|------|------|----------|
+| L0 单元 | `top_k` 成本上界、`memory_assertions`、`mbti_scorer`、`user_profile` | 每次 `pytest` |
+| L1 smoke | `interview_recall` + `infj_resist_entp_drift` | PR / 日常 |
+| L2 full | 多 fact 共现、fact 更新、7 日窗口过期后 profile 召回、summary benchmark | 夜间 |
+| L3 legacy | `e2e-user-alice` + `e2e-user-bob` 双用户隔离（默认 `--suite legacy`） | 发版前 |
+
+**记忆参数（2026-06 调整）**：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SHUXIN_VOICE_MAX_HISTORY` | 8 | 短期原文轮数 |
+| `SHUXIN_SUMMARY_MAX_TOKENS` | 512 | 中期摘要 token 上限 |
+| `SHUXIN_MEM0_SEARCH_TOP_K` | 8 | Mem0 每轮最多注入条数（L0 单测保证不超界） |
+
+常驻画像（`user_profile.json`）不受 7 日 `rolling_summary` 窗口限制，每轮固定注入 Slot4。
 
 ## 12. 打包测试
 

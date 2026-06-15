@@ -2,13 +2,16 @@
 
 > **阅读顺序**：端到端流程与固件状态机见 [VOICE_HARDWARE_HANDBOOK.md](VOICE_HARDWARE_HANDBOOK.md)；本文档侧重鉴权与 BFF 边界。
 
-本文档面向硬件/固件工程师、工厂烧录与联调测试。说明设备如何经舒心 Voice 服务间接使用语音识别与合成，以及为何必须先完成设备鉴权与用户绑定。
+本文档面向硬件/固件工程师、工厂烧录与联调测试。说明设备如何经初心 Voice 服务间接使用语音识别与合成。
 
-协议字段与下行消息格式见 [语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。架构与绑定模型见 [舒心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md) §6.1。
+- **用户绑定后对话**：须完成设备鉴权与 active binding（见 §4.2）。
+- **出厂工厂验收**：`provisioned` 且未绑定设备可走 `factory_acceptance` 路径，仅 `factory_verify` / `ping` / `abort`，禁止对话。见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)。
+
+协议字段与下行消息格式见 [语音硬件 WebSocket 接口协议](VOICE_HARDWARE_WS_PROTOCOL.md)。架构与绑定模型见 [初心语音闭环与硬件接口架构](VOICE_ARCHITECTURE.md) §6.1。
 
 ## 1. 一句话说明
 
-- 设备通过 `ws://<host>:8765/ws/voice` 与舒心 Voice 服务通信。
+- 设备通过 `ws://<host>:8765/ws/voice` 与初心 Voice 服务通信。
 - **STT、TTS、LLM 均由服务端调用**；设备负责音频上行与下行播放。
 - **硬件推荐**：`hello` 声明 `audio_params.format=opus`（上行 16 kHz Opus 帧，下行 24 kHz Opus 帧）。
 - **浏览器测试台**：不传 `audio_params`，仍用 PCM16 上行 + mp3 下行。
@@ -26,10 +29,12 @@ sequenceDiagram
   participant TTS as TTSProvider
 
   HW->>WS: hello device_code + device_secret + audio_params opus
-  WS->>PG: authenticate_device + active binding
-  alt invalid secret or not bound
+  WS->>PG: authenticate_device or authenticate_device_for_factory
+  alt invalid secret
     WS-->>HW: error PermissionError
-  else ok
+  else provisioned unbound
+    WS-->>HW: hello ok factory_acceptance true
+  else bound ok
     WS-->>HW: hello state ok + audio_params
   end
   HW->>WS: listen start + Opus frames 16k + listen stop
@@ -44,8 +49,9 @@ sequenceDiagram
 
 服务端实现要点（便于与文档对照）：
 
-- `hello` 携带 `device_code` / `device_secret` 时调用 `authenticate_device()`（见 `src/shuxin/voice/server.py`）。
-- Postgres 模式校验 `device_secret_hash` 与 `device_bindings.status='active'`（见 `src/shuxin/voice/postgres_repository.py`）。
+- `hello` 携带 `device_code` / `device_secret` 时优先 `authenticate_device()`；未绑定时回退 `authenticate_device_for_factory()`（见 `src/shuxin/voice/postgres_repository.py`）。
+- 绑定路径：Postgres 校验 `device_secret_hash` 与 `device_bindings.status='active'`。
+- 出厂路径：`status=provisioned`、无 active binding；跳过 `ensure_session` 与 MBTI reveal；`hello_ok.factory_acceptance=true`。
 - 鉴权通过后，在 `_ensure_runtime()` 中按设备 STT 配置与用户 `agent_id`（Postgres `agents` 表）创建 STT/TTS Provider；设备 `metadata.mbti` 注入语气差异。
 - `_ensure_runtime()` **device 加载与 agent 初始化解耦**：MBTI 自我介绍路径可在 hello 时先写入 `self.device`，但仍以 `self.agent is None` 为门槛创建 STT/TTS/Agent；否则 intro 仅有文字、首轮 `chat_stream` 会报 NoneType。
 
@@ -62,6 +68,21 @@ sequenceDiagram
 - 用户绑定流程（小程序、`session_token`）见 [VOICE_HARDWARE_WS_PROTOCOL.md §7](VOICE_HARDWARE_WS_PROTOCOL.md) 与 [VOICE_ARCHITECTURE.md §6.1](VOICE_ARCHITECTURE.md)。
 
 ## 4. 前置条件（全链路 checklist）
+
+### 4.1 出厂工厂验收
+
+| 步骤 | 动作 | 未完成时的典型现象 |
+|------|------|-------------------|
+| 1. 制码 | `POST /admin/api/factory/devices/batch` → `device_id`、`device_secret`、`claim_code`、`mbti` | 无设备记录 |
+| 2. 烧录 | 固件写入 `device_code` + `device_secret` | `invalid device secret` |
+| 3. 不绑定 | **不要**小程序绑定 | 无 `factory_acceptance`，或走对话路径 |
+| 4. hello | WS 鉴权，`factory_acceptance: true` | `device is not bound`（已绑定或状态不对） |
+| 5. 保持在线 | hello 后不断开 | QA `device_offline` |
+| 6. ack | 收 `factory_verify` → `factory_verify_ack` | QA `ack_timeout` |
+
+详表：[FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)。
+
+### 4.2 用户绑定后语音对话
 
 按顺序完成以下步骤后，设备才能稳定跑通语音对话：
 

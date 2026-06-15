@@ -14,12 +14,24 @@
 
 ## 2. 前置条件
 
-1. 工厂制码：`device_id` + `device_secret` + `claim_code`
-2. 固件烧录 **`device_code`（= device_id）+ `device_secret`**
-3. 用户小程序绑定设备（`claim_code`）
-4. 服务端已配置 STT/TTS/LLM（绑定用户的 `llm_config`、Agent 音色）
+### 2.1 出厂工厂验收（未绑定）
 
-未完成绑定时 `hello` 会返回 `device is not bound or disabled`。
+1. 工厂制码：`device_id` + `device_secret` + `claim_code` + `mbti`（制码时写入 `metadata`）
+2. 固件烧录 **`device_code`（= device_id）+ `device_secret`**
+3. 设备 `status=provisioned`，**无**用户绑定
+4. 上电 `hello` 成功，响应含 **`factory_acceptance: true`**
+5. 保持 WebSocket 连接，等待 QA 触发 `factory_verify` 并回 `factory_verify_ack`
+
+详表见 [**出厂工厂验收交接**](FACTORY_ACCEPTANCE_HANDOFF.md)。
+
+### 2.2 用户绑定后对话
+
+1. 完成 §2.1 制码与烧录
+2. 用户小程序绑定设备（`claim_code`）
+3. 服务端已配置 STT/TTS/LLM（绑定用户的 `llm_config`、Agent 音色）
+4. `hello` 收到 `state: ok`（无 `factory_acceptance`）后可 `listen` 对话
+
+未绑定且非 `provisioned` 出厂路径时，`hello` 会返回 `device is not bound or disabled`。
 
 ## 3. 连接与鉴权（Opus 硬件路径）
 
@@ -60,7 +72,21 @@
 
 **在收到 `hello ok` 之前不要发送 `listen` 或音频二进制帧。**
 
-## 4. 一轮语音对话
+### 出厂验收 hello 成功（`factory_acceptance`）
+
+```json
+{
+  "type": "hello",
+  "state": "ok",
+  "user_id": "factory_probe",
+  "device_id": "SX-000116",
+  "factory_acceptance": true
+}
+```
+
+此模式下：**保持连接**；监听 `factory_verify` 并回 `factory_verify_ack`；**禁止** `listen`。见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)。
+
+## 4. 一轮语音对话（仅绑定后）
 
 ```text
 1. {"type":"listen","state":"start"}
@@ -112,6 +138,9 @@ docker exec shuxin-voice-demo-pg python scripts/ws_opus_smoke_test.py \
 | 现象 | 排查 |
 |------|------|
 | `invalid device secret` | 密钥错误或后台轮换后未更新固件 |
-| `device is not bound` | 用户未绑定 |
+| `device is not bound` | 非出厂路径：用户未绑定；或设备已绑定却期望 `factory_acceptance` |
+| hello 无 `factory_acceptance` | 设备已有 active binding，或 `status` 不是 `provisioned` |
+| QA `device_offline` | hello 后 WS 断开 |
+| QA `ack_timeout` | 未在 10s 内回 `factory_verify_ack` |
 | `opus support requires opuslib_next` | 服务端 Docker 未 redeploy |
 | `no audio received` | `listen stop` 前未发 Opus 帧 |

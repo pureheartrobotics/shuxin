@@ -73,7 +73,7 @@ def build_device_intro_text(mbti: str, *, bind_success_prefix: bool = True) -> s
     tagline = identity.get_description()
     reveal = identity.get_reveal_script().strip()
     if not reveal:
-        reveal = f"你好，我是{selected}型的舒心。{tagline}"
+        reveal = f"你好，我是{selected}型的初心。{tagline}"
     if bind_success_prefix:
         return f"绑定成功。{reveal}"
     return reveal
@@ -95,6 +95,17 @@ def build_mbti_client_payload(
         "display_name": mbti_display_name(full_tagline, mbti),
         "tagline": mbti_subtitle(full_tagline) or full_tagline,
     }
+
+
+def build_factory_verify_mbti_payload(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Factory QA payload: cloud MBTI for card comparison (includes mbti_status)."""
+    data = metadata or {}
+    payload = build_mbti_client_payload(data, is_first_reveal=False)
+    if payload is None:
+        return None
+    status = str(data.get("mbti_status") or MBTI_STATUS_SEALED).strip().lower()
+    payload["mbti_status"] = status or MBTI_STATUS_SEALED
+    return payload
 
 
 def sanitize_device_metadata_for_client(metadata: dict[str, Any] | None) -> dict[str, Any]:

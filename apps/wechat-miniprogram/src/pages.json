@@ -3,7 +3,7 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "舒心设备绑定",
+        "navigationBarTitleText": "初心设备绑定",
         "navigationBarBackgroundColor": "#f5f1ea",
         "navigationBarTextStyle": "black"
       }
@@ -19,7 +19,15 @@
     {
       "path": "pages/login/login",
       "style": {
-        "navigationBarTitleText": "舒心登录",
+        "navigationBarTitleText": "初心登录",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/factory/verify",
+      "style": {
+        "navigationBarTitleText": "工厂验收",
         "navigationBarBackgroundColor": "#f5f1ea",
         "navigationBarTextStyle": "black"
       }

@@ -4,7 +4,7 @@
 
 本文档面向后续硬件接入方。当前协议用于无硬件 Web 测试台，也作为后续真实硬件的最小接入边界。
 
-**STT/TTS 由舒心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权，且设备已被用户绑定后，才能进入语音识别与合成流程。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
+**STT/TTS 由初心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权。已绑定设备可进入语音识别与合成；**未绑定但 `provisioned` 的设备**可走工厂验收会话（`hello_ok.factory_acceptance=true`），仅支持 `factory_verify` / `ping` / `abort`，不可对话。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
 
 ## 1. 服务地址
 
@@ -123,6 +123,20 @@ container: none
 {"type":"ping"}
 ```
 
+工厂验收回传（收到服务端 `factory_verify` 后立即发送）：
+
+```json
+{"type":"factory_verify_ack","verify_id":"<原样回传服务端下发的 verify_id>","status":"ok"}
+```
+
+**固件实现要求：**
+
+1. 监听 `type == "factory_verify"` 消息，任何状态下均可处理（Idle / Listening）。
+2. 触发本地提示（任选其一）：播放"验收通过"语音 / 屏幕显示 `PASS` 3 秒 / LED 变绿。
+3. 立即回传 `factory_verify_ack`，`verify_id` 原样复制，无需理解其含义。
+4. 处理完毕后恢复到原状态，不影响进行中或后续的对话流程。
+5. 超时窗口为 10 秒，固件只要在此窗口内回传即为有效。
+
 ## 4. 设备上行二进制消息
 
 在 `listen start` 和 `listen stop` 之间发送音频二进制帧：
@@ -156,6 +170,25 @@ container: none
 ```json
 {"type":"hello","state":"ok","user_id":"demo-user","device_id":"demo-device-001","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","uplink_sample_rate":16000,"downlink_sample_rate":24000,"channels":1,"frame_duration":60}}
 ```
+
+出厂工厂验收 hello 确认（`provisioned` 且未绑定；`user_id` 为内部占位符 `factory_probe`）：
+
+```json
+{"type":"hello","state":"ok","user_id":"factory_probe","device_id":"SX-000116","client_id":"device-001","session_id":"…","factory_acceptance":true}
+```
+
+- `factory_acceptance: true` 表示当前为出厂验收会话：云端**不会**揭晓/锁定 MBTI（保持 `mbti_status=sealed`），且 `listen` / `text_turn` 会被拒绝。
+- 此模式下设备须保持连接，等待 QA 扫码触发 `factory_verify`；收到后本地提示并回 `factory_verify_ack`。
+
+工厂验收指令（QA 扫外壳二维码后由云端触发，设备须立即回传 `factory_verify_ack`）：
+
+```json
+{"type":"factory_verify","verify_id":"550e8400-e29b-41d4-a716-446655440000","timestamp":"2026-06-15T05:37:00Z"}
+```
+
+- `verify_id`：UUID，必须原样回传。
+- 超时窗口 10 秒；超时后云端报告 FAIL，设备无需处理。
+- 此消息不影响正常对话流程，设备可任意状态处理。
 
 MBTI 盲盒揭晓（仅 `mbti_status=sealed` 且由 hello 抢先揭晓时；小程序已绑定时通常不再下发）：
 
@@ -192,13 +225,13 @@ MBTI 盲盒揭晓（仅 `mbti_status=sealed` 且由 hello 抢先揭晓时；小�
 实时识别稳定句子结果：
 
 ```json
-{"type":"stt","state":"sentence_final","text":"你好，舒心","elapsed_ms":1200}
+{"type":"stt","state":"sentence_final","text":"你好，初心","elapsed_ms":1200}
 ```
 
 最终识别文本：
 
 ```json
-{"type":"stt","state":"final","text":"你好，舒心","elapsed_ms":1234}
+{"type":"stt","state":"final","text":"你好，初心","elapsed_ms":1234}
 ```
 
 Agent 开始思考（STT 完成后、LLM 首 token 前）：
@@ -322,7 +355,7 @@ apps/wechat-miniprogram/dist/build/mp-weixin
 小程序登录遵循微信官方登录链路：小程序通过 `wx.login()` 获取一次性
 `wx_code`，先调用后端 `POST /api/wechat/login`；服务端使用
 `SHUXIN_WECHAT_APPID` 和 `SHUXIN_WECHAT_SECRET` 调微信 `code2Session`
-换取 `openid`，再返回舒心自己的 `session_token`。`session_key` 只留在服务端，
+换取 `openid`，再返回初心自己的 `session_token`。`session_key` 只留在服务端，
 不会下发给小程序。本地没有真实微信配置时，可设置 `SHUXIN_WECHAT_MOCK=1`
 使用 mock openid。
 

@@ -77,6 +77,7 @@ from shuxin.voice.agents import (
 from shuxin.voice.users import (
     DEFAULT_AUDIO_QUOTA_MB,
     DEFAULT_USER_ID,
+    FACTORY_PROBE_USER_ID,
     UserSettings,
     validate_user_id,
 )
@@ -457,6 +458,30 @@ class VoicePostgresRepository:
         async with self.pool.acquire() as conn:
             user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
         return await self.get_user_quota_by_user_id(user_id)
+
+    async def get_user_profile_by_session(self, session_token: str) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+            row = await conn.fetchrow(
+                """
+                SELECT metadata
+                FROM users
+                WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                """,
+                user_id,
+            )
+        if row is None:
+            raise PermissionError("user is disabled or not found")
+        meta = _json_obj(row["metadata"])
+        quota = await self.get_user_quota_by_user_id(user_id)
+        quota_payload = {key: value for key, value in quota.items() if key != "user_id"}
+        return {
+            "user_id": user_id,
+            "roles": {
+                "factory_qa": str(meta.get("factory_role") or "").lower() == "true",
+            },
+            "quota": quota_payload,
+        }
 
     async def assert_user_quota_available(self, user_id: str) -> None:
         quota = await self.get_user_quota_by_user_id(user_id)
@@ -1111,6 +1136,164 @@ class VoicePostgresRepository:
         )
         return str(value or "")
 
+    # ------------------------------------------------------------------
+    # 工厂验收
+    # ------------------------------------------------------------------
+
+    async def factory_verify_lookup(self, claim_code: str) -> dict[str, Any]:
+        """根据 claim_code 查询对应的 device_id；不锁行，只读。
+
+        返回 device_id、claim_code_status、metadata 及解析后的 mbti 字段。
+        若找不到则 raise ValueError。
+        """
+        selected_claim = _validate_claim_code(claim_code)
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT c.device_id, c.status AS claim_status, d.metadata
+                FROM device_claim_codes c
+                JOIN devices d ON d.device_id = c.device_id
+                WHERE (c.claim_code = $1 OR c.claim_code_hash = $2)
+                  AND d.enabled = true
+                  AND d.deleted_at IS NULL
+                  AND d.status <> 'disabled'
+                ORDER BY c.created_at DESC
+                LIMIT 1
+                """,
+                selected_claim,
+                _hash_secret(selected_claim),
+            )
+        if row is None:
+            raise ValueError(f"claim_code not found or device disabled: {claim_code!r}")
+        metadata = _json_obj(row["metadata"])
+        mbti = str(metadata.get("mbti") or "").strip().upper()
+        mbti_status = str(metadata.get("mbti_status") or "").strip().lower()
+        return {
+            "device_id": str(row["device_id"]),
+            "claim_code_status": str(row["claim_status"]),
+            "metadata": metadata,
+            "mbti": mbti,
+            "mbti_status": mbti_status,
+        }
+
+    async def factory_verify_user_has_role(self, session_token: str) -> str:
+        """校验 session_token 有效，并返回对应 user_id。
+
+        若用户 metadata 中 factory_role 不为 'true'，raise PermissionError。
+        """
+        selected_token = str(session_token or "").strip()
+        if not selected_token:
+            raise PermissionError("session_token is required")
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT u.user_id, u.metadata
+                FROM wechat_sessions s
+                JOIN users u ON u.user_id = s.user_id
+                WHERE s.session_token_hash = $1
+                  AND s.expires_at > now()
+                  AND u.enabled = true
+                  AND u.deleted_at IS NULL
+                """,
+                _hash_secret(selected_token),
+            )
+        if row is None:
+            raise PermissionError("session_token is invalid or expired")
+        meta = _json_obj(row["metadata"])
+        if str(meta.get("factory_role") or "").lower() != "true":
+            raise PermissionError("user does not have factory_role")
+        return str(row["user_id"])
+
+    async def factory_verify_log(
+        self,
+        *,
+        verify_id: str,
+        claim_code: str,
+        device_id: str,
+        operator_user: str,
+        result: str,
+        fail_reason: str = "",
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        """写入一条验收日志（PASS 或 FAIL）。"""
+        await self.pool.execute(
+            """
+            INSERT INTO factory_verify_logs
+                (verify_id, claim_code, device_id, operator_user,
+                 result, fail_reason, meta)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (verify_id) DO NOTHING
+            """,
+            verify_id,
+            str(claim_code),
+            str(device_id),
+            str(operator_user),
+            str(result),
+            str(fail_reason),
+            json.dumps(meta or {}, ensure_ascii=False),
+        )
+
+    async def factory_verify_logs_list(
+        self,
+        *,
+        operator_user: str = "",
+        device_id: str = "",
+        limit: int = 50,
+        retention_days: int = 0,
+    ) -> list[dict[str, Any]]:
+        """查询验收日志，按时间倒序。"""
+        retention_clause = ""
+        params: list[Any] = [str(operator_user or ""), str(device_id or "")]
+        if retention_days > 0:
+            retention_clause = "AND verified_at >= now() - make_interval(days => $3)"
+            params.append(int(retention_days))
+            limit_param = "$4"
+        else:
+            limit_param = "$3"
+        params.append(int(limit))
+        rows = await self.pool.fetch(
+            f"""
+            SELECT verify_id, claim_code, device_id, operator_user,
+                   result, fail_reason, verified_at, meta
+            FROM factory_verify_logs
+            WHERE ($1::text = '' OR operator_user = $1)
+              AND ($2::text = '' OR device_id = $2)
+              {retention_clause}
+            ORDER BY verified_at DESC
+            LIMIT {limit_param}
+            """,
+            *params,
+        )
+        return [
+            {
+                "verify_id": str(r["verify_id"]),
+                "claim_code": str(r["claim_code"]),
+                "device_id": str(r["device_id"]),
+                "operator_user": str(r["operator_user"]),
+                "result": str(r["result"]),
+                "fail_reason": str(r["fail_reason"]),
+                "verified_at": r["verified_at"].isoformat() if r["verified_at"] else None,
+                "meta": _json_obj(r["meta"]),
+            }
+            for r in rows
+        ]
+
+    async def purge_expired_factory_verify_logs(self, *, retention_days: int) -> dict[str, int]:
+        if retention_days <= 0:
+            return {"purged": 0}
+        result = await self.pool.execute(
+            """
+            DELETE FROM factory_verify_logs
+            WHERE verified_at < now() - make_interval(days => $1)
+            """,
+            int(retention_days),
+        )
+        purged = 0
+        parts = str(result or "").split()
+        if len(parts) == 2 and parts[0] == "DELETE":
+            purged = int(parts[1])
+        return {"purged": purged}
+
     async def _user_id_from_wechat_auth(
         self,
         conn,
@@ -1355,6 +1538,45 @@ class VoicePostgresRepository:
             audio_quota_mb=int(row["audio_quota_mb"]),
             llm_config=llm_config,
             agent_id=str(row["agent_id"] or ""),
+        )
+
+    async def authenticate_device_for_factory(
+        self,
+        device_code: str | None,
+        device_secret: str | None,
+    ) -> UserSettings:
+        """未绑定且 provisioned 设备的工厂验收 hello 鉴权。"""
+        selected_code = _validate_device_code(device_code or "")
+        row = await self.pool.fetchrow(
+            """
+            SELECT d.device_id, d.auth_mode, d.device_secret_hash, d.status,
+                   EXISTS(
+                       SELECT 1 FROM device_bindings b
+                       WHERE b.device_id = d.device_id AND b.status = 'active'
+                   ) AS has_active_binding
+            FROM devices d
+            WHERE d.device_id = $1
+              AND d.enabled = true
+              AND d.deleted_at IS NULL
+              AND d.status <> 'disabled'
+            """,
+            selected_code,
+        )
+        if row is None:
+            raise PermissionError("device not found or disabled")
+        if bool(row["has_active_binding"]):
+            raise PermissionError("device already bound")
+        if str(row["status"]) != "provisioned":
+            raise PermissionError("device not in provisioned state")
+        if not _verify_device_secret(row, device_secret or ""):
+            await self._record_auth_failure(selected_code)
+            raise PermissionError("invalid device secret")
+        return UserSettings(
+            user_id=FACTORY_PROBE_USER_ID,
+            token="",
+            audio_quota_mb=DEFAULT_AUDIO_QUOTA_MB,
+            llm_config={},
+            agent_id="",
         )
 
     async def unbind_device(self, *, user_id: str, device_code: str) -> dict[str, Any]:
@@ -2083,7 +2305,7 @@ class VoicePostgresRepository:
                 uid, soul_path, metadata
             )
             VALUES (
-                'shuxin', '舒心', $1, 'volcano_icl', 1.0, 'mp3', 'shuxin',
+                'shuxin', '初心', $1, 'volcano_icl', 1.0, 'mp3', 'shuxin',
                 'data/agents/shuxin/SOUL.md', '{"default_mbti":"INFJ"}'::jsonb
             )
             ON CONFLICT (agent_id) DO UPDATE SET
@@ -2301,6 +2523,20 @@ class VoicePostgresRepository:
                 agent_id or None,
             )
             await self.audit("patch_user_agent", "user", selected, {"agent_id": agent_id})
+        if "metadata" in payload:
+            new_meta = payload.get("metadata")
+            if not isinstance(new_meta, dict):
+                raise ValueError("metadata must be an object")
+            await self.pool.execute(
+                """
+                UPDATE users
+                SET metadata = metadata || $2::jsonb, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                selected,
+                json.dumps(new_meta, ensure_ascii=False),
+            )
+            await self.audit("patch_user_metadata", "user", selected, {"metadata_keys": list(new_meta.keys())})
         return {"user_id": selected, "agent_id": payload.get("agent_id", "")}
 
     async def update_device_label(self, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:

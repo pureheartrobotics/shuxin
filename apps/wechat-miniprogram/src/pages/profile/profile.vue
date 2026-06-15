@@ -1,17 +1,18 @@
 <template>
   <view class="page">
     <view class="hero">
-      <view class="eyebrow">SHUXIN ACCOUNT</view>
+      <view class="eyebrow">CHUXIN ACCOUNT</view>
       <view class="title">个人中心</view>
       <view class="subtitle">{{ loggedIn ? "微信身份已登录" : "尚未登录" }}</view>
     </view>
 
     <view class="panel">
-      <view class="row">
-        <view>
+      <view class="row user-id-row">
+        <view class="user-id-block">
           <view class="label">当前用户</view>
-          <view class="value">{{ maskedUserId }}</view>
+          <view class="value user-id">{{ displayUserId }}</view>
         </view>
+        <button class="mini copy" :disabled="!displayUserId || displayUserId === '未登录'" @tap="copyUserId">复制</button>
       </view>
       <view class="row">
         <view class="balance-block">
@@ -28,6 +29,7 @@
         </view>
         <button class="mini" :disabled="loading" @tap="loadProfile">刷新</button>
       </view>
+      <button v-if="factoryQa" class="factory" @tap="openFactoryVerify">工厂验收</button>
       <button class="danger" @tap="logout">退出登录</button>
       <view v-if="message" class="message">{{ message }}</view>
     </view>
@@ -79,13 +81,14 @@ const plansLoading = ref(false);
 const message = ref("");
 const userId = ref("");
 const deviceCount = ref(0);
+const factoryQa = ref(false);
 const remainYuan = ref<number | null>(null);
 const quotaConfigured = ref(false);
 const quotaExhausted = ref(false);
 const showPaymentSheet = ref(false);
 const plans = ref<PaymentPlan[]>([]);
 const loggedIn = computed(() => Boolean(sessionToken()));
-const maskedUserId = computed(() => maskUserId(userId.value || String(uni.getStorageSync("shuxin_user_id") || "")));
+const displayUserId = computed(() => userId.value || String(uni.getStorageSync("shuxin_user_id") || "") || "未登录");
 const balanceLabel = computed(() => {
   if (!quotaConfigured.value) return "—";
   if (remainYuan.value == null) return "查询失败";
@@ -148,11 +151,13 @@ async function loadProfile() {
   loading.value = true;
   message.value = "";
   try {
-    const [devices, quota] = await Promise.all([
-      request("/api/devices/my", { session_token: token }),
-      request("/api/users/quota", { session_token: token })
+    const [me, devices] = await Promise.all([
+      request("/api/users/me", { session_token: token }),
+      request("/api/devices/my", { session_token: token })
     ]);
-    userId.value = devices.user_id || String(uni.getStorageSync("shuxin_user_id") || "");
+    userId.value = me.user_id || String(uni.getStorageSync("shuxin_user_id") || "");
+    factoryQa.value = Boolean(me.roles?.factory_qa);
+    const quota = me.quota || {};
     deviceCount.value = (devices.items || []).length;
     quotaConfigured.value = Boolean(quota.configured);
     quotaExhausted.value = Boolean(quota.exhausted);
@@ -233,10 +238,17 @@ function logout() {
   uni.redirectTo({ url: "/pages/login/login" });
 }
 
-function maskUserId(value: string): string {
-  if (!value) return "未登录";
-  if (value.length <= 12) return value;
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+function copyUserId() {
+  const value = displayUserId.value;
+  if (!value || value === "未登录") return;
+  uni.setClipboardData({
+    data: value,
+    success: () => uni.showToast({ title: "已复制", icon: "success" })
+  });
+}
+
+function openFactoryVerify() {
+  uni.navigateTo({ url: "/pages/factory/verify" });
 }
 </script>
 
@@ -309,6 +321,36 @@ function maskUserId(value: string): string {
 
 .value.exhausted {
   color: #9e3b35;
+}
+
+.user-id-row {
+  align-items: flex-start;
+}
+
+.user-id-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 24rpx;
+  font-weight: 500;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.mini.copy {
+  flex: 0 0 120rpx;
+  color: #4a5d52;
+  background: #ece7df;
+}
+
+.factory {
+  width: 100%;
+  margin-top: 20rpx;
+  color: #fffaf3;
+  background: #6b4f3a;
 }
 
 .hint {

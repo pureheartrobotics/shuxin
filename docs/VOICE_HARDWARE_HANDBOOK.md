@@ -1,4 +1,4 @@
-# 舒心硬件对接总手册
+# 初心硬件对接总手册
 
 > **读者**：固件工程师、工厂/测试、硬件项目经理。  
 > **版本**：v1.0（2026-06-08）  
@@ -12,6 +12,7 @@
 | [VOICE_HARDWARE_QUICKSTART.md](VOICE_HARDWARE_QUICKSTART.md) | 固件 1 页速查（hello / listen / Opus 参数） |
 | [VOICE_HARDWARE_INTEGRATION.md](VOICE_HARDWARE_INTEGRATION.md) | 鉴权、STT/TTS BFF、三码模型、常见错误详表 |
 | [VOICE_HARDWARE_WS_PROTOCOL.md](VOICE_HARDWARE_WS_PROTOCOL.md) | WebSocket 消息字段、Admin/小程序 API |
+| [**FACTORY_ACCEPTANCE_HANDOFF.md**](FACTORY_ACCEPTANCE_HANDOFF.md) | **出厂验收**：未绑定设备 hello、`factory_verify` 固件 5 步 |
 | [VOICE_DEMO_MIN_TEST.md](VOICE_DEMO_MIN_TEST.md) | 内部联调/QA（含 Admin curl、Docker 冒烟） |
 
 ---
@@ -23,8 +24,8 @@
 | **工厂/云端** | 批量制码、贴外壳码 | `device_id`、`device_secret`（烧录用）、`claim_code`（贴外壳） |
 | **固件** | 烧录凭证、WebSocket 协议、音频编解码 | 固件含 `device_code` + `device_secret`；支持 Opus 16k↑ / 24k↓ |
 | **云端 Voice** | 鉴权、STT/TTS/LLM 代理、MBTI 开箱 TTS | `ws://<host>:8765/ws/voice`；云厂商密钥仅存服务端 |
-| **小程序** | 用户绑定 | `session_token` + `claim_code` → active binding |
-| **用户** | 扫码绑定设备 | 绑定后设备 `hello` 才能进入对话 |
+| **小程序** | 用户绑定；工厂 QA 扫 `claim_code` 验收 | `session_token` + `claim_code` → binding 或 `POST /api/factory/verify` |
+| **用户** | 扫码绑定设备 | 绑定后设备 `hello` 进入对话 |
 
 **红线**：固件**不要**直连腾讯云 ASR、火山 TTS 或 LLM API；**不要**把 `device_secret` 贴在外壳。
 
@@ -44,6 +45,20 @@
 
 ## 3. 端到端操作流程
 
+### 3.1 出厂工厂验收（未绑定）
+
+```text
+1. 工厂制码     → device_id + device_secret + claim_code + mbti（sealed）
+2. 固件烧录     → 写入 device_code + device_secret（不烧录 claim_code）
+3. 外壳贴码     → 仅 claim_code
+4. 设备 hello   → factory_acceptance=true，保持 WS 连接
+5. QA 扫码      → factory_verify → 固件 factory_verify_ack → PASS + MBTI 卡片核对
+```
+
+固件详表见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)；内部 QA 见 [VOICE_DEMO_MIN_TEST.md §9.2.2](VOICE_DEMO_MIN_TEST.md)。
+
+### 3.2 用户绑定与正常对话
+
 ```text
 1. 工厂制码     → device_id + device_secret + claim_code（+ MBTI sealed）
 2. 固件烧录     → 写入 device_code + device_secret
@@ -53,7 +68,15 @@
 6. 正常对话     → listen start → Opus 帧 → listen stop → STT/Agent/TTS
 ```
 
-### Checklist
+### Checklist（出厂验收）
+
+- [ ] 设备 `provisioned`，无 active binding
+- [ ] `hello` 响应含 `factory_acceptance: true`
+- [ ] hello 后保持连接，不发 `listen`
+- [ ] 收到 `factory_verify` 后 10s 内回 `factory_verify_ack`
+- [ ] QA PASS 后 DB 仍 `mbti_status=sealed`，无 `device_bindings`
+
+### Checklist（用户绑定后）
 
 - [ ] 服务端 Voice 已部署，`/health` 可达
 - [ ] 设备已在 Admin 制码，`device_secret` 已烧录
@@ -137,7 +160,7 @@ sequenceDiagram
   participant FW as Firmware
   participant WS as VoiceServer
   participant STT as STTProvider
-  participant Agent as ShuXinAgent
+  participant Agent as ChuXinAgent
   participant TTS as TTSProvider
 
   FW->>WS: listen state start

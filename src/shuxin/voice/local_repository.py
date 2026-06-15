@@ -10,7 +10,7 @@ from typing import Any
 from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
 from shuxin.voice.memory_summary import should_merge_summary
 from shuxin.voice.storage import UserVoiceStorage
-from shuxin.voice.users import DEFAULT_USER_ID, UserConfigProvider, UserSettings
+from shuxin.voice.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
 
 
 class VoiceLocalRepository:
@@ -69,6 +69,20 @@ class VoiceLocalRepository:
             raise PermissionError("session_token is invalid or expired")
         return await self.get_user_quota_by_user_id(session["user_id"])
 
+    async def get_user_profile_by_session(self, session_token: str) -> dict[str, Any]:
+        selected = str(session_token or "").strip()
+        session = self.wechat_sessions.get(selected)
+        if not session:
+            raise PermissionError("session_token is invalid or expired")
+        user_id = str(session["user_id"])
+        quota = await self.get_user_quota_by_user_id(user_id)
+        quota_payload = {key: value for key, value in quota.items() if key != "user_id"}
+        return {
+            "user_id": user_id,
+            "roles": {"factory_qa": False},
+            "quota": quota_payload,
+        }
+
     async def assert_user_quota_available(self, user_id: str) -> None:
         return None
 
@@ -116,6 +130,21 @@ class VoiceLocalRepository:
         if expected and device_secret != expected:
             raise PermissionError("invalid device secret")
         return self.user_provider.authenticate(DEFAULT_USER_ID, "")
+
+    async def authenticate_device_for_factory(
+        self,
+        device_code: str | None,
+        device_secret: str | None,
+    ) -> UserSettings:
+        expected = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "")
+        if expected and device_secret != expected:
+            raise PermissionError("invalid device secret")
+        return UserSettings(
+            user_id=FACTORY_PROBE_USER_ID,
+            token="",
+            llm_config={},
+            agent_id="",
+        )
 
     async def get_device(self, device_id: str | None) -> DeviceConfig:
         return self.device_provider.get(device_id)
@@ -210,6 +239,9 @@ class VoiceLocalRepository:
             purged += int(result.get("purged", 0))
             bytes_freed += int(result.get("bytes_freed", 0))
         return {"purged": purged, "bytes_freed": bytes_freed}
+
+    async def purge_expired_factory_verify_logs(self, *, retention_days: int) -> dict[str, int]:
+        return {"purged": 0}
 
     async def maybe_merge_rolling_summary(
         self,
@@ -388,7 +420,7 @@ class VoiceLocalRepository:
 
         record = AgentRecord(
             agent_id="shuxin",
-            display_name="舒心",
+            display_name="初心",
             voice_type=os.environ.get("VOLCENGINE_TTS_VOICE_TYPE", ""),
             soul_path="data/agents/shuxin/SOUL.md",
         )

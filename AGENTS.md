@@ -1,8 +1,8 @@
-# 舒心 (ShuXin) — 陪伴型 AI 智能体框架
+# 初心 (ChuXin) — 陪伴型 AI 智能体框架
 
 ## 项目概述
 
-舒心是一个**独立的 AI 智能体框架**，对标 Hermes Agent 的品质标准，专注于陪伴型 AI 场景。
+初心是一个**独立的 AI 智能体框架**，对标 Hermes Agent 的品质标准，专注于陪伴型 AI 场景。
 
 ## 核心架构
 
@@ -24,7 +24,7 @@ shuxin/
 2. **插件架构** — 核心功能通过插件系统扩展，陪伴功能作为内置插件
 3. **SOUL.md 驱动** — 人格定义从 SOUL.md 加载，可自由定制
 4. **MBTI 深度集成** — 人格类型影响行为因子和情感表达
-5. **自尊为核心** — 自尊系统是舒心的"灵魂"，所有子系统围绕它运转
+5. **自尊为核心** — 自尊系统是初心的"灵魂"，所有子系统围绕它运转
 
 ## 技术栈
 
@@ -45,7 +45,7 @@ shuxin
 
 ### 整体调用链
 
-舒心当前是一个 Python `src` layout 项目，主入口在 CLI，核心协调者是 `core/agent.py`。
+初心当前是一个 Python `src` layout 项目，主入口在 CLI，核心协调者是 `core/agent.py`。
 
 整体运行链路：
 
@@ -105,7 +105,8 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - 中期摘要环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`；合并后同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json` 供 `companion` `pre_llm_call` 读取。
 - WebSocket 一轮对话：`stt/final` → `agent/thinking` → 流式 `agent/delta`（失败时先发 `agent/error` + `error_kind`）→ 分句 `tts/sentence_*` → `agent/reply` → `tts/stop`（含 `llm_ttft_ms`）。
 - **括弧动作与流式 TTS 过滤约束**：在分句切句中（`_pop_speakable_segments`）必须具备括号感知，当字符处于未闭合的括弧（`()` 和 `（）`）内时，忽略切句标点符号以防止括号被截断。合成 TTS 时通过 `clean_action_text` 剥离括号内容以防语音读出动作；如果分句全是动作内容（过滤后文本为空），服务端跳过 TTS 调用与音频下发，但必须照常发送 `sentence_start`/`sentence_stop` 控制事件（携带原始括弧文本）以供硬件客户端触发对应动作。
-- 硬件接入（鉴权、STT/TTS 代理）：[`docs/VOICE_HARDWARE_QUICKSTART.md`](docs/VOICE_HARDWARE_QUICKSTART.md)、[`docs/VOICE_HARDWARE_INTEGRATION.md`](docs/VOICE_HARDWARE_INTEGRATION.md)；设备 Flash 提示音（16 kHz/16 kbps，`.ogg`+`.opus.bin`，脚本默认 `--format both` 并删 `_tmp`）：`data/device_assets/strings.zh-CN.json` + `scripts/generate_device_prompt_assets.py`，验收 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §18；语音故障排查：同文档 §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。
+- 硬件接入（鉴权、STT/TTS 代理）：[`docs/VOICE_HARDWARE_QUICKSTART.md`](docs/VOICE_HARDWARE_QUICKSTART.md)、[`docs/VOICE_HARDWARE_INTEGRATION.md`](docs/VOICE_HARDWARE_INTEGRATION.md)、出厂验收 [`docs/FACTORY_ACCEPTANCE_HANDOFF.md`](docs/FACTORY_ACCEPTANCE_HANDOFF.md)；设备 Flash 提示音（16 kHz/16 kbps，`.ogg`+`.opus.bin`，脚本默认 `--format both` 并删 `_tmp`）：`data/device_assets/strings.zh-CN.json` + `scripts/generate_device_prompt_assets.py`，验收 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §18；语音故障排查：同文档 §10；协议字段：[`docs/VOICE_HARDWARE_WS_PROTOCOL.md`](docs/VOICE_HARDWARE_WS_PROTOCOL.md) §5。
+- **出厂工厂验收**：`provisioned` 且未绑定设备 hello 走 `authenticate_device_for_factory()`，`factory_acceptance=true`；跳过 `ensure_session` 与 MBTI reveal；拦截 `listen`/`text_turn`；QA `POST /api/factory/verify` + WS `factory_verify`/`factory_verify_ack`。小程序入口：`POST /api/users/me` → `roles.factory_qa`，个人中心「工厂验收」；改 `apps/wechat-miniprogram` 后须 `scripts/wechat_miniprogram_dev.sh build`。Admin：`metadata.factory_role`（工厂 QA，勾选即存）≠ `users.enabled`（启用，改后点保存）。`factory_verify_logs` TTL：`SHUXIN_FACTORY_VERIFY_LOG_RETENTION_DAYS` 默认 15（`0` = 不删）。固件与 QA 排障见 [`docs/FACTORY_ACCEPTANCE_HANDOFF.md`](docs/FACTORY_ACCEPTANCE_HANDOFF.md)；测试 `tests/test_factory_verify.py`、`tests/test_users_me_api.py`。
 - **MBTI 盲盒**：出厂 `mbti`+`sealed`；小程序 bind 揭晓→`locked`（响应 `mbti` 卡片；改 `apps/wechat-miniprogram` 源码后须 `scripts/wechat_miniprogram_dev.sh build` 重编译 `dist/*/mp-weixin`，否则微信工具仍是旧包无弹窗）；`sealed` 时 `/api/devices/my` 不返 `mbti`；首次硬件 TTS 为 `绑定成功。`+`reveal_script`（bind 时 WS 在线经 `voice_session_registry` 即时推，否则 hello 补播，`device_intro_played`）。`_ensure_runtime` 须以 `agent is None` 初始化 STT/TTS/Agent（MBTI intro 可先预填 device）。小程序无解绑。详见 [`docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md`](docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md)、验收 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §9.2。
 - **设备密钥加密**：批量制码/Admin 查看明文须 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`（Fernet）并重部署；未配时 Admin 黄条 + 制码 API fail-fast。历史仅 hash 设备须重制码或 `rotate-secret`。
 
