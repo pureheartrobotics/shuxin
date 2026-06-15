@@ -1,4 +1,4 @@
-"""舒心身份引擎 — MBTI 人格管理与身份解析
+"""初心身份引擎 — MBTI 人格管理与身份解析
 
 对标 Hermes 的 identity.ts / resolveAgentIdentity 机制，
 但更深度集成 MBTI 人格类型对行为的影响。
@@ -208,11 +208,11 @@ class IdentityProfile:
         factors: MBTI 行为影响因子字典。
     """
     mbti: str = "INFJ"
-    name: str = "舒心"
+    name: str = "初心"
     species: str = "灵狐"
     age: int = 22
     gender: str = "无性别"
-    prefix: str = "舒心"
+    prefix: str = "初心"
     tagline: str = ""
     soul_snippet: str = ""
     style_anchor: str = ""
@@ -225,7 +225,7 @@ class IdentityEngine:
     """身份引擎 — 管理 MBTI 人格对行为的影响。
 
     提供 MBTI 类型的动态切换、描述获取、系统提示生成等功能。
-    行为影响因子影响舒心的共情、守护、耐心等行为倾向。
+    行为影响因子影响初心的共情、守护、耐心等行为倾向。
 
     Attributes:
         profile: 当前身份档案。
@@ -338,9 +338,10 @@ class IdentityEngine:
         lines = [
             "### MBTI 风格锚点",
             f"设备 MBTI：{self.profile.mbti}（{self.get_description()}）",
-            "",
-            self.profile.style_anchor or self.get_description(),
         ]
+        if self.profile.soul_snippet:
+            lines += ["", self.profile.soul_snippet]
+        lines += ["", self.profile.style_anchor or self.get_description()]
         return "\n".join(lines)
 
     def get_response_prefix(self, context: Optional[Dict[str, Any]] = None) -> str:

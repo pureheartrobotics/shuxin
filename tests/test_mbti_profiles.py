@@ -43,6 +43,10 @@ def test_slot2_contains_style_anchor(mbti: str) -> None:
     assert mbti in block
     assert STYLE_KEYWORDS[mbti] in block
     assert engine.profile.style_anchor.strip() in block
+    assert engine.profile.soul_snippet.strip() in block
+    assert "【口头标记】" in block
+    assert "【行为触发】" in block
+    assert "【专属动作】" in block
 
 
 @pytest.mark.parametrize("mbti", SAMPLE_TYPES)
