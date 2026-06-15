@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在目标主机恢复并部署舒心语音 demo 迁移包。
+# 在目标主机恢复并部署初心语音 demo 迁移包。
 #
 # 用法:
 #   bash scripts/import_deploy.sh <bundle.tar.gz> [安装目录]
@@ -204,7 +204,7 @@ finish() {
 }
 
 main() {
-  info "舒心语音 demo 部署 (${TIMESTAMP})"
+  info "初心语音 demo 部署 (${TIMESTAMP})"
   info "安装目录: ${INSTALL_DIR}"
   check_deps
   warn_existing_install

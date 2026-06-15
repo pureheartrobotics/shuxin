@@ -1,5 +1,5 @@
 """
-舒心智能体主循环
+初心智能体主循环
 ================
 
 整合所有子系统的核心协调者。负责：
@@ -14,7 +14,7 @@
 
     agent = Agent()
     agent.initialize()
-    reply = agent.chat("你好，舒心")
+    reply = agent.chat("你好，初心")
     agent.shutdown()
 """
 
@@ -99,7 +99,7 @@ class AgentContext:
 
 
 class Agent:
-    """舒心智能体 — 所有功能的核心协调者。
+    """初心智能体 — 所有功能的核心协调者。
 
     Args:
         config: 配置对象。为 ``None`` 时自动从默认路径加载。
@@ -143,7 +143,7 @@ class Agent:
             logger.debug("智能体已初始化，跳过重复初始化")
             return
 
-        logger.info("正在初始化舒心智能体...")
+        logger.info("正在初始化初心智能体...")
 
         try:
             # 1. 加载灵魂
@@ -188,7 +188,7 @@ class Agent:
             self.plugins.invoke_hook("on_session_start", agent=self)
 
             self._initialized = True
-            logger.info("舒心智能体初始化完成！")
+            logger.info("初心智能体初始化完成！")
 
         except Exception as e:
             logger.critical("智能体初始化失败: %s", e, exc_info=True)
@@ -430,7 +430,7 @@ class Agent:
             )
             for _plugin_name, result in hook_results:
                 if result is not None and result != full_content:
-                    yield f"\n\n*（舒心的情绪似乎有些变化）*"
+                    yield f"\n\n*（初心的情绪似乎有些变化）*"
 
             self.memory.add_message("assistant", full_content)
             self.plugins.invoke_hook("on_ai_message", agent=self, message=full_content)
@@ -520,11 +520,11 @@ class Agent:
             格式化的帮助文本。
         """
         lines = [
-            "## 舒心可用命令",
+            "## 初心可用命令",
             "",
             "### 内置命令",
             "/help          — 显示此帮助",
-            "/status        — 查看舒心当前状态",
+            "/status        — 查看初心当前状态",
             "/reset         — 清空会话记忆",
             "/mbti          — 查看或切换 MBTI 类型（如 /mbti ENFP）",
             "/reset-key     — 重新设置 API 密钥",
@@ -552,7 +552,7 @@ class Agent:
             self.config.llm.provider, {}
         ).get("label", self.config.llm.provider)
         return (
-            f"## 舒心状态\n\n"
+            f"## 初心状态\n\n"
             f"**名字**: {self.soul.profile.name}\n"
             f"**物种**: {self.soul.profile.species}\n"
             f"**MBTI**: {self.identity.profile.mbti}\n"
@@ -575,11 +575,11 @@ class Agent:
         if not self._initialized:
             return
 
-        logger.info("正在关闭舒心智能体...")
+        logger.info("正在关闭初心智能体...")
         try:
             self.plugins.invoke_hook("on_session_end", agent=self)
         except Exception as e:
             logger.warning("关闭时 Hook 执行异常: %s", e)
 
         self._initialized = False
-        logger.info("舒心智能体已关闭")
+        logger.info("初心智能体已关闭")

@@ -11,10 +11,10 @@ def test_pop_speakable_segments_waits_for_sentence_boundary() -> None:
 
 
 def test_pop_speakable_segments_splits_on_weak_punctuation_for_first_segment() -> None:
-    segments, rest = _pop_speakable_segments("你好，我是舒心", allow_weak_punctuation=True)
+    segments, rest = _pop_speakable_segments("你好，我是初心", allow_weak_punctuation=True)
 
     assert segments == ["你好，"]
-    assert rest == "我是舒心"
+    assert rest == "我是初心"
 
 
 def test_pop_speakable_segments_splits_finished_sentences() -> None:

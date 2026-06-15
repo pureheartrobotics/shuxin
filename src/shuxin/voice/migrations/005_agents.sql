@@ -20,7 +20,7 @@ INSERT INTO agents (
 )
 VALUES (
     'shuxin',
-    '舒心',
+    '初心',
     '',
     'volcano_icl',
     1.0,

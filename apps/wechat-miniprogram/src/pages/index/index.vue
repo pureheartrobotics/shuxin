@@ -1,8 +1,8 @@
 <template>
   <view class="page">
     <view class="hero">
-      <view class="eyebrow">SHUXIN DEVICE</view>
-      <view class="title">绑定你的舒心设备</view>
+      <view class="eyebrow">CHUXIN DEVICE</view>
+      <view class="title">绑定你的初心设备</view>
       <view class="subtitle">扫码或输入认领码，把设备交给当前微信用户。</view>
       <view class="auth-status">{{ authStatus }}</view>
     </view>

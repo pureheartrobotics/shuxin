@@ -74,13 +74,13 @@ def test_agent_chat_stream_iterates_provider_chunks() -> None:
 
 
 def test_agent_chat_stream_skips_llm_when_output_is_blocked() -> None:
-    agent, llm, memory = make_agent(blocked="（舒心沉默着）")
+    agent, llm, memory = make_agent(blocked="（初心沉默着）")
 
     chunks = list(agent.chat_stream("你好"))
 
-    assert chunks == ["（舒心沉默着）"]
+    assert chunks == ["（初心沉默着）"]
     assert not llm.called
-    assert memory.messages[-1] == ("assistant", "（舒心沉默着）")
+    assert memory.messages[-1] == ("assistant", "（初心沉默着）")
 
 
 def test_agent_chat_stream_timeout_uses_technical_fallback() -> None:

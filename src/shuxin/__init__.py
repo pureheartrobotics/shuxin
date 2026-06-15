@@ -1,8 +1,8 @@
-"""舒心 (ShuXin) — 陪伴型 AI 智能体框架。
+"""初心 (ChuXin) — 陪伴型 AI 智能体框架。
 
-舒心是一个拥有独立灵魂的 AI 伴侣框架，基于 MBTI 人格引擎、
+初心是一个拥有独立灵魂的 AI 伴侣框架，基于 MBTI 人格引擎、
 自尊系统、情感引擎和守护系统构建深层情感连接。
 """
 
 __version__ = "0.1.0"
-__author__ = "ShuXin Team"
+__author__ = "ChuXin Team"

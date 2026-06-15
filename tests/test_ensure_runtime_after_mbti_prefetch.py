@@ -52,7 +52,7 @@ def test_ensure_runtime_inits_agent_when_device_prefetched() -> None:
     mock_agent.initialize = MagicMock()
     session.service.create_agent.return_value = mock_agent
     session.repo.get_agent = AsyncMock(
-        return_value=AgentRecord(agent_id="shuxin", display_name="舒心", voice_type="S_test")
+        return_value=AgentRecord(agent_id="shuxin", display_name="初心", voice_type="S_test")
     )
     session.repo.get_user_agent_id = AsyncMock(return_value="shuxin")
 

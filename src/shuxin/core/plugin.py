@@ -1,5 +1,5 @@
 """
-舒心插件系统
+初心插件系统
 ============
 
 发现、加载、管理插件的完整生命周期。受 Hermes Agent 插件架构启发，
@@ -238,7 +238,7 @@ class PluginManager:
         """初始化插件系统，设定搜索路径。
 
         Args:
-            shuxin_home: 舒心家目录路径。为 ``None`` 时使用 ``~/.shuxin``。
+            shuxin_home: 初心家目录路径。为 ``None`` 时使用 ``~/.shuxin``。
         """
         if self._initialized:
             logger.debug("插件系统已初始化，跳过重复初始化")

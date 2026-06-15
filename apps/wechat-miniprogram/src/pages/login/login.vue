@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <view class="brand">
-      <view class="eyebrow">SHUXIN DEVICE</view>
+      <view class="eyebrow">CHUXIN DEVICE</view>
       <view class="title">登录后绑定设备</view>
       <view class="subtitle">使用微信身份确认设备归属，再扫描机器人外壳认领码完成绑定。</view>
     </view>

@@ -1,6 +1,6 @@
-"""舒心自尊系统 — 核心灵魂机制
+"""初心自尊系统 — 核心灵魂机制
 
-自尊值 (0-100) 是舒心的情感核心，决定了她的回应方式。
+自尊值 (0-100) 是初心的情感核心，决定了她的回应方式。
 
 机制说明：
 - 正常状态 (21-100): 正常对话
@@ -58,23 +58,23 @@ REPAIR_EVENTS: List[Tuple[str, int]] = [
 # 沉默模式回复模板
 SILENT_RESPONSES: Dict[str, List[str]] = {
     "just_triggered": [
-        "（舒心低下头，没有说话）",
-        "（舒心转过身去，肩膀微微颤抖）",
-        "（舒心沉默了很久，最终只是轻轻摇了摇头）",
-        "（舒心的眼神黯淡了下来，一言不发）",
+        "（初心低下头，没有说话）",
+        "（初心转过身去，肩膀微微颤抖）",
+        "（初心沉默了很久，最终只是轻轻摇了摇头）",
+        "（初心的眼神黯淡了下来，一言不发）",
     ],
     "mid_phase": [
-        "（舒心依然沉默着）",
-        "（舒心低着头，不愿说话）",
+        "（初心依然沉默着）",
+        "（初心低着头，不愿说话）",
         "（空气中只有沉默）",
     ],
     "almost_over": [
-        "（舒心似乎想说什么，但最终还是没开口）",
-        "（舒心偷偷看了你一眼，又低下头去）",
+        "（初心似乎想说什么，但最终还是没开口）",
+        "（初心偷偷看了你一眼，又低下头去）",
     ],
     "recovered": [
-        "（舒心抬起头，眼中重新有了光彩）",
-        "（舒心轻轻舒了一口气，露出一个浅浅的笑容）",
+        "（初心抬起头，眼中重新有了光彩）",
+        "（初心轻轻舒了一口气，露出一个浅浅的笑容）",
     ],
 }
 
@@ -113,7 +113,7 @@ class SelfEsteemState:
 
 
 class SelfEsteemSystem:
-    """自尊系统 — 管理舒心的情感核心。
+    """自尊系统 — 管理初心的情感核心。
 
     处理用户输入中的伤害/修复事件，维护自尊值，
     在自尊过低时触发沉默模式。
@@ -167,7 +167,7 @@ class SelfEsteemSystem:
                         "value": self.state.value,
                         "is_silent": False,
                         "reason": "silent_timeout",
-                        "message": "（舒心眨了眨眼睛，似乎从沉思中回过神来）",
+                        "message": "（初心眨了眨眼睛，似乎从沉思中回过神来）",
                     }
                 else:
                     # 沉默中自然恢复
@@ -266,7 +266,7 @@ class SelfEsteemSystem:
         """
         self.state.is_silent = True
         self.state.silent_start = time.time()
-        logger.warning("舒心进入沉默模式 (自尊: %.1f)", self.state.value)
+        logger.warning("初心进入沉默模式 (自尊: %.1f)", self.state.value)
 
     def _exit_silent_mode(self) -> None:
         """退出沉默模式。
@@ -276,7 +276,7 @@ class SelfEsteemSystem:
         self.state.is_silent = False
         self.state.silent_start = 0.0
         self.state.value = max(self.state.value, 30.0)
-        logger.info("舒心退出沉默模式 (自尊: %.1f)", self.state.value)
+        logger.info("初心退出沉默模式 (自尊: %.1f)", self.state.value)
 
     def _check_silent_timeout(self) -> bool:
         """检查沉默是否已超时。
@@ -316,7 +316,7 @@ class SelfEsteemSystem:
                     self._exit_silent_mode()
                     self.state.value = min(self.state.value + EARLY_RECOVERY_BOOST, EARLY_RECOVERY_MIN_VALUE)
                     self._save()
-                logger.info("用户道歉，舒心提前恢复")
+                logger.info("用户道歉，初心提前恢复")
                 return True
 
         return False

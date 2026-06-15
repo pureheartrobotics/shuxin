@@ -41,10 +41,10 @@ from shuxin.voice.karen_dsp import (  # noqa: E402
 from shuxin.voice.providers import EdgeTTSProvider  # noqa: E402
 
 DEFAULT_TEXT = (
-    "你好，我是舒心。我会陪你聊天、听你说话，也会记得我们最近聊过的事。"
+    "你好，我是初心。我会陪你聊天、听你说话，也会记得我们最近聊过的事。"
     "此刻如果你愿意，可以直接对我说心里话。"
 )
-SHORT_TEXT = "你好，我是舒心。此刻如果你愿意，可以直接对我说心里话。"
+SHORT_TEXT = "你好，我是初心。此刻如果你愿意，可以直接对我说心里话。"
 OUT_DIR = ROOT / "outputs" / "voiceover-candidates"
 XIAOYI_VOICE = "zh-CN-XiaoyiNeural"
 DEFAULT_RATE = "-8%"

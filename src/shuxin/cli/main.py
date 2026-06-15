@@ -1,4 +1,4 @@
-"""舒心 CLI 主入口
+"""初心 CLI 主入口
 
 对标 Hermes 的 cli.py，提供交互式命令行界面。
 支持流式输出、彩色显示、斜杠命令、历史记录。
@@ -33,7 +33,7 @@ logger = logging.getLogger("shuxin.cli")
 
 # 版本信息
 VERSION = "0.2.0"
-APP_NAME = "舒心 (ShuXin)"
+APP_NAME = "初心 (ChuXin)"
 
 
 def setup_logging(debug: bool = False) -> None:
@@ -89,14 +89,14 @@ def _get_role_prefix(role: str) -> str:
     if _supports_emoji():
         prefix_map = {
             "user": "👤 你",
-            "assistant": "🦊 舒心",
+            "assistant": "🦊 初心",
             "system": "⚙️",
             "error": "❌",
         }
     else:
         prefix_map = {
             "user": "[你]",
-            "assistant": "[舒心]",
+            "assistant": "[初心]",
             "system": "[系统]",
             "error": "[错误]",
         }
@@ -153,7 +153,7 @@ def run_interactive(agent: Agent) -> None:
     )
     print_message(
         "system",
-        f"舒心已上线 🦊\n"
+        f"初心已上线 🦊\n"
         f"  提供者: {provider_label}\n"
         f"  模型: {agent.config.llm.model}\n"
         f"  输入 /help 查看命令",
@@ -180,7 +180,7 @@ def run_interactive(agent: Agent) -> None:
 
             # 检查退出
             if user_input.lower() in ("exit", "quit", "bye"):
-                print_message("system", "舒心轻轻挥手，目送你离开……下次见 💫")
+                print_message("system", "初心轻轻挥手，目送你离开……下次见 💫")
                 break
 
             if not user_input.strip():
@@ -212,7 +212,7 @@ def run_interactive(agent: Agent) -> None:
                 response = agent.chat(user_input)
                 print_message("assistant", response)
             except KeyboardInterrupt:
-                print_message("system", "\n（舒心歪了歪头）嗯？")
+                print_message("system", "\n（初心歪了歪头）嗯？")
                 continue
             except RuntimeError as e:
                 logger.error("对话出错: %s", e, exc_info=True)
@@ -229,9 +229,9 @@ def run_interactive(agent: Agent) -> None:
                 print_message("error", f"出错了: {e}")
 
     except KeyboardInterrupt:
-        print_message("system", "\n\n舒心轻轻挥手，目送你离开……下次见 💫")
+        print_message("system", "\n\n初心轻轻挥手，目送你离开……下次见 💫")
     except EOFError:
-        print_message("system", "\n\n舒心轻轻挥手，目送你离开……下次见 💫")
+        print_message("system", "\n\n初心轻轻挥手，目送你离开……下次见 💫")
 
 
 def _supports_emoji() -> bool:
@@ -441,7 +441,7 @@ def _ensure_setup(config: Config) -> None:
     is_first_run = not (has_provider or has_model or has_key)
 
     if is_first_run:
-        print(f"\n{'🎉 ' if emoji else ''}欢迎使用舒心！首次运行需要完成以下设置：")
+        print(f"\n{'🎉 ' if emoji else ''}欢迎使用初心！首次运行需要完成以下设置：")
         print(f"   1. 选择 LLM 提供者（模型服务商）")
         print(f"   2. 选择模型")
         print(f"   3. 输入 API 密钥\n")

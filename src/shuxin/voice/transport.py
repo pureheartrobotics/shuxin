@@ -12,7 +12,7 @@ class DeviceSession:
     """Runtime state for one voice device/session.
 
     This intentionally mirrors the shape needed by future hardware transports
-    without importing the mature Xiaozhi connection stack into ShuXin.
+    without importing the mature Xiaozhi connection stack into ChuXin.
     """
 
     device_id: str

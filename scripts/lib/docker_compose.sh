@@ -1,4 +1,4 @@
-# 舒心语音脚本共用的 Docker Compose 辅助函数。
+# 初心语音脚本共用的 Docker Compose 辅助函数。
 # 在 bash 中引用: source "$(dirname "$0")/lib/docker_compose.sh"
 
 : "${PROJECT_NAME:=shuxin}"

@@ -1,7 +1,7 @@
-"""舒心人格引擎 — SOUL.md 加载与解析
+"""初心人格引擎 — SOUL.md 加载与解析
 
 对标 Hermes 的 SOUL.md Slot #1 机制，作为智能体的核心身份定义。
-SOUL.md 是舒心的"灵魂文件"，定义了人格、行为准则、情感表达方式。
+SOUL.md 是初心的"灵魂文件"，定义了人格、行为准则、情感表达方式。
 
 SOUL.md 文件格式：
 - YAML frontmatter (--- 包裹) 定义元数据
@@ -39,7 +39,7 @@ class SoulProfile:
         emotion_templates: 情感表达模板字典。
         raw_content: SOUL.md 原始内容。
     """
-    name: str = "舒心"
+    name: str = "初心"
     species: str = "灵狐"
     mbti: str = "INFJ"
     age: int = 22
@@ -212,7 +212,7 @@ class SoulEngine:
 
         Example:
             >>> engine.get_system_prompt_block()
-            '## 你的身份\\n\\n你是舒心，一只灵狐。\\n...'
+            '## 你的身份\\n\\n你是初心，一只灵狐。\\n...'
         """
         p = self.profile
         lines = [
@@ -249,7 +249,7 @@ class SoulEngine:
 
         Example:
             >>> engine.get_profile_summary()
-            '舒心 · 灵狐 · INFJ · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
+            '初心 · 灵狐 · INFJ · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
         """
         p = self.profile
         return (

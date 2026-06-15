@@ -9,7 +9,7 @@ DEFAULT_API_BASE="http://localhost:8765"
 
 check_api_base() {
   if ! curl -fsS "$API_BASE/health" >/dev/null; then
-    echo "Warning: cannot reach ShuXin voice backend: $API_BASE/health"
+    echo "Warning: cannot reach ChuXin voice backend: $API_BASE/health"
     echo "If WeChat DevTools times out, start the backend or override with SHUXIN_API_BASE=http://<host>:8765"
   fi
 }
@@ -79,7 +79,7 @@ if [ ! -e node_modules/@dcloudio/uni-components ]; then
   exit 1
 fi
 
-echo "ShuXin mini program dev server"
+echo "ChuXin mini program dev server"
 echo "AppID: $APPID"
 echo "API: $API_BASE"
 check_api_base

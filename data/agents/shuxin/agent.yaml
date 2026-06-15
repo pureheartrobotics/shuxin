@@ -1,5 +1,5 @@
 agent_id: shuxin
-display_name: 舒心
+display_name: 初心
 voice_type: "${VOLCENGINE_TTS_VOICE_TYPE}"
 cluster: volcano_icl
 speed_ratio: 1.0

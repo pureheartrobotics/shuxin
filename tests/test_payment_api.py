@@ -95,7 +95,7 @@ def test_payment_create_order_uses_db_plan_snapshot(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["prepay_id"] == "wx_prepay"
     create_jsapi.assert_called_once_with(
-        description="舒心10 元",
+        description="初心10 元",
         out_trade_no="sx123",
         amount_fen=1000,
         payer_openid="wx_test",

@@ -52,7 +52,7 @@ class VoiceTurnPaths:
 class UserVoiceStorage:
     """语音 Web 路径的用户级存储门面。
 
-    每个 user_id 都有独立的舒心 home、事件库、长期记忆、陪伴状态和
+    每个 user_id 都有独立的初心 home、事件库、长期记忆、陪伴状态和
     音频附件目录。这样同一用户跨设备共享记忆，不同用户之间互不污染。
     """
 
@@ -70,7 +70,7 @@ class UserVoiceStorage:
         self._init_db()
 
     def user_shuxin_home(self) -> Path:
-        """返回该用户专属的 ShuXin home，用于初始化 Agent 和记忆目录。"""
+        """返回该用户专属的 ChuXin home，用于初始化 Agent 和记忆目录。"""
         return self.user_root
 
     def companion_data_dir(self) -> Path:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 舒心语音 demo 的日常 Docker 重部署/启动。
+# 初心语音 demo 的日常 Docker 重部署/启动。
 # 保留挂载数据: data/、models/、samples/、outputs/。
 #
 # Windows/WSL: 需要 Docker Desktop，并对当前 WSL 发行版开启 integration。

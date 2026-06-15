@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "shuxin-agent"
 version = "0.1.0"
-description = "舒心 (ShuXin) — 陪伴型 AI 智能体框架，拥有独立灵魂的 AI 伴侣"
+description = "初心 (ChuXin) — 陪伴型 AI 智能体框架，拥有独立灵魂的 AI 伴侣"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "ShuXin Team" }]
+authors = [{ name = "ChuXin Team" }]
 license = "MIT"
 dependencies = [
     "openai>=1.0.0",

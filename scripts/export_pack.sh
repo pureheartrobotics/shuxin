@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包舒心语音 demo 的代码、bind mount 与数据库卷。
+# 打包初心语音 demo 的代码、bind mount 与数据库卷。
 #
 # 用法:
 #   bash scripts/export_pack.sh [输出目录]
@@ -150,7 +150,7 @@ bundle() {
   [[ "$POSTGRES_DUMPED" -eq 1 ]] && postgres_flag="是"
   [[ "$QDRANT_PACKED" -eq 1 ]] && qdrant_flag="是"
   cat > "${WORK_DIR}/BUNDLE_INFO.txt" <<EOF
-舒心语音 Demo 迁移包
+初心语音 Demo 迁移包
 ====================
 打包时间     : ${TIMESTAMP}
 打包主机     : $(hostname)
@@ -177,7 +177,7 @@ EOF
 }
 
 main() {
-  info "舒心语音 demo 打包 (${TIMESTAMP})"
+  info "初心语音 demo 打包 (${TIMESTAMP})"
   check_deps
   load_host_data_dirs
   mkdir -p "$WORK_DIR"

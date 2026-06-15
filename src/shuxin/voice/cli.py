@@ -11,7 +11,7 @@ from shuxin.voice.transport import FileAudioOutputTransport
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ShuXin voice demo CLI")
+    parser = argparse.ArgumentParser(description="ChuXin voice demo CLI")
     parser.add_argument(
         "--device-config",
         default=None,
@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     session.add_argument("--out-dir", type=Path, default=Path("outputs/session"))
     session.add_argument(
         "--welcome-text",
-        default="你好，我是舒心，我们开始聊天吧。",
+        default="你好，我是初心，我们开始聊天吧。",
     )
     session.add_argument(
         "--play",

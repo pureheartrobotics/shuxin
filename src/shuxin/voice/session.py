@@ -25,7 +25,7 @@ class VoiceSessionRunner:
         service: VoiceService,
         device_id: str | None = None,
         out_dir: Path = Path("outputs/session"),
-        welcome_text: str = "你好，我是舒心，我们开始聊天吧。",
+        welcome_text: str = "你好，我是初心，我们开始聊天吧。",
         input_transport: AudioInputTransport | None = None,
         output_transport: AudioOutputTransport | None = None,
         max_turns: int | None = None,
@@ -99,7 +99,7 @@ class VoiceSessionRunner:
 
     def _start_transcript(self, transcript_path: Path, init_audio: Path) -> None:
         content = [
-            "# ShuXin Voice Session",
+            "# ChuXin Voice Session",
             "",
             f"started_at={datetime.now().isoformat(timespec='seconds')}",
             f"device_id={self.runtime.device_id}",

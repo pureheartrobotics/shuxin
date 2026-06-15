@@ -1,4 +1,4 @@
-"""舒心配置管理模块
+"""初心配置管理模块
 
 支持 YAML 配置文件 + 环境变量覆盖，对标 Hermes 的配置系统。
 
@@ -104,10 +104,10 @@ def get_provider_model_ids(provider: str) -> List[str]:
 
 
 def get_shuxin_home() -> Path:
-    """获取舒心家目录，优先使用环境变量。
+    """获取初心家目录，优先使用环境变量。
 
     Returns:
-        Path: 舒心家目录路径。如果设置了 ``SHUXIN_HOME`` 环境变量则使用该值，
+        Path: 初心家目录路径。如果设置了 ``SHUXIN_HOME`` 环境变量则使用该值，
               否则返回 ``~/.shuxin``。
 
     Example:
@@ -176,7 +176,7 @@ class CompanionConfig:
 
 @dataclass
 class Config:
-    """舒心主配置。
+    """初心主配置。
 
     管理所有子配置（LLM、人格、陪伴系统），支持从 YAML 文件加载
     和环境变量覆盖。
@@ -184,7 +184,7 @@ class Config:
     Attributes:
         debug: 是否启用调试模式。
         verbose: 是否启用详细日志。
-        shuxin_home: 舒心家目录路径。
+        shuxin_home: 初心家目录路径。
         llm: LLM 提供者配置。
         soul: 人格系统配置。
         companion: 陪伴系统配置。

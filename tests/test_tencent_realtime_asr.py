@@ -53,14 +53,14 @@ def test_parse_tencent_realtime_asr_message_states():
             {
                 "code": 0,
                 "final": 1,
-                "result": {"slice_type": 2, "voice_text_str": "你好舒心"},
+                "result": {"slice_type": 2, "voice_text_str": "你好初心"},
             }
         )
     )
 
     assert partial.text == "你好"
     assert not partial.is_sentence_final
-    assert final.final_text == "你好舒心"
+    assert final.final_text == "你好初心"
     assert final.is_sentence_final
     assert final.is_stream_final
 
