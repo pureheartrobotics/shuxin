@@ -42,6 +42,7 @@
 | 联调/QA | [语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md) |
 | 工厂 QA | [出厂工厂验收交接](docs/FACTORY_ACCEPTANCE_HANDOFF.md) |
 | 架构 | [语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md) |
+| 微信小程序 | [小程序开发运行指南](apps/wechat-miniprogram/README.md) |
 | AI 协作者 | [AGENTS.md](AGENTS.md) |
 
 语音 Demo 无硬件测试：[VOICE_DEMO_MIN_TEST.md](docs/VOICE_DEMO_MIN_TEST.md)。硬件 WebSocket 字段详表：[VOICE_HARDWARE_WS_PROTOCOL.md](docs/VOICE_HARDWARE_WS_PROTOCOL.md)。
@@ -170,7 +171,7 @@ flowchart TB
 | Agent 核心 | `src/shuxin/core/` | LLM 循环、SOUL、记忆、插件 Hook |
 | 陪伴插件 | `plugins/companion/` | 自尊、情感、守护、用户建模 |
 | Voice BFF | `src/shuxin/voice/` | WS 鉴权、STT/TTS 代理、设备绑定、Admin |
-| 小程序 | `apps/wechat-miniprogram/` | 扫码绑定、MBTI 盲盒弹窗 |
+| 小程序 | [`apps/wechat-miniprogram/`](apps/wechat-miniprogram/README.md) | 扫码绑定、MBTI 盲盒弹窗（开发运行指南） |
 | 数据层 | Postgres + Qdrant + 本地文件 | 用户/设备/绑定/事件；长期记忆（Mem0 可选） |
 
 典型硬件语音路径：`设备 Opus 上行` → `Voice Server STT` → `Agent + 陪伴插件` → `火山 TTS` → `Opus 下行`。云厂商密钥仅在服务端，固件不直连 ASR/TTS/LLM。
@@ -411,7 +412,7 @@ bash /path/to/scripts/import_deploy.sh ~/shuxin_export/shuxin_voice_bundle_*.tar
 |------|------|
 | `http://localhost:8765/admin` | 后台管理用户、设备、绑定和适配器；本地 token 默认 `dev-admin-token` |
 | `http://localhost:8765/voice-demo` | 浏览器模拟硬件，使用 `device_code + device_secret` 连接 |
-| `apps/wechat-miniprogram/dist/build/mp-weixin` | 微信开发者工具导入的构建产物目录 |
+| `apps/wechat-miniprogram/dist/build/mp-weixin` | 微信开发者工具导入的构建产物目录（详情见[小程序开发指南](apps/wechat-miniprogram/README.md)） |
 
 WSL 下构建小程序时运行 `scripts/wechat_miniprogram_build.sh`。脚本默认自动探测 WSL IP，并把小程序 API 编译为 `http://<WSL_IP>:8765`；需要手动指定时设置 `SHUXIN_API_BASE`。
 
