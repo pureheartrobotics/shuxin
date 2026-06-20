@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-08T05:37:33.371869+00:00",
+  "generated_at": "2026-06-20T03:00:14.795093+00:00",
   "agent_id": "shuxin",
-  "voice_type": "",
+  "voice_type": "S_gt4hvQ552",
   "profile": "flash",
   "sample_rate": 16000,
   "opus_bitrate_bps": 16000,
@@ -586,6 +586,28 @@
       "reencoded_from": "HELLO_MY_FRIEND.ogg",
       "opus_frame_count": 32,
       "text": "你好，我的朋友！"
+    },
+    {
+      "key": "FACTORY_VERIFY_SUCCESS",
+      "text": "验证成功",
+      "files": {
+        "opus_bin": "FACTORY_VERIFY_SUCCESS.opus.bin",
+        "ogg": "FACTORY_VERIFY_SUCCESS.ogg"
+      },
+      "sample_rate": 16000,
+      "frame_duration_ms": 60,
+      "opus_frame_count": 25
+    },
+    {
+      "key": "FACTORY_VERIFY_FAILED",
+      "text": "验证失败",
+      "files": {
+        "opus_bin": "FACTORY_VERIFY_FAILED.opus.bin",
+        "ogg": "FACTORY_VERIFY_FAILED.ogg"
+      },
+      "sample_rate": 16000,
+      "frame_duration_ms": 60,
+      "opus_frame_count": 24
     }
   ],
   "skipped": [],

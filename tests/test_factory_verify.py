@@ -99,6 +99,141 @@ def test_factory_verify_pass_includes_mbti(monkeypatch) -> None:
     vsr.reset_for_tests()
 
 
+def test_factory_verify_in_progress_notifies_device() -> None:
+    device_id = "SX-000116"
+    vsr.reset_for_tests()
+    sent_messages: list[dict] = []
+    session = SimpleNamespace(_send_json=AsyncMock(side_effect=sent_messages.append))
+    vsr.register(device_id, session)
+    assert vsr.factory_verify_start(device_id) is not None
+
+    class FakeRepo:
+        async def factory_verify_user_has_role(self, session_token: str) -> str:
+            return "qa-user"
+
+        async def factory_verify_lookup(self, claim_code: str) -> dict:
+            return {
+                "device_id": device_id,
+                "claim_code_status": "active",
+                "metadata": {"mbti": "INFJ", "mbti_status": "sealed"},
+                "mbti": "INFJ",
+                "mbti_status": "sealed",
+            }
+
+    app = create_app()
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        res = client.post(
+            "/api/factory/verify",
+            json={"session_token": "qa-token", "claim_code": "CLM-A001-0116"},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["result"] == "FAIL"
+    assert body["reason"] == "verify_in_progress"
+    assert sent_messages == [
+        {
+            "type": "factory_verify_fail",
+            "verify_id": body["verify_id"],
+            "reason": "verify_in_progress",
+        }
+    ]
+    vsr.reset_for_tests()
+
+
+def test_factory_verify_send_failed_notifies_device() -> None:
+    device_id = "SX-000116"
+    vsr.reset_for_tests()
+    sent_messages: list[dict] = []
+
+    async def fake_send_json(msg: dict) -> None:
+        sent_messages.append(msg)
+        if msg.get("type") == "factory_verify":
+            raise RuntimeError("broken pipe")
+
+    session = SimpleNamespace(_send_json=AsyncMock(side_effect=fake_send_json))
+    vsr.register(device_id, session)
+
+    class FakeRepo:
+        async def factory_verify_user_has_role(self, session_token: str) -> str:
+            return "qa-user"
+
+        async def factory_verify_lookup(self, claim_code: str) -> dict:
+            return {
+                "device_id": device_id,
+                "claim_code_status": "active",
+                "metadata": {"mbti": "INFJ", "mbti_status": "sealed"},
+                "mbti": "INFJ",
+                "mbti_status": "sealed",
+            }
+
+        async def factory_verify_log(self, **kwargs) -> None:
+            assert kwargs["result"] == "FAIL"
+            assert kwargs["fail_reason"].startswith("send_failed:")
+
+    app = create_app()
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        res = client.post(
+            "/api/factory/verify",
+            json={"session_token": "qa-token", "claim_code": "CLM-A001-0116"},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["result"] == "FAIL"
+    assert body["reason"] == "send_failed"
+    assert [msg["type"] for msg in sent_messages] == [
+        "factory_verify",
+        "factory_verify_fail",
+    ]
+    assert sent_messages[1]["reason"] == "send_failed"
+    assert sent_messages[1]["verify_id"] == body["verify_id"]
+    vsr.reset_for_tests()
+
+
+def test_factory_verify_ack_timeout_does_not_notify_device(monkeypatch) -> None:
+    device_id = "SX-000116"
+    vsr.reset_for_tests()
+    monkeypatch.setattr("shuxin.voice.server.FACTORY_VERIFY_ACK_TIMEOUT_SECONDS", 0.01)
+    sent_messages: list[dict] = []
+    session = SimpleNamespace(_send_json=AsyncMock(side_effect=sent_messages.append))
+    vsr.register(device_id, session)
+
+    class FakeRepo:
+        async def factory_verify_user_has_role(self, session_token: str) -> str:
+            return "qa-user"
+
+        async def factory_verify_lookup(self, claim_code: str) -> dict:
+            return {
+                "device_id": device_id,
+                "claim_code_status": "active",
+                "metadata": {"mbti": "INFJ", "mbti_status": "sealed"},
+                "mbti": "INFJ",
+                "mbti_status": "sealed",
+            }
+
+        async def factory_verify_log(self, **kwargs) -> None:
+            assert kwargs["result"] == "FAIL"
+            assert kwargs["fail_reason"] == "ack_timeout"
+
+    app = create_app()
+    with TestClient(app) as client:
+        app.state.repo = FakeRepo()
+        res = client.post(
+            "/api/factory/verify",
+            json={"session_token": "qa-token", "claim_code": "CLM-A001-0116"},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["result"] == "FAIL"
+    assert body["reason"] == "ack_timeout"
+    assert [msg["type"] for msg in sent_messages] == ["factory_verify"]
+    vsr.reset_for_tests()
+
+
 def test_factory_verify_requires_factory_role() -> None:
     class FakeRepo:
         async def factory_verify_user_has_role(self, session_token: str) -> str:

@@ -17,7 +17,7 @@
 | hello 响应 | `factory_acceptance: true` | 标准 `hello ok` |
 | MBTI | 保持 `mbti_status=sealed`，不揭晓 | bind / hello 可揭晓 → `locked` |
 | 对话 | 禁止 `listen` / 音频帧 | 正常 STT/LLM/TTS |
-| 固件动作 | 收 `factory_verify` → 回 ack | 正常语音对话 |
+| 固件动作 | 收 `factory_verify` 播成功 → 回 ack；收 `factory_verify_fail` 播失败 | 正常语音对话 |
 
 ### 1.1 信息认知边界（固件收什么 / 不收什么）
 
@@ -28,14 +28,16 @@
 | `device_id` | 烧录 + hello 回显 | PASS 响应 | 无 | 有 |
 | `claim_code` | **不知** | 扫码输入 | 无（在外壳） | 有 |
 | MBTI | **不知**（sealed） | PASS 时显示 | 印刷 | sealed |
-| `factory_verify` | **收**（仅触发） | 不直接收 | 无 | 日志 |
+| `factory_verify` | **收**（成功触发） | 不直接收 | 无 | 日志 |
+| `factory_verify_fail` | **收**（在线失败触发） | 不直接收 | 无 | 日志 |
 
 **固件会收到**：
 
 - `hello ok`：`device_id`、`factory_acceptance: true`（**无 MBTI**）
 - `factory_verify`：仅 `verify_id` + `timestamp`（**无 device_id、无 MBTI、无 PASS**）
+- `factory_verify_fail`：`verify_id` + `reason`（**无 claim_code、无 MBTI**）
 
-**固件不会收到**：`claim_code`、MBTI 性格、PASS/FAIL 详情。性格核对是 QA 人眼（手机 vs 卡片）；用户绑定后才揭晓 MBTI。
+**固件不会收到**：`claim_code`、MBTI 性格。性格核对是 QA 人眼（手机 vs 卡片）；用户绑定后才揭晓 MBTI。`claim_code_not_found` 与 `device_offline` 无法投递到硬件，`ack_timeout` 不再补发失败通知，避免设备已播成功后又播失败。
 
 局域网 host 获取与 QA 双路径联调见 [VOICE_HARDWARE_HANDBOOK.md §2.10](VOICE_HARDWARE_HANDBOOK.md)。
 
@@ -50,11 +52,17 @@ sequenceDiagram
     Note over HW: 知道 device_id<br/>不知 claim_code 与 MBTI
     QA->>WS: POST /api/factory/verify claim_code
     Note over QA: HTTP 仅 QA 使用
-    WS->>HW: factory_verify verify_id only
-    Note over HW: 无 MBTI，本地 PASS 提示
-    HW->>WS: factory_verify_ack
-    WS-->>QA: PASS + mbti
-    Note over QA: 人眼对比盒内卡片
+    alt PASS
+        WS->>HW: factory_verify verify_id only
+        Note over HW: 播 FACTORY_VERIFY_SUCCESS
+        HW->>WS: factory_verify_ack
+        WS-->>QA: PASS + mbti
+        Note over QA: 人眼对比盒内卡片
+    else FAIL 且设备在线
+        WS->>HW: factory_verify_fail reason
+        Note over HW: 播 FACTORY_VERIFY_FAILED
+        WS-->>QA: FAIL + reason
+    end
 ```
 
 ## 2. 烧录与制码数据
@@ -130,7 +138,32 @@ QA 扫外壳码后云端下发（任意固件状态均可处理）：
 }
 ```
 
-固件动作：本地 UI / 蜂鸣器 / LED 提示 **PASS**。
+固件动作：播放 `FACTORY_VERIFY_SUCCESS`（或同等 UI / 蜂鸣器 / LED **PASS** 提示）。
+
+### 3.4.1 监听 `factory_verify_fail`
+
+设备在线且云端判定验收失败时，云端下发失败通知：
+
+```json
+{
+  "type": "factory_verify_fail",
+  "verify_id": "550e8400-e29b-41d4-a716-446655440000",
+  "reason": "verify_in_progress"
+}
+```
+
+固件动作：播放 `FACTORY_VERIFY_FAILED`（或同等 UI / 蜂鸣器 / LED **FAIL** 提示），无需回包。
+
+失败通知边界：
+
+| 场景 | 硬件提示 | 说明 |
+|------|----------|------|
+| 收到 `factory_verify` | `FACTORY_VERIFY_SUCCESS` | 验收通过 |
+| 收到 `factory_verify_fail` | `FACTORY_VERIFY_FAILED` | 云端可定位在线设备的失败 |
+| hello/鉴权失败 | `FACTORY_VERIFY_FAILED` | 本地失败，云端无法发验收消息 |
+| 验收中 WS 断线 | `FACTORY_VERIFY_FAILED` | 保持连接是验收前提 |
+| ack 发送失败 | `FACTORY_VERIFY_FAILED` | 本地重试耗尽后 |
+| QA `ack_timeout` | 不播失败音 | 设备可能已播成功，以小程序结果为准 |
 
 ### 3.5 10 秒内回 `factory_verify_ack`
 
@@ -153,6 +186,7 @@ QA 扫外壳码后云端下发（任意固件状态均可处理）：
 | 上行 | `ping` | 保活 → 下行 `pong` |
 | 上行 | `abort` | 清状态 |
 | 下行 | `factory_verify` | QA 扫码触发 |
+| 下行 | `factory_verify_fail` | 云端验收失败且设备在线 |
 | 下行 | `error` | 如误发 `listen` |
 
 ## 5. 端到端时序
@@ -167,9 +201,18 @@ sequenceDiagram
     WS-->>HW: hello_ok factory_acceptance=true
     Note over HW: 保持连接，不发listen
     QA->>WS: POST /api/factory/verify claim_code
-    WS->>HW: factory_verify verify_id
-    HW->>WS: factory_verify_ack
-    WS-->>QA: PASS + mbti
+    alt PASS
+        WS->>HW: factory_verify verify_id
+        HW->>HW: 播 FACTORY_VERIFY_SUCCESS
+        HW->>WS: factory_verify_ack
+        WS-->>QA: PASS + mbti
+    else FAIL 且设备在线
+        WS->>HW: factory_verify_fail reason
+        HW->>HW: 播 FACTORY_VERIFY_FAILED
+        WS-->>QA: FAIL + reason
+    else FAIL 但不可投递
+        WS-->>QA: FAIL + reason
+    end
 ```
 
 ## 6. 常见错误

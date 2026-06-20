@@ -489,7 +489,7 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 - 绑定后 `/api/devices/my` 使用 `session_token` 能返回该设备。
 - 旧包即使把 `claim_code` 误放进 `device_code` 字段，后端也会兜底识别并完成绑定。
 - 设备 WebSocket `hello` 使用正确 `device_id/device_code + device_secret` 才能通过鉴权。
-- **MBTI 盲盒（§9.2.1）**：批量制码设备 `mbti_status=sealed`；绑定弹窗展示 MBTI；设备**首次**播报 `绑定成功。` + `reveal_script`（绑定瞬间若 WS 在线则即时推送，否则 hello 补播）；重连不重复开箱。
+- **MBTI 盲盒（§9.2.1）**：批量制码设备 `mbti_status=sealed`；绑定弹窗展示 MBTI；设备**首次**播报 `reveal_script`（`你好！绑定成功，我是 XX 型的初心。`；绑定瞬间若 WS 在线则即时推送，否则 hello 补播）；重连不重复开箱。
 - 小程序**不提供用户解绑**；售后换绑走 Admin。后端 `/api/devices/unbind` 仍保留供管理端。
 
 ### 9.2.1 MBTI 盲盒绑定验收
@@ -497,7 +497,7 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 1. Admin 批量制码（见上文 curl）→ 设备 `metadata.mbti_status=sealed`。
 2. 小程序扫 `claim_code` 绑定 → 出现 **MbtiRevealModal**（`INFJ · 提倡者` + tagline）。
 3. 关闭弹窗后设备列表行显示 MBTI 徽章。
-4. 设备通电 WebSocket `hello`（已绑定且 `device_intro_played=false`）→ 听到「绑定成功。」+ 自我介绍 TTS；若绑定瞬间设备已在线，绑定 API 也会尝试即时推送同一段 TTS。再次 hello 不再播报。
+4. 设备通电 WebSocket `hello`（已绑定且 `device_intro_played=false`）→ 听到 `你好！绑定成功，我是 XX 型的初心。`；若绑定瞬间设备已在线，绑定 API 也会尝试即时推送同一段 TTS。再次 hello 不再播报。
 5. `curl` 验证 bind 响应含 `mbti.is_first_reveal`；`sealed` 设备在 bind 前调用 `/api/devices/my` 不应看到 `mbti` 字段。
 
 ```bash
@@ -506,7 +506,7 @@ curl -s -H 'X-Admin-Token: dev-admin-token' \
 
 PYTHONPATH=src pytest tests/test_ensure_runtime_after_mbti_prefetch.py \
   tests/test_mbti_miniprogram_bind.py tests/test_mbti_reveal.py \
-  tests/test_device_intro_and_registry.py -q
+  tests/test_mbti_profiles.py tests/test_device_intro_and_registry.py -q
 ```
 
 ### 9.2.2 工厂验收（三码 + MBTI 卡片核对）
@@ -567,6 +567,10 @@ PYTHONPATH=src pytest tests/test_factory_verify.py tests/test_users_me_api.py -q
 - `scanCode:fail 解析二维码失败`：“相机扫码”只走微信原生相机扫码；上传图片请点“传图识别”，它会调用后端 `/api/barcodes/decode`。如果“传图识别”可返回 `claim_code`，说明后端和条码内容正常，原生相机扫不出时优先检查条码打印尺寸、留白、对焦和光线。
 
 ## 10. LLM 连通性自测（voice-demo 出现降级文案时）
+
+**agent/reply 含大段中文内心独白再跟英文回复**（如「按照之前的互动模式…Hello. I'm here…」）：多见于 DeepSeek-R1、QwQ 等推理模型的 `reasoning_content` 泄漏；2026-06 起 `core/llm.py` 流式路径已丢弃 `reasoning_content` 并过滤 `` 块。若仍出现，执行 `bash scripts/redeploy_docker.sh` 并重跑 `pytest tests/test_llm_stream_filter.py -q`。
+
+**日常对话出现「因为我是 INFP 所以…」或说错 MBTI 型**：SOUL 与设备 MBTI 冲突或元认知引用；2026-06 起 Slot1 `SOUL.md` 不含 MBTI，Slot2 含表达禁忌，`reveal_script` 仅开箱用。重跑 `pytest tests/test_mbti_profiles.py -q`。
 
 STT 很快但 Agent 返回「模型连接有点慢…」时，说明 **LLM 调用失败**，不是模型推理慢。按顺序在本机执行（不要提交 `.env`）：
 
@@ -1042,7 +1046,14 @@ docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
   --out /app/data/device_assets/zh-CN \
   --format both
 
-# 体积抽查（zh-CN 48 条参考：目录 ~444KB，ogg ~216KB，opus.bin ~208KB；无 _tmp/）
+# 只重生成出厂验收成功/失败提示音时，--keys 会保留 manifest 中其它已有条目
+docker exec shuxin-voice-demo-pg env PYTHONPATH=/app/src \
+  python /app/scripts/generate_device_prompt_assets.py \
+  --out /app/data/device_assets/zh-CN \
+  --format both \
+  --keys FACTORY_VERIFY_SUCCESS,FACTORY_VERIFY_FAILED
+
+# 体积抽查（zh-CN 50 条参考：目录约 456KB，ogg 约 222KB，opus.bin 约 213KB；无 _tmp/）
 du -sh data/device_assets/zh-CN
 du -ch data/device_assets/zh-CN/*.ogg | tail -1
 du -ch data/device_assets/zh-CN/*.opus.bin | tail -1
@@ -1051,6 +1062,8 @@ test ! -d data/device_assets/zh-CN/_tmp && echo "no _tmp OK"
 # 听感抽查
 ffplay data/device_assets/zh-CN/STANDBY.ogg
 ffplay data/device_assets/zh-CN/CHECK_NEW_VERSION_FAILED.ogg
+ffplay data/device_assets/zh-CN/FACTORY_VERIFY_SUCCESS.ogg
+ffplay data/device_assets/zh-CN/FACTORY_VERIFY_FAILED.ogg
 ```
 
 无 TTS 凭证时，可仅把已有 OGG 压到 Flash 档（需 Docker 内 `libopus`）：
@@ -1062,7 +1075,7 @@ docker run --rm -v "$(pwd)":/app -w /app -e PYTHONPATH=/app/src \
   --out /app/data/device_assets/zh-CN --format both --reencode-existing
 ```
 
-验收：`manifest.json` 含 `profile: flash`、`sample_rate: 16000` 与全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
+验收：`manifest.json` 含 `profile: flash`、`sample_rate: 16000` 与全部 key；`CHECK_NEW_VERSION_FAILED` 播报「检查新版本失败，将在30 秒后重试！」；`FOUND_NEW_ASSETS` 为「发现新资源 2」；`FACTORY_VERIFY_SUCCESS` 播报「验证成功」，`FACTORY_VERIFY_FAILED` 播报「验证失败」。固件接入见 [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §5。
 
 ## 19. DMX 额度与测试模式验收
 

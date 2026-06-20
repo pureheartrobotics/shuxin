@@ -94,6 +94,39 @@ def _load_strings(path: Path) -> tuple[str, dict[str, str]]:
     return language, normalized
 
 
+def _merge_manifest_entries(
+    new_manifest: dict,
+    existing_manifest: dict,
+    strings: dict[str, str],
+) -> dict:
+    """Keep untouched entries when regenerating a subset with --keys."""
+    merged = dict(new_manifest)
+    by_key: dict[str, dict] = {}
+    for entry in existing_manifest.get("entries") or []:
+        key = str(entry.get("key") or "")
+        if key:
+            by_key[key] = dict(entry)
+    for entry in new_manifest.get("entries") or []:
+        key = str(entry.get("key") or "")
+        if key:
+            by_key[key] = dict(entry)
+
+    merged["entries"] = [by_key[key] for key in strings if key in by_key]
+
+    skipped_by_key: dict[str, dict] = {}
+    for entry in existing_manifest.get("skipped") or []:
+        key = str(entry.get("key") or "")
+        if key:
+            skipped_by_key[key] = dict(entry)
+    for entry in new_manifest.get("skipped") or []:
+        key = str(entry.get("key") or "")
+        if key:
+            skipped_by_key[key] = dict(entry)
+    if skipped_by_key:
+        merged["skipped"] = [skipped_by_key[key] for key in strings if key in skipped_by_key]
+    return merged
+
+
 def _write_length_prefixed_opus_bin(frames: list[bytes], path: Path) -> None:
     """Raw Opus packets: repeated [uint16_be length][packet bytes]."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -415,6 +448,9 @@ def main() -> int:
     )
     manifest["language"] = language
     manifest_path = out_dir / "manifest.json"
+    if only_keys and not args.dry_run and manifest_path.exists():
+        existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = _merge_manifest_entries(manifest, existing_manifest, strings)
     if not args.dry_run:
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[assets] wrote {len(manifest['entries'])} entries -> {out_dir}")

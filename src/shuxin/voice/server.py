@@ -66,6 +66,7 @@ MAX_STREAMING_TTS_CHARS = 48
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
 DEFAULT_FACTORY_VERIFY_LOG_RETENTION_DAYS = 15
+FACTORY_VERIFY_ACK_TIMEOUT_SECONDS = 10.0
 DEFAULT_WS_DOWNLINK_MAX_BYTES = 2048
 HARD_WS_DOWNLINK_MAX_BYTES = 4096
 logger = logging.getLogger("shuxin.voice.server")
@@ -411,6 +412,23 @@ def create_app(
                 except Exception as log_exc:
                     logger.warning("factory_verify_log failed: %s", log_exc)
 
+            async def _send_factory_verify_fail(reason: str) -> None:
+                try:
+                    await session._send_json(
+                        {
+                            "type": "factory_verify_fail",
+                            "verify_id": verify_id,
+                            "reason": reason,
+                        }
+                    )
+                except Exception as send_exc:
+                    logger.warning(
+                        "factory_verify_fail send failed device=%s reason=%s error=%s",
+                        device_id,
+                        reason,
+                        send_exc,
+                    )
+
             # 3. 查找设备 WS session
             session = vsr.get_active_session(device_id)
             if session is None:
@@ -427,6 +445,7 @@ def create_app(
             # 4. 申请并发锁（同设备同时只允许一个验收）
             event = vsr.factory_verify_start(device_id)
             if event is None:
+                await _send_factory_verify_fail("verify_in_progress")
                 return JSONResponse(
                     {
                         "result": "FAIL",
@@ -448,6 +467,7 @@ def create_app(
             except Exception as send_exc:
                 vsr.factory_verify_cleanup(device_id)
                 await _write_log("FAIL", f"send_failed: {send_exc}")
+                await _send_factory_verify_fail("send_failed")
                 return JSONResponse(
                     {
                         "result": "FAIL",
@@ -459,7 +479,7 @@ def create_app(
 
             # 6. 等待 factory_verify_ack（最多 10 秒）
             try:
-                await _asyncio.wait_for(event.wait(), timeout=10.0)
+                await _asyncio.wait_for(event.wait(), timeout=FACTORY_VERIFY_ACK_TIMEOUT_SECONDS)
                 passed = True
             except _asyncio.TimeoutError:
                 passed = False

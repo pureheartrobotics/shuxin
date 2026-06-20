@@ -180,7 +180,7 @@ container: none
 ```
 
 - `factory_acceptance: true` 表示当前为出厂验收会话：云端**不会**揭晓/锁定 MBTI（保持 `mbti_status=sealed`），且 `listen` / `text_turn` 会被拒绝。
-- 此模式下设备须保持连接，等待 QA 扫码触发 `factory_verify`；收到后本地提示并回 `factory_verify_ack`。
+- 此模式下设备须保持连接，等待 QA 扫码触发 `factory_verify`；收到后播放 `FACTORY_VERIFY_SUCCESS` 并回 `factory_verify_ack`。
 
 工厂验收指令（QA 扫外壳二维码后由云端触发，设备须立即回传 `factory_verify_ack`）：
 
@@ -191,6 +191,17 @@ container: none
 - `verify_id`：UUID，必须原样回传。
 - 超时窗口 10 秒；超时后云端报告 FAIL，设备无需处理。
 - 此消息不影响正常对话流程，设备可任意状态处理。
+
+工厂验收失败通知（设备在线且云端能定位到该设备时下发；设备无需回包）：
+
+```json
+{"type":"factory_verify_fail","verify_id":"550e8400-e29b-41d4-a716-446655440000","reason":"verify_in_progress"}
+```
+
+- `reason`：当前可能为 `verify_in_progress` 或 `send_failed`。
+- 收到后播放 `FACTORY_VERIFY_FAILED`，并在本地 UI 显示 FAIL。
+- `claim_code_not_found` 没有确定设备，`device_offline` 无在线连接，均不会下发到硬件。
+- `ack_timeout` 不下发失败通知，避免设备已收到 `factory_verify` 并播过成功后再播失败。
 
 MBTI 盲盒揭晓（仅 `mbti_status=sealed` 且由 hello 抢先揭晓时；小程序已绑定时通常不再下发）：
 
@@ -204,7 +215,7 @@ MBTI 盲盒揭晓（仅 `mbti_status=sealed` 且由 hello 抢先揭晓时；小�
 {"type":"agent","state":"reply","text":"… reveal_script …","elapsed_ms":0}
 ```
 
-以及 `tts/start` → 音频帧 → `tts/stop`。若小程序绑定已揭晓（`locked`）且 `device_intro_played=false`，hello 补播 TTS 自我介绍（台词为 `绑定成功。` + 各型 `reveal_script`），不再发 `mbti/reveal`。若绑定 API 执行时该设备已有活跃 WebSocket 会话，服务端也会立即推送同一段 TTS；否则等下次 `hello` 补播。`device_intro_played=true` 后不再重复播报。
+以及 `tts/start` → 音频帧 → `tts/stop`。若小程序绑定已揭晓（`locked`）且 `device_intro_played=false`，hello 补播 TTS 自我介绍（台词为各型 `reveal_script`：`你好！绑定成功，我是 XX 型的初心。`），不再发 `mbti/reveal`。若绑定 API 执行时该设备已有活跃 WebSocket 会话，服务端也会立即推送同一段 TTS；否则等下次 `hello` 补播。`device_intro_played=true` 后不再重复播报。
 
 开始识别：
 
