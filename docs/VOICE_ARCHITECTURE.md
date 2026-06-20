@@ -222,6 +222,25 @@ Edge TTS + karen FX 仅保留于 `scripts/generate_voiceover_candidates.py` 等�
 
 `_reset_runtime()`（hello 重连）仍清空 `agent/device/stt/tts`，下次 `_ensure_runtime` 按上述规则重建。回归测试：`tests/test_ensure_runtime_after_mbti_prefetch.py`。
 
+## 3.5 Agent 提示与 LLM 流式过滤
+
+系统提示 Slot 分工（语音与 CLI 共用 `core/agent.py`）：
+
+| Slot | 来源 | 职责 |
+|------|------|------|
+| 1 | `SOUL.md`（`agents.soul_path`） | 16 型共享价值观/边界；**不含 MBTI 四字母码** |
+| 2 | `identity` + `mbti_profiles.yaml` | 设备盲盒气质、`style_anchor`、表达禁忌 |
+| 3 | 长期记忆 facts | 用户事实摘要 |
+| 4 | companion 插件 | 自尊/情感/用户画像、`风格微型锚点` |
+
+OpenAI 兼容流式 LLM（`core/llm.py` `OpenAIProvider.chat_stream`）：
+
+- 仅 yield `delta.content`；`reasoning_content`（DeepSeek-R1/QwQ 等）丢弃，DEBUG 日志 `[LLM-REASONING]`。
+- `_ThinkTagFilter` 状态机过滤 `` 块（Qwen3 等嵌在 content 内的思维链）。
+- 测试：`tests/test_llm_stream_filter.py`。
+
+MBTI 开箱 TTS 台词来自 `mbti_profiles.yaml` 的 `reveal_script`（`你好！绑定成功，我是 XX 型的初心。`），不经 LLM 生成。
+
 ## 4. Transport 预留接口
 
 当前接口：
