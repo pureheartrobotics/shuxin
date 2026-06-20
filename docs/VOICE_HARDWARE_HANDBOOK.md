@@ -358,7 +358,7 @@ sequenceDiagram
   WS-->>FW: tts/stop
 ```
 
-- 小程序已绑定且 `mbti_status=locked` 时，通常**不发** `mbti/reveal`，只播「绑定成功。」+ `reveal_script`。
+- 小程序已绑定且 `mbti_status=locked` 时，通常**不发** `mbti/reveal`，只播各型 `reveal_script`（`你好！绑定成功，我是 XX 型的初心。`）。
 - 绑定瞬间若设备 WS 已在线，绑定 API 也会即时推送同一段 TTS；否则等下次 `hello` 补播。
 - `device_intro_played=true` 后不再重复播报。
 

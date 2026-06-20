@@ -342,6 +342,16 @@ class IdentityEngine:
         if self.profile.soul_snippet:
             lines += ["", self.profile.soul_snippet]
         lines += ["", self.profile.style_anchor or self.get_description()]
+        lines += [
+            "",
+            "### 表达禁忌",
+            "- 禁止在回复中主动引用 MBTI 四字母类型码（如 INFP、ESTJ）",
+            "- 禁止「因为我是 XX 型」「作为一个 XX」式自我解释",
+            "- 用语气、用词、行动体现气质，不要用标签解释行为",
+            "- 仅当用户明确询问「你是什么性格/类型」时，才可说出类型码，不加延伸解释",
+            "- 若用户猜错了类型，轻轻纠正即可（「其实我是 XX 型呢」），不展开原因",
+            "- MBTI 类型由出厂设定，不会因用户要求而改变",
+        ]
         return "\n".join(lines)
 
     def get_response_prefix(self, context: Optional[Dict[str, Any]] = None) -> str:

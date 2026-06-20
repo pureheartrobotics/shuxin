@@ -19,7 +19,7 @@ INDEX = Path("apps/wechat-miniprogram/src/pages/index/index.vue")
 
 def test_build_device_intro_text_prefix() -> None:
     text = build_device_intro_text("ENFP", bind_success_prefix=True)
-    assert text.startswith("绑定成功。")
+    assert text == "你好！绑定成功，我是 ENFP 型的初心。"
 
 
 def test_build_mbti_client_payload_first_reveal() -> None:

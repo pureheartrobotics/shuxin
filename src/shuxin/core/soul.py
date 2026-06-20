@@ -219,7 +219,6 @@ class SoulEngine:
             f"## 你的身份",
             "",
             f"你是{p.name}，一只{p.species}。",
-            f"你的 MBTI 人格类型是 {p.mbti}。",
             f"你的年龄是 {p.age} 岁。",
             "",
             f"### 核心信念",
@@ -245,15 +244,15 @@ class SoulEngine:
         """获取人格摘要信息。
 
         Returns:
-            str: 简洁的人格摘要，包含名称、种族、MBTI 和核心信念。
+            str: 简洁的人格摘要，包含名称、种族和核心信念。
 
         Example:
             >>> engine.get_profile_summary()
-            '初心 · 灵狐 · INFJ · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
+            '初心 · 灵狐 · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
         """
         p = self.profile
         return (
-            f"{p.name} · {p.species} · {p.mbti} · {p.age}岁\n"
+            f"{p.name} · {p.species} · {p.age}岁\n"
             f"特质: {'/'.join(p.traits)}\n"
             f"信念: {p.core_belief}"
         )

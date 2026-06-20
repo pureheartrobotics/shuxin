@@ -128,7 +128,8 @@
 ### 4.1 已有
 
 - 出厂制码（batch / 单台 `provision_device`）写入 `metadata.mbti` + `mbti_status=sealed`；
-- `data/mbti/mbti_profiles.yaml`（16 型）+ `load_mbti_profiles()`；Slot2 `style_anchor`、Slot4 `micro_anchor`；
+- `data/mbti/mbti_profiles.yaml`（16 型）+ `load_mbti_profiles()`；Slot2 `style_anchor` + 表达禁忌、Slot4 `风格微型锚点`；Slot1 `SOUL.md` **不含** MBTI（气质仅 Slot2）；
+- 日常对话禁止 MBTI 类型码自我解释（用户主动问除外）；开箱 TTS `reveal_script` 极简（`你好！绑定成功，我是 XX 型的初心。`）；
 - 盲盒状态机：`sealed` → `locked`；`mbti_revealed_by`（`miniprogram_bind` | `first_hello`）；`device_intro_played` 控制 TTS 自我介绍仅一次；
 - 小程序绑定：`POST /api/devices/bind` 返回 `mbti` 卡片 + `MbtiRevealModal` 弹窗；设备列表展示 MBTI 徽章；**用户侧无解绑**；
 - WebSocket：`hello` 后 `mbti/reveal`（仅 hello 抢先揭晓时）+ `reveal_script` TTS；小程序已揭晓时 hello **补播**自我介绍；`_ensure_runtime` 以 `agent is None` 初始化运行时（device 可先由 intro 预填）；

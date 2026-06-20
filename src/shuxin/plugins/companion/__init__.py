@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -33,6 +34,11 @@ from shuxin.plugins.companion.user_model import UserModel
 from shuxin.plugins.companion.interceptor import ResponseInterceptor
 
 logger = logging.getLogger("shuxin.plugins.companion")
+
+_META_SPEECH_RE = re.compile(
+    r"(因为我是|作为(一个)?\s*[A-Z]{4}|我是\s*[A-Z]{4}\s*型)",
+    re.IGNORECASE,
+)
 
 
 class CompanionPlugin:
@@ -108,7 +114,7 @@ class CompanionPlugin:
         growth_context = self._get_growth_context()
 
         micro_anchor_block = (
-            f"## MBTI 微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
+            f"## 风格微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
         )
         return (
             micro_anchor_block
@@ -186,6 +192,9 @@ class CompanionPlugin:
 
         content = kwargs.get("content", "")
         agent = kwargs.get("agent")
+
+        if content and _META_SPEECH_RE.search(content):
+            logger.warning("[MBTI-GUARD] meta-speech detected: %.80s", content)
 
         if self.self_esteem.state.is_silent:
             metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}

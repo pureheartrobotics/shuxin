@@ -14,14 +14,12 @@ from shuxin.voice import voice_session_registry as vsr
 
 def test_build_device_intro_text_with_bind_prefix() -> None:
     text = build_device_intro_text("INFJ", bind_success_prefix=True)
-    assert text.startswith("绑定成功。")
-    assert "INFJ" in text
+    assert text == "你好！绑定成功，我是 INFJ 型的初心。"
 
 
 def test_build_device_intro_text_without_bind_prefix() -> None:
     text = build_device_intro_text("INFJ", bind_success_prefix=False)
-    assert not text.startswith("绑定成功。")
-    assert "INFJ" in text
+    assert text == "你好！绑定成功，我是 INFJ 型的初心。"
 
 
 def test_maybe_push_intro_after_bind_only_first_reveal() -> None:

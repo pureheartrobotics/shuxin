@@ -66,17 +66,15 @@ def mbti_subtitle(tagline: str) -> str:
 
 def build_device_intro_text(mbti: str, *, bind_success_prefix: bool = True) -> str:
     """Spoken intro for hardware TTS after bind or hello catch-up."""
+    del bind_success_prefix  # yaml stores full intro text; prefix kept for callers
     selected = str(mbti or "").strip().upper()
     if not selected or selected not in VALID_MBTI_TYPES:
         return ""
     identity = IdentityEngine(selected)
-    tagline = identity.get_description()
     reveal = identity.get_reveal_script().strip()
-    if not reveal:
-        reveal = f"你好，我是{selected}型的初心。{tagline}"
-    if bind_success_prefix:
-        return f"绑定成功。{reveal}"
-    return reveal
+    if reveal:
+        return reveal
+    return f"你好！绑定成功，我是 {selected} 型的初心。"
 
 
 def build_mbti_client_payload(
