@@ -105,41 +105,48 @@ def test_factory_verify_in_progress_notifies_device() -> None:
     sent_messages: list[dict] = []
     session = SimpleNamespace(_send_json=AsyncMock(side_effect=sent_messages.append))
     vsr.register(device_id, session)
-    assert vsr.factory_verify_start(device_id) is not None
 
-    class FakeRepo:
-        async def factory_verify_user_has_role(self, session_token: str) -> str:
-            return "qa-user"
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        assert vsr.factory_verify_start(device_id) is not None
 
-        async def factory_verify_lookup(self, claim_code: str) -> dict:
-            return {
-                "device_id": device_id,
-                "claim_code_status": "active",
-                "metadata": {"mbti": "INFJ", "mbti_status": "sealed"},
-                "mbti": "INFJ",
-                "mbti_status": "sealed",
+        class FakeRepo:
+            async def factory_verify_user_has_role(self, session_token: str) -> str:
+                return "qa-user"
+
+            async def factory_verify_lookup(self, claim_code: str) -> dict:
+                return {
+                    "device_id": device_id,
+                    "claim_code_status": "active",
+                    "metadata": {"mbti": "INFJ", "mbti_status": "sealed"},
+                    "mbti": "INFJ",
+                    "mbti_status": "sealed",
+                }
+
+        app = create_app()
+        with TestClient(app) as client:
+            app.state.repo = FakeRepo()
+            res = client.post(
+                "/api/factory/verify",
+                json={"session_token": "qa-token", "claim_code": "CLM-A001-0116"},
+            )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["result"] == "FAIL"
+        assert body["reason"] == "verify_in_progress"
+        assert sent_messages == [
+            {
+                "type": "factory_verify_fail",
+                "verify_id": body["verify_id"],
+                "reason": "verify_in_progress",
             }
-
-    app = create_app()
-    with TestClient(app) as client:
-        app.state.repo = FakeRepo()
-        res = client.post(
-            "/api/factory/verify",
-            json={"session_token": "qa-token", "claim_code": "CLM-A001-0116"},
-        )
-
-    assert res.status_code == 200
-    body = res.json()
-    assert body["result"] == "FAIL"
-    assert body["reason"] == "verify_in_progress"
-    assert sent_messages == [
-        {
-            "type": "factory_verify_fail",
-            "verify_id": body["verify_id"],
-            "reason": "verify_in_progress",
-        }
-    ]
-    vsr.reset_for_tests()
+        ]
+    finally:
+        vsr.reset_for_tests()
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 def test_factory_verify_send_failed_notifies_device() -> None:
