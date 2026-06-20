@@ -420,10 +420,12 @@ class OpenAIProvider(BaseLLMProvider):
                 stream=True,
                 **kwargs,
             )
+            think_filter = _ThinkTagFilter()
             for chunk in stream:
                 if not chunk.choices:
                     continue
-                piece = _openai_stream_delta_text(chunk.choices[0].delta)
+                raw = _openai_stream_delta_text(chunk.choices[0].delta)
+                piece = think_filter.feed(raw) if raw else ""
                 if piece:
                     yield piece
         except Exception as e:
@@ -441,12 +443,62 @@ def _normalize_openai_base_url(base_url: str) -> str:
     return f"{url}/v1"
 
 
+_THINK_OPEN = "<" + "think" + ">"
+_THINK_CLOSE = "</" + "think" + ">"
+
+
+class _ThinkTagFilter:
+    """State machine: strip `` blocks from streamed content."""
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""
+
+    @staticmethod
+    def _partial_tag_suffix(text: str, tag: str) -> int:
+        max_keep = min(len(text), len(tag) - 1)
+        for keep in range(max_keep, 0, -1):
+            if text.endswith(tag[:keep]):
+                return keep
+        return 0
+
+    def feed(self, text: str) -> str:
+        """Feed a chunk; return speakable text (may be empty)."""
+        self._buf += text
+        out_parts: list[str] = []
+        while True:
+            if self._in_think:
+                end = self._buf.find(_THINK_CLOSE)
+                if end == -1:
+                    keep = self._partial_tag_suffix(self._buf, _THINK_CLOSE)
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                self._buf = self._buf[end + len(_THINK_CLOSE) :]
+                self._in_think = False
+            else:
+                start = self._buf.find(_THINK_OPEN)
+                if start == -1:
+                    keep = self._partial_tag_suffix(self._buf, _THINK_OPEN)
+                    out_parts.append(self._buf[: len(self._buf) - keep])
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                out_parts.append(self._buf[:start])
+                self._buf = self._buf[start + len(_THINK_OPEN) :]
+                self._in_think = True
+        return "".join(out_parts)
+
+
 def _openai_stream_delta_text(delta: Any) -> str:
-    """Extract speakable text from OpenAI-compatible stream deltas."""
+    """Extract speakable text from OpenAI-compatible stream deltas.
+
+    reasoning_content (DeepSeek-R1/QwQ etc.) is never user-facing; log at DEBUG only.
+    """
+    reasoning = getattr(delta, "reasoning_content", None) or ""
+    if reasoning:
+        logger.debug("[LLM-REASONING] %.120s", reasoning)
+
     content = getattr(delta, "content", None) or ""
-    if content:
-        return content
-    return getattr(delta, "reasoning_content", None) or ""
+    return content
 
 
 class AnthropicProvider(BaseLLMProvider):
