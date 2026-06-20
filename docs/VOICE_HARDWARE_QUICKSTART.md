@@ -25,6 +25,8 @@
 
 ### 2.1 出厂工厂验收（未绑定）
 
+固件阅读顺序见 [**出厂工厂验收交接 §11**](FACTORY_ACCEPTANCE_HANDOFF.md)。
+
 1. 工厂制码：`device_id` + `device_secret` + `claim_code` + `mbti`（制码时写入 `metadata`）
 2. 固件烧录 **`device_code`（= device_id）+ `device_secret`**
 3. 设备 `status=provisioned`，**无**用户绑定
@@ -114,7 +116,7 @@ UI 固定文案（「待命」「电量不足」等）**不经过 WebSocket**，
 
 - 源文案：[`data/device_assets/strings.zh-CN.json`](../data/device_assets/strings.zh-CN.json)
 - 生成产物：[`data/device_assets/zh-CN/`](../data/device_assets/zh-CN/)（`.ogg` + `.opus.bin` + `manifest.json`）
-- 固件 C 语言 i18n 表须与 JSON **字符串一致**（含 `CHECK_NEW_VERSION_FAILED`、`FOUND_NEW_ASSETS` 的固定句）
+- 固件 C 语言 i18n 表须与 JSON **字符串一致**（含 `CHECK_NEW_VERSION_FAILED`、`FOUND_NEW_ASSETS`、`FACTORY_VERIFY_SUCCESS`、`FACTORY_VERIFY_FAILED` 的固定句）
 
 **Flash 编码档**（对齐 xiaozhi-esp32）：**16 kHz / mono / 16 kbps / 60 ms**。与 WebSocket 实时 TTS 下行（24 kHz）分开；固件本地提示音解码器按 `manifest.json` 的 `sample_rate` 配置。
 

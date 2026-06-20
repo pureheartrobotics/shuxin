@@ -292,3 +292,44 @@ PYTHONPATH=src pytest tests/test_factory_verify.py tests/test_users_me_api.py -q
 | `/api/users/me` 返回 404 | 后端未部署含该路由的版本 | `bash scripts/redeploy_docker.sh` |
 
 更细的内部 QA SOP 见 [`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §9.2.2。
+
+## 11. 固件阅读指引（硬件同事）
+
+> **给固件工程师的快速入口**：本节汇总「小程序验证流程」与必读文档顺序。HTTP 扫码由 QA 小程序完成，**固件只需实现 WebSocket 侧逻辑**，不必阅读小程序源码。
+
+### 11.1 一句话流程
+
+Admin 给用户勾选 **工厂 QA**（`factory_role`）→ QA 在小程序扫外壳 `claim_code`（**HTTP** `POST /api/factory/verify`）→ 云端校验三码（`claim_code` ↔ `device_id` ↔ `device_secret`）→ **成功/失败分别通知固件（WS）与小程序（HTTP）**。
+
+固件**不知道** `claim_code` 与 MBTI；性格核对由 QA 人眼对比（手机 PASS 响应 vs 盒内人格卡片）。
+
+### 11.2 必读文件（按顺序）
+
+| 顺序 | 文件 | 阅读重点 |
+|------|------|----------|
+| 1 | 本文档 §1–§6 | 认知边界、固件 5 步实现、时序图、常见错误 |
+| 2 | [`VOICE_HARDWARE_WS_PROTOCOL.md`](VOICE_HARDWARE_WS_PROTOCOL.md) | `factory_acceptance` hello、`factory_verify` / `factory_verify_fail` / `factory_verify_ack` JSON 字段 |
+| 3 | [`VOICE_HARDWARE_QUICKSTART.md`](VOICE_HARDWARE_QUICKSTART.md) §2.1 | 出厂验收前置条件速查 |
+| 4 | [`data/device_assets/zh-CN/manifest.json`](../data/device_assets/zh-CN/manifest.json) + `FACTORY_VERIFY_*.opus.bin` | 验证成功/失败 Flash 提示音烧录（16 kHz / 16 kbps） |
+
+可选深入：[`VOICE_HARDWARE_INTEGRATION.md`](VOICE_HARDWARE_INTEGRATION.md) §4.1（云端鉴权步骤表）、[`VOICE_HARDWARE_HANDBOOK.md`](VOICE_HARDWARE_HANDBOOK.md) §2.10–§2.11（局域网 host 与双路径联调）。
+
+### 11.3 提示音播放映射（固件）
+
+| 场景 | 触发 | 音频 key |
+|------|------|----------|
+| 验收通过 | 收到 `factory_verify` | `FACTORY_VERIFY_SUCCESS`（播完后 10s 内回 `factory_verify_ack`） |
+| 云端验收失败（设备在线） | 收到 `factory_verify_fail` | `FACTORY_VERIFY_FAILED`（无需回包） |
+| hello/鉴权失败 | 本地 | `FACTORY_VERIFY_FAILED` |
+| 验收中 WS 断线 | 本地 | `FACTORY_VERIFY_FAILED` |
+| ack 发送失败 | 本地 | `FACTORY_VERIFY_FAILED` |
+| QA 侧 `ack_timeout` | **不播失败音** | 设备可能已播成功，以小程序结果为准 |
+
+资源路径：[`data/device_assets/zh-CN/`](../data/device_assets/zh-CN/) 下 `FACTORY_VERIFY_SUCCESS.opus.bin`、`FACTORY_VERIFY_FAILED.opus.bin`（或同名 `.ogg`）。编码规格见 [`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §18。
+
+### 11.4 不必阅读
+
+| 路径 | 原因 |
+|------|------|
+| `apps/wechat-miniprogram/` | 扫码与 HTTP 验收仅 QA 小程序侧；固件不参与 |
+| [`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §9.2.2 | 内部 QA SOP，供产线测试同学，非固件实现主文档 |
