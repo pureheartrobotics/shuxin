@@ -132,7 +132,14 @@ class CompanionPlugin:
                 )
 
         map_tools_hint = ""
+        voice_style_hint = ""
         if agent is not None:
+            metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}
+            if metadata.get("channel") == "voice":
+                voice_style_hint = (
+                    "## 语音通道\n\n"
+                    "口语先给结论与数据，动作括弧放句末或不写；避免 Markdown 加粗。\n\n"
+                )
             try:
                 from shuxin.integrations.location import get_location_provider, should_attach_location_tools
 
@@ -162,6 +169,7 @@ class CompanionPlugin:
             location_block
             + low_confidence_hint
             + map_tools_hint
+            + voice_style_hint
             + micro_anchor_block
             + f"## 初心当前状态\n\n"
             + f"{esteem_status}\n\n"
