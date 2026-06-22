@@ -13,7 +13,7 @@ from pathlib import Path
 
 from shuxin.core.agent import Agent, ToolLoopCallbacks
 from shuxin.core.config import get_shuxin_home
-from shuxin.integrations.location import format_location_context_block, get_location_provider
+from shuxin.integrations.location import format_location_context_block, get_location_provider, may_need_location
 from shuxin.integrations.location.ip_resolve import resolve_effective_ip
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
 from shuxin.voice.adapters import VoiceAdapterRegistry
@@ -69,6 +69,7 @@ MAX_STREAMING_TTS_CHARS = 48
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
 DEFAULT_FACTORY_VERIFY_LOG_RETENTION_DAYS = 15
+DEFAULT_LOCATION_CACHE_TTL_SECONDS = 1800
 FACTORY_VERIFY_ACK_TIMEOUT_SECONDS = 10.0
 DEFAULT_WS_DOWNLINK_MAX_BYTES = 2048
 HARD_WS_DOWNLINK_MAX_BYTES = 4096
@@ -127,6 +128,17 @@ def _audio_retention_interval_sec() -> int:
         return max(60, int(raw))
     except ValueError:
         return DEFAULT_AUDIO_RETENTION_INTERVAL_SEC
+
+
+def _location_cache_ttl_seconds() -> int:
+    raw = os.environ.get(
+        "SHUXIN_LOCATION_CACHE_TTL_SECONDS",
+        str(DEFAULT_LOCATION_CACHE_TTL_SECONDS),
+    ).strip()
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return DEFAULT_LOCATION_CACHE_TTL_SECONDS
 
 
 def _factory_verify_log_retention_days() -> int:
@@ -1312,6 +1324,7 @@ class _VoiceWebSocketSession:
         self.hardware_session = False
         self.factory_acceptance = False
         self.client_ip = _client_ip_from_websocket(websocket)
+        self._location_cache: dict | None = None
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -1603,7 +1616,10 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "agent", "state": "thinking"})
             if self.agent is not None:
                 self.agent.context.metadata.pop("llm_error_kind", None)
-            await self._refresh_location_context()
+                self.agent.context.metadata.pop("map_tool_ms", None)
+            location_started = time.perf_counter()
+            await self._refresh_location_context(text)
+            location_ms = _elapsed_ms(location_started)
 
             async for chunk in self._stream_agent_chunks(text):
                 if not chunk:
@@ -1704,6 +1720,11 @@ class _VoiceWebSocketSession:
             if speech_path is None:
                 speech_path = paths.reply_mp3
                 speech_path.write_bytes(b"")
+            map_tool_ms = (
+                int(self.agent.context.metadata.get("map_tool_ms") or 0)
+                if self.agent is not None
+                else 0
+            )
             await self.repo.record_turn(
                 user_settings=self.user_settings,
                 device_id=self.device_id,
@@ -1718,6 +1739,8 @@ class _VoiceWebSocketSession:
                     "stt_ms": stt_ms,
                     "agent_ms": agent_ms,
                     "tts_ms": tts_total_ms,
+                    "location_ms": location_ms,
+                    "map_tool_ms": map_tool_ms,
                     "llm_ttft_ms": llm_ttft_ms or 0,
                     "first_agent_delta_ms": first_agent_delta_ms or 0,
                     "first_tts_audio_ms": first_tts_audio_ms or 0,
@@ -1743,6 +1766,8 @@ class _VoiceWebSocketSession:
                     "first_agent_delta_ms": first_agent_delta_ms or 0,
                     "first_tts_audio_ms": first_tts_audio_ms or 0,
                     "llm_ttft_ms": llm_ttft_ms or 0,
+                    "location_ms": location_ms,
+                    "map_tool_ms": map_tool_ms,
                     "error_kind": error_kind or "",
                 }
             )
@@ -1768,7 +1793,11 @@ class _VoiceWebSocketSession:
 
             agent_started = time.perf_counter()
             await self._send_json({"type": "agent", "state": "thinking"})
-            await self._refresh_location_context()
+            if self.agent is not None:
+                self.agent.context.metadata.pop("map_tool_ms", None)
+            location_started = time.perf_counter()
+            await self._refresh_location_context(text)
+            location_ms = _elapsed_ms(location_started)
             loop = asyncio.get_event_loop()
             reply = await loop.run_in_executor(None, lambda: self.agent.chat(text).strip())
             agent_ms = _elapsed_ms(agent_started)
@@ -2168,16 +2197,38 @@ class _VoiceWebSocketSession:
             on_tool_round_start=on_tool_round_start,
         )
 
-    async def _refresh_location_context(self) -> None:
-        """解析用户大致位置并写入 Agent metadata，供 companion 注入。"""
+    async def _refresh_location_context(self, user_text: str = "") -> None:
+        """按需解析位置：非地图意图不查 IP；同会话内复用缓存。"""
         if self.agent is None:
             return
+
+        if not may_need_location(user_text):
+            self.agent.context.metadata.pop("location_context", None)
+            self.agent.context.metadata.pop("location_ctx", None)
+            self.agent.context.metadata.pop("location_debug", None)
+            return
+
         provider = get_location_provider(self.agent.config.map)
         user_home = None
         if self.audio_store is not None:
             user_home = self.audio_store.user_shuxin_home()
 
-        effective_ip = resolve_effective_ip(self.client_ip)
+        effective_ip = resolve_effective_ip(self.client_ip) or ""
+        now = time.time()
+        ttl = _location_cache_ttl_seconds()
+        cached = self._location_cache
+        if (
+            cached
+            and cached.get("effective_ip") == effective_ip
+            and (now - float(cached.get("cached_at") or 0)) < ttl
+        ):
+            hit_payload = dict(cached)
+            hit_debug = dict(hit_payload.get("debug") or {})
+            hit_debug["cache"] = "hit"
+            hit_payload["debug"] = hit_debug
+            self._apply_location_cache_to_agent(hit_payload)
+            logger.debug("location_context cache hit: %s", hit_debug)
+            return
 
         def resolve():
             ctx = provider.resolve_location_context(
@@ -2187,9 +2238,9 @@ class _VoiceWebSocketSession:
             return ctx, format_location_context_block(ctx)
 
         ctx, block = await asyncio.to_thread(resolve)
-        self.agent.context.metadata["location_debug"] = {
+        debug = {
             "client_ip": self.client_ip,
-            "effective_ip": effective_ip or "",
+            "effective_ip": effective_ip,
             "source": ctx.source,
             "confidence": ctx.confidence,
             "label": ctx.label,
@@ -2198,18 +2249,34 @@ class _VoiceWebSocketSession:
             "city_adcode": ctx.city_adcode,
             "lat": ctx.lat,
             "lng": ctx.lng,
+            "cache": "miss",
         }
-        if ctx.label:
+        self._location_cache = {
+            "ctx": ctx,
+            "block": block,
+            "effective_ip": effective_ip,
+            "cached_at": now,
+            "debug": debug,
+        }
+        self._apply_location_cache_to_agent(self._location_cache)
+        logger.info("location_context resolved: %s", debug)
+
+    def _apply_location_cache_to_agent(self, cached: dict) -> None:
+        """把会话缓存的位置写入 Agent metadata。"""
+        if self.agent is None:
+            return
+        ctx = cached.get("ctx")
+        block = str(cached.get("block") or "")
+        debug = dict(cached.get("debug") or {})
+        self.agent.context.metadata["location_debug"] = debug
+        if ctx is not None and getattr(ctx, "label", ""):
             self.agent.context.metadata["location_ctx"] = ctx.to_metadata_dict()
         else:
             self.agent.context.metadata.pop("location_ctx", None)
-
         if block.strip():
             self.agent.context.metadata["location_context"] = block
-            logger.info("location_context resolved: %s", self.agent.context.metadata["location_debug"])
         else:
             self.agent.context.metadata.pop("location_context", None)
-            logger.info("location_context empty: %s", self.agent.context.metadata["location_debug"])
 
     async def _send_json(self, data: dict) -> None:
         """以 UTF-8 JSON 文本消息下发状态，保留中文错误和回复内容。"""
