@@ -26,6 +26,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Generator, AsyncIterator, Callable
@@ -476,6 +477,46 @@ class Agent:
             logger.info("POI 直调降级成功: %s", poi_args)
         return ok
 
+    def _prepare_location_messages(
+        self,
+        llm_messages: List[LLMMessage],
+        *,
+        user_input: str,
+    ) -> List[LLMMessage]:
+        """地图消息准备：天气/POI 明确意图走服务端直调，其余走 tool loop。"""
+        if not self._location_tools_enabled(user_input):
+            self.context.metadata.pop("map_tool_ms", None)
+            return llm_messages
+
+        provider = self._location_provider or get_location_provider(self.config.map)
+        working = list(llm_messages)
+        started = time.perf_counter()
+
+        if should_direct_weather_call(user_input) or should_direct_poi_search(user_input):
+            self._invoke_tool_callbacks(start=True)
+            try:
+                prefetched = False
+                if should_direct_weather_call(user_input):
+                    prefetched = self._try_direct_weather_fallback(
+                        working, user_input=user_input, provider=provider
+                    )
+                if not prefetched and should_direct_poi_search(user_input):
+                    prefetched = self._try_direct_poi_fallback(
+                        working, user_input=user_input, provider=provider
+                    )
+            finally:
+                self._invoke_tool_callbacks(start=False)
+            if prefetched:
+                self.context.metadata["map_tool_ms"] = int(
+                    (time.perf_counter() - started) * 1000
+                )
+                logger.info("地图快路径直调成功，跳过同步 tool 选路")
+                return working
+
+        working, _direct = self._run_location_tool_loop(working, user_input=user_input)
+        self.context.metadata["map_tool_ms"] = int((time.perf_counter() - started) * 1000)
+        return working
+
     def _run_location_tool_loop(
         self,
         llm_messages: List[LLMMessage],
@@ -603,10 +644,9 @@ class Agent:
         return working, None
 
     def _generate_llm_reply(self, llm_messages: List[LLMMessage], *, user_input: str) -> str:
-        if self._location_tools_enabled(user_input):
-            llm_messages, _direct = self._run_location_tool_loop(
-                llm_messages, user_input=user_input
-            )
+        llm_messages = self._prepare_location_messages(
+            llm_messages, user_input=user_input
+        )
 
         response = self.llm.chat(
             messages=llm_messages,
@@ -718,26 +758,16 @@ class Agent:
             return blocked_content
 
         try:
-            llm_messages_for_reply = llm_messages
-            if self._location_tools_enabled(user_input):
-                llm_messages_for_reply, _direct = self._run_location_tool_loop(
-                    llm_messages, user_input=user_input
-                )
-                response = await self.llm.chat_async(
-                    messages=llm_messages_for_reply,
-                    system_prompt=self._system_prompt,
-                    temperature=self.config.llm.temperature,
-                    max_tokens=self.config.llm.max_tokens,
-                )
-                final_content = strip_dsml_blocks(response.content or "")
-            else:
-                response = await self.llm.chat_async(
-                    messages=llm_messages_for_reply,
-                    system_prompt=self._system_prompt,
-                    temperature=self.config.llm.temperature,
-                    max_tokens=self.config.llm.max_tokens,
-                )
-                final_content = strip_dsml_blocks(response.content or "")
+            llm_messages_for_reply = self._prepare_location_messages(
+                llm_messages, user_input=user_input
+            )
+            response = await self.llm.chat_async(
+                messages=llm_messages_for_reply,
+                system_prompt=self._system_prompt,
+                temperature=self.config.llm.temperature,
+                max_tokens=self.config.llm.max_tokens,
+            )
+            final_content = strip_dsml_blocks(response.content or "")
         except Exception as e:
             logger.error("LLM 异步调用失败: %s", e)
             final_content = self._get_fallback_response()
@@ -781,13 +811,9 @@ class Agent:
             return
 
         try:
-            llm_messages_for_stream = llm_messages
-            if self._location_tools_enabled(user_input):
-                llm_messages_for_stream, _direct = self._run_location_tool_loop(
-                    llm_messages, user_input=user_input
-                )
-            else:
-                llm_messages_for_stream = llm_messages
+            llm_messages_for_stream = self._prepare_location_messages(
+                llm_messages, user_input=user_input
+            )
 
             stream = self.llm.chat_stream(
                 messages=llm_messages_for_stream,
