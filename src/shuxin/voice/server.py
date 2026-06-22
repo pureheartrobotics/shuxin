@@ -49,6 +49,7 @@ from shuxin.voice.mbti_reveal import (
 )
 from shuxin.voice import voice_session_registry as vsr
 from shuxin.voice.service import VoiceService
+from shuxin.voice.text_sanitize import has_unclosed_parenthesis, prepare_speakable_text
 from shuxin.voice.tencent_realtime_asr import (
     TencentRealtimeASRResult,
     TencentRealtimeASRSession,
@@ -198,7 +199,11 @@ def _pop_speakable_segments(
                 break
         if cut_at < 0 and force:
             cut_at = len(buffer)
-        if cut_at < 0 and len(buffer) >= MAX_STREAMING_TTS_CHARS:
+        if (
+            cut_at < 0
+            and len(buffer) >= MAX_STREAMING_TTS_CHARS
+            and not has_unclosed_parenthesis(buffer)
+        ):
             cut_at = MAX_STREAMING_TTS_CHARS
         if cut_at < 0:
             break
@@ -207,12 +212,6 @@ def _pop_speakable_segments(
         if segment:
             segments.append(segment)
     return segments, buffer
-
-
-def clean_action_text(text: str) -> str:
-    """去除中英文括号及其包含的动作文本。"""
-    cleaned = re.sub(r"[\(（][^\)）]*[\)）]", "", text)
-    return cleaned.strip()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1981,7 +1980,7 @@ class _VoiceWebSocketSession:
                 "total_elapsed_ms": _elapsed_ms(turn_started),
             }
         )
-        clean_text = clean_action_text(text)
+        clean_text = prepare_speakable_text(text)
         if not clean_text:
             output_path.write_bytes(b"")
             await asyncio.sleep(0.01)

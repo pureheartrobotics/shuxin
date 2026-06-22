@@ -837,8 +837,9 @@ class Agent:
     @staticmethod
     def _is_speakable_reply(text: str) -> bool:
         """流式/TTS 是否有可朗读正文（非空且非纯括号动作）。"""
-        cleaned = re.sub(r"[\(（][^\)）]*[\)）]", "", text or "").strip()
-        return bool(cleaned)
+        from shuxin.voice.text_sanitize import prepare_speakable_text
+
+        return bool(prepare_speakable_text(text or ""))
 
     @staticmethod
     def _empty_reply_fallback() -> str:

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from shuxin.voice.server import _pop_speakable_segments, clean_action_text
+from shuxin.voice.server import _pop_speakable_segments
+from shuxin.voice.text_sanitize import (
+    clean_action_text,
+    has_unclosed_parenthesis,
+    prepare_speakable_text,
+    strip_markdown_for_tts,
+)
 
 
 def test_pop_speakable_segments_waits_for_sentence_boundary() -> None:
@@ -36,9 +42,44 @@ def test_clean_action_text() -> None:
     assert clean_action_text("(耳朵微微竖起，尾巴轻轻摆动，眼中带着一丝好奇与笑意)") == ""
     assert clean_action_text("（耳朵竖起）你好，（尾巴摆动）主人。") == "你好，主人。"
     assert clean_action_text("正常文本") == "正常文本"
+    assert clean_action_text("（查到结果后，抬头看向你，语气干脆利落 我们目前") == "我们目前"
+    assert clean_action_text("我们目前（查到结果后，抬头看向你") == "我们目前"
 
 
 def test_pop_speakable_segments_ignores_punctuation_in_parentheses() -> None:
     segments, rest = _pop_speakable_segments("（动作。描述。）你好。")
     assert segments == ["（动作。描述。）你好。"]
     assert rest == ""
+
+
+def test_pop_speakable_segments_does_not_cut_inside_unclosed_parentheses() -> None:
+    long_action = "（" + "查" * 50 + "我们目前在深圳"
+    segments, rest = _pop_speakable_segments(long_action)
+
+    assert segments == []
+    assert rest == long_action
+    assert has_unclosed_parenthesis(rest)
+
+
+def test_pop_speakable_segments_force_strips_unclosed_action_for_tts() -> None:
+    long_action = "（" + "查" * 50 + " 我们目前在深圳"
+    segments, rest = _pop_speakable_segments(long_action, force=True)
+
+    assert segments == [long_action]
+    assert rest == ""
+    assert prepare_speakable_text(segments[0]) == "我们目前在深圳"
+
+
+def test_strip_markdown_for_tts() -> None:
+    assert strip_markdown_for_tts("我们目前在**广东省深圳市**。") == "我们目前在广东省深圳市。"
+    assert strip_markdown_for_tts("室外温度 **28°C**") == "室外温度 28°C"
+    assert strip_markdown_for_tts("`*code*` and __bold__") == "code and bold"
+
+
+def test_prepare_speakable_text_weather_example() -> None:
+    raw = "（查到结果后，抬头看向你，语气干脆利落） 我们目前在**广东省深圳市**。"
+    assert prepare_speakable_text(raw) == "我们目前在广东省深圳市。"
+
+
+def test_prepare_speakable_text_action_only_is_empty() -> None:
+    assert prepare_speakable_text("（查到结果后，抬头看向你）") == ""
