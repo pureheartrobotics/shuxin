@@ -11,8 +11,10 @@ import uuid
 import time
 from pathlib import Path
 
-from shuxin.core.agent import Agent
+from shuxin.core.agent import Agent, ToolLoopCallbacks
 from shuxin.core.config import get_shuxin_home
+from shuxin.integrations.location import format_location_context_block, get_location_provider
+from shuxin.integrations.location.ip_resolve import resolve_effective_ip
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
 from shuxin.voice.adapters import VoiceAdapterRegistry
 from shuxin.voice.audio_files import AudioFileStore
@@ -1254,6 +1256,19 @@ def create_app(
 _FACTORY_ACCEPTANCE_DISABLED = "factory acceptance mode: conversation disabled"
 
 
+def _client_ip_from_websocket(websocket) -> str:
+    """从 WebSocket 连接解析客户端 IP（支持 X-Forwarded-For）。"""
+    forwarded = websocket.headers.get("x-forwarded-for") or websocket.headers.get(
+        "X-Forwarded-For"
+    )
+    if forwarded:
+        return str(forwarded).split(",")[0].strip()
+    client = getattr(websocket, "client", None)
+    if client is not None:
+        return str(getattr(client, "host", "") or "")
+    return ""
+
+
 class _VoiceWebSocketSession:
     """单条 WebSocket 连接的运行态。
 
@@ -1297,6 +1312,7 @@ class _VoiceWebSocketSession:
         self.opus_uplink_decoder: OpusStreamDecoder | None = None
         self.hardware_session = False
         self.factory_acceptance = False
+        self.client_ip = _client_ip_from_websocket(websocket)
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -1588,6 +1604,7 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "agent", "state": "thinking"})
             if self.agent is not None:
                 self.agent.context.metadata.pop("llm_error_kind", None)
+            await self._refresh_location_context()
 
             async for chunk in self._stream_agent_chunks(text):
                 if not chunk:
@@ -1752,6 +1769,7 @@ class _VoiceWebSocketSession:
 
             agent_started = time.perf_counter()
             await self._send_json({"type": "agent", "state": "thinking"})
+            await self._refresh_location_context()
             loop = asyncio.get_event_loop()
             reply = await loop.run_in_executor(None, lambda: self.agent.chat(text).strip())
             agent_ms = _elapsed_ms(agent_started)
@@ -2126,8 +2144,73 @@ class _VoiceWebSocketSession:
             )
             self.agent.context.metadata["channel"] = "voice"
             self.agent.context.metadata["agent_id"] = self.agent_record.agent_id
+            self.agent.context.metadata["client_ip"] = self.client_ip
+            self._setup_agent_tool_callbacks()
             await asyncio.to_thread(self.agent.initialize)
             VoiceService.apply_device_mbti(self.agent, self.device, self.agent_record)
+
+    def _setup_agent_tool_callbacks(self) -> None:
+        if self.agent is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        def on_tool_round_start(reason: str) -> None:
+            asyncio.run_coroutine_threadsafe(
+                self._send_json(
+                    {"type": "agent", "state": "thinking", "reason": reason}
+                ),
+                loop,
+            )
+
+        self.agent.tool_loop_callbacks = ToolLoopCallbacks(
+            on_tool_round_start=on_tool_round_start,
+        )
+
+    async def _refresh_location_context(self) -> None:
+        """解析用户大致位置并写入 Agent metadata，供 companion 注入。"""
+        if self.agent is None:
+            return
+        provider = get_location_provider(self.agent.config.map)
+        user_home = None
+        if self.audio_store is not None:
+            user_home = self.audio_store.user_shuxin_home()
+
+        effective_ip = resolve_effective_ip(self.client_ip)
+
+        def resolve():
+            ctx = provider.resolve_location_context(
+                ip=effective_ip or None,
+                user_home=user_home,
+            )
+            return ctx, format_location_context_block(ctx)
+
+        ctx, block = await asyncio.to_thread(resolve)
+        self.agent.context.metadata["location_debug"] = {
+            "client_ip": self.client_ip,
+            "effective_ip": effective_ip or "",
+            "source": ctx.source,
+            "confidence": ctx.confidence,
+            "label": ctx.label,
+            "city": ctx.city,
+            "district": ctx.district,
+            "city_adcode": ctx.city_adcode,
+            "lat": ctx.lat,
+            "lng": ctx.lng,
+        }
+        if ctx.label:
+            self.agent.context.metadata["location_ctx"] = ctx.to_metadata_dict()
+        else:
+            self.agent.context.metadata.pop("location_ctx", None)
+
+        if block.strip():
+            self.agent.context.metadata["location_context"] = block
+            logger.info("location_context resolved: %s", self.agent.context.metadata["location_debug"])
+        else:
+            self.agent.context.metadata.pop("location_context", None)
+            logger.info("location_context empty: %s", self.agent.context.metadata["location_debug"])
 
     async def _send_json(self, data: dict) -> None:
         """以 UTF-8 JSON 文本消息下发状态，保留中文错误和回复内容。"""

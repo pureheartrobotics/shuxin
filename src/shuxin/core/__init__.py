@@ -10,7 +10,6 @@
 - Identity: 身份与人格管理
 """
 
-from shuxin.core.agent import Agent
 from shuxin.core.config import Config
 from shuxin.core.llm import LLMProvider
 from shuxin.core.memory import MemoryManager
@@ -27,3 +26,11 @@ __all__ = [
     "SoulEngine",
     "IdentityEngine",
 ]
+
+
+def __getattr__(name: str):
+    if name == "Agent":
+        from shuxin.core.agent import Agent
+
+        return Agent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

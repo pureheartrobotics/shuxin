@@ -83,11 +83,26 @@ class LLMMessage:
     """LLM 消息。
 
     Attributes:
-        role: 消息角色 (system, user, assistant)。
+        role: 消息角色 (system, user, assistant, tool)。
         content: 消息内容。
+        tool_calls: assistant 消息附带的工具调用列表。
+        tool_call_id: tool 角色消息对应的调用 ID。
+        name: tool 角色消息对应的工具名。
     """
     role: str
-    content: str
+    content: str = ""
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+@dataclass
+class LLMToolCall:
+    """标准化的工具调用描述。"""
+
+    id: str
+    name: str
+    arguments: str
 
 
 @dataclass
@@ -98,12 +113,14 @@ class LLMResponse:
         content: 响应文本内容。
         model: 使用的模型名称。
         usage: Token 使用统计。
-        finish_reason: 结束原因 (stop, length, content_filter 等)。
+        finish_reason: 结束原因 (stop, length, content_filter, tool_calls 等)。
+        tool_calls: 模型请求的工具调用列表。
     """
     content: str
     model: str = ""
     usage: Dict[str, int] = field(default_factory=dict)
     finish_reason: str = ""
+    tool_calls: Optional[List[LLMToolCall]] = None
 
 
 class BaseLLMProvider(ABC):
@@ -272,22 +289,48 @@ class OpenAIProvider(BaseLLMProvider):
     def _to_openai_messages(
         messages: List[LLMMessage],
         system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
-        """将内部消息格式转换为 OpenAI API 格式。
-
-        Args:
-            messages: 内部消息列表。
-            system_prompt: 可选的系统提示。
-
-        Returns:
-            List[Dict[str, str]]: OpenAI 格式的消息列表。
-        """
-        result: List[Dict[str, str]] = []
+    ) -> List[Dict[str, Any]]:
+        """将内部消息格式转换为 OpenAI API 格式。"""
+        result: List[Dict[str, Any]] = []
         if system_prompt:
             result.append({"role": "system", "content": system_prompt})
         for msg in messages:
-            result.append({"role": msg.role, "content": msg.content})
+            if msg.role == "tool":
+                result.append(
+                    {
+                        "role": "tool",
+                        "content": msg.content,
+                        "tool_call_id": msg.tool_call_id or "",
+                    }
+                )
+                continue
+            payload: Dict[str, Any] = {
+                "role": msg.role,
+                "content": msg.content or "",
+            }
+            if msg.tool_calls:
+                payload["tool_calls"] = msg.tool_calls
+            result.append(payload)
         return result
+
+    @staticmethod
+    def _parse_tool_calls(message: Any) -> Optional[List[LLMToolCall]]:
+        raw_calls = getattr(message, "tool_calls", None)
+        if not raw_calls:
+            return None
+        parsed: List[LLMToolCall] = []
+        for item in raw_calls:
+            function = getattr(item, "function", None)
+            if function is None:
+                continue
+            parsed.append(
+                LLMToolCall(
+                    id=str(getattr(item, "id", "") or ""),
+                    name=str(getattr(function, "name", "") or ""),
+                    arguments=str(getattr(function, "arguments", "") or "{}"),
+                )
+            )
+        return parsed or None
 
     def chat(
         self,
@@ -323,8 +366,9 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             choice = response.choices[0]
+            tool_calls = self._parse_tool_calls(choice.message)
             return LLMResponse(
-                content=choice.message.content or "",
+                content=strip_dsml_blocks(choice.message.content or ""),
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -332,6 +376,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "total_tokens": response.usage.total_tokens if response.usage else 0,
                 },
                 finish_reason=choice.finish_reason or "",
+                tool_calls=tool_calls,
             )
         except Exception as e:
             logger.error("LLM 同步调用失败 [model=%s]: %s", self.model, e)
@@ -371,8 +416,9 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             choice = response.choices[0]
+            tool_calls = self._parse_tool_calls(choice.message)
             return LLMResponse(
-                content=choice.message.content or "",
+                content=strip_dsml_blocks(choice.message.content or ""),
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -380,6 +426,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "total_tokens": response.usage.total_tokens if response.usage else 0,
                 },
                 finish_reason=choice.finish_reason or "",
+                tool_calls=tool_calls,
             )
         except Exception as e:
             logger.error("LLM 异步调用失败 [model=%s]: %s", self.model, e)
@@ -421,11 +468,13 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             think_filter = _ThinkTagFilter()
+            dsml_filter = _DsmlStreamFilter()
             for chunk in stream:
                 if not chunk.choices:
                     continue
                 raw = _openai_stream_delta_text(chunk.choices[0].delta)
                 piece = think_filter.feed(raw) if raw else ""
+                piece = dsml_filter.feed(piece) if piece else ""
                 if piece:
                     yield piece
         except Exception as e:
@@ -445,6 +494,19 @@ def _normalize_openai_base_url(base_url: str) -> str:
 
 _THINK_OPEN = "<" + "think" + ">"
 _THINK_CLOSE = "</" + "think" + ">"
+
+
+def _DsmlStreamFilter():
+    """Lazy import to avoid integrations ↔ core cycles at module load."""
+    from shuxin.integrations.location.dsml import DsmlStreamFilter
+
+    return DsmlStreamFilter()
+
+
+def strip_dsml_blocks(text: str) -> str:
+    from shuxin.integrations.location.dsml import strip_dsml_blocks as _strip
+
+    return _strip(text)
 
 
 class _ThinkTagFilter:

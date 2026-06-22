@@ -113,11 +113,56 @@ class CompanionPlugin:
         esteem_status = self.self_esteem.get_status_text()
         growth_context = self._get_growth_context()
 
+        location_context = ""
+        if agent is not None:
+            location_context = str(agent.context.metadata.get("location_context") or "").strip()
+
+        location_block = (
+            f"## 位置参考\n\n{location_context}\n\n" if location_context else ""
+        )
+
+        low_confidence_hint = ""
+        if agent is not None:
+            raw_ctx = agent.context.metadata.get("location_ctx")
+            if isinstance(raw_ctx, dict) and raw_ctx.get("confidence") == "low":
+                low_confidence_hint = (
+                    "## 位置表述约束\n\n"
+                    "位置参考为低置信推测，禁止断言「你人在XX」；"
+                    "用「可能/大概在你那边」并基于地图工具结果回答。\n\n"
+                )
+
+        map_tools_hint = ""
+        if agent is not None:
+            try:
+                from shuxin.integrations.location import get_location_provider, should_attach_location_tools
+
+                provider = get_location_provider(agent.config.map)
+                last_user = ""
+                for entry in reversed(agent.memory.short_term):
+                    if entry.role == "user":
+                        last_user = entry.content
+                        break
+                if (
+                    provider.is_available()
+                    and last_user
+                    and should_attach_location_tools(last_user, agent.config.map)
+                ):
+                    map_tools_hint = (
+                        "## 地图能力\n\n"
+                        "涉及天气、地点、路线时，优先使用已提供的地图工具查询真实数据，"
+                        "不要说自己无法感知外界。\n\n"
+                    )
+            except Exception:
+                pass
+
         micro_anchor_block = (
             f"## 风格微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
         )
         return (
-            micro_anchor_block
+            location_block
+            + low_confidence_hint
+            + map_tools_hint
+            + micro_anchor_block
             + f"## 初心当前状态\n\n"
             + f"{esteem_status}\n\n"
             + f"{emotion_context}\n\n"

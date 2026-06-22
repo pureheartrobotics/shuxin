@@ -22,19 +22,36 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import logging
+import re
 import threading
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Generator, AsyncIterator
+from typing import Optional, List, Dict, Any, Generator, AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 from shuxin.core.config import Config
 from shuxin.core.soul import SoulEngine
 from shuxin.core.identity import IdentityEngine
-from shuxin.core.llm import LLMProvider, LLMMessage, LLMResponse, PROVIDER_REGISTRY
+from shuxin.core.llm import LLMProvider, LLMMessage, LLMResponse, LLMToolCall, PROVIDER_REGISTRY
 from shuxin.core.memory import MemoryManager
 from shuxin.core.plugin import PluginManager
+from shuxin.integrations.location import get_location_provider, should_attach_location_tools
+from shuxin.integrations.location.dsml import extract_dsml_tool_calls, strip_dsml_blocks
+from shuxin.integrations.location.fallback import (
+    infer_poi_query,
+    infer_search_region,
+    infer_weather_region,
+    is_tool_result_usable,
+    should_direct_poi_search,
+    should_direct_weather_call,
+)
+from shuxin.integrations.location.provider import LocationContext, LocationToolProvider
+from shuxin.integrations.location.tool_args import (
+    normalize_map_search_places_args,
+    normalize_map_weather_args,
+)
 
 logger = logging.getLogger("shuxin.agent")
 
@@ -93,6 +110,14 @@ class AgentContext:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ToolLoopCallbacks:
+    """地图等 tool loop 生命周期回调（供 Voice 发 thinking 等事件）。"""
+
+    on_tool_round_start: Optional[Callable[[str], None]] = None
+    on_tool_round_end: Optional[Callable[[], None]] = None
+
+
 # ---------------------------------------------------------------------------
 # 智能体主类
 # ---------------------------------------------------------------------------
@@ -122,6 +147,8 @@ class Agent:
         self._system_prompt: str = ""
         self._initialized: bool = False
         self._lock = threading.Lock()
+        self.tool_loop_callbacks: Optional[ToolLoopCallbacks] = None
+        self._location_provider: Optional[LocationToolProvider] = None
 
     # -- 初始化 ------------------------------------------------------------
 
@@ -184,6 +211,9 @@ class Agent:
             # 5. 构建系统提示
             self._build_system_prompt()
 
+            # 5b. 地图 provider（无 AK 时 is_available() 为 False）
+            self._location_provider = get_location_provider(self.config.map)
+
             # 6. 触发会话开始 Hook
             self.plugins.invoke_hook("on_session_start", agent=self)
 
@@ -233,6 +263,359 @@ class Agent:
         """
         return self._system_prompt
 
+    def _location_tools_enabled(self, user_input: str) -> bool:
+        provider = self._location_provider or get_location_provider(self.config.map)
+        if not provider.is_available():
+            return False
+        return should_attach_location_tools(user_input, self.config.map)
+
+    def _build_llm_messages(self) -> List[LLMMessage]:
+        messages = self.memory.build_context(
+            system_prompt=self._system_prompt,
+            max_history=self.config.max_history,
+        )
+        return [
+            LLMMessage(role=m["role"], content=m["content"])
+            for m in messages
+            if m["role"] != "system"
+        ]
+
+    def _tool_calls_to_openai(self, tool_calls: List[Any]) -> List[Dict[str, Any]]:
+        payload: List[Dict[str, Any]] = []
+        for call in tool_calls:
+            payload.append(
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    },
+                }
+            )
+        return payload
+
+    def _invoke_tool_callbacks(self, start: bool, reason: str = "map_lookup") -> None:
+        if self.tool_loop_callbacks is None:
+            return
+        if start and self.tool_loop_callbacks.on_tool_round_start:
+            self.tool_loop_callbacks.on_tool_round_start(reason)
+        if not start and self.tool_loop_callbacks.on_tool_round_end:
+            self.tool_loop_callbacks.on_tool_round_end()
+
+    def _get_location_context_struct(self) -> Optional[LocationContext]:
+        raw = self.context.metadata.get("location_ctx")
+        if isinstance(raw, dict):
+            return LocationContext.from_metadata_dict(raw)
+        text = str(self.context.metadata.get("location_context") or "").strip()
+        if text:
+            return LocationContext(label=text, source="text", confidence="low")
+        return None
+
+    def _normalize_map_tool_call(
+        self,
+        name: str,
+        args: Dict[str, Any],
+        *,
+        user_input: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """将 LLM/DSML 传入的 map 工具参数归一化为百度 MCP 可接受的 schema。"""
+        ctx = self._get_location_context_struct()
+        if name == "map_weather":
+            normalized = normalize_map_weather_args(args, ctx)
+            if normalized:
+                return normalized
+            region = infer_weather_region(user_input, ctx)
+            if region:
+                return normalize_map_weather_args({"region": region}, ctx)
+            return None
+        if name == "map_search_places":
+            query = str(args.get("query") or infer_poi_query(user_input) or "美食")
+            merged = dict(args)
+            merged.setdefault("query", query)
+            return normalize_map_search_places_args(merged, ctx, default_query=query)
+        return args if isinstance(args, dict) else {}
+
+    def _execute_map_tool(
+        self,
+        provider: LocationToolProvider,
+        name: str,
+        args: Dict[str, Any],
+        *,
+        user_input: str = "",
+    ) -> Optional[str]:
+        normalized = self._normalize_map_tool_call(name, args, user_input=user_input)
+        if not normalized:
+            logger.warning("地图工具参数无法归一化 [%s]: %s", name, args)
+            return None
+        try:
+            result = provider.call_tool(name, normalized)
+        except Exception as exc:
+            logger.warning("地图工具执行失败 [%s]: %s", name, exc)
+            return None
+        if not is_tool_result_usable(result):
+            logger.warning("地图工具返回不可用 [%s]: %.120s", name, result or "")
+            return None
+        return result
+
+    def _append_direct_tool_result(
+        self,
+        working: List[LLMMessage],
+        *,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        result: str,
+        call_id_prefix: str,
+    ) -> bool:
+        if not is_tool_result_usable(result):
+            logger.warning("直调 %s 返回不可用结果，跳过", tool_name)
+            return False
+        call_id = f"{call_id_prefix}_{uuid.uuid4().hex[:12]}"
+        working.append(
+            LLMMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(arguments, ensure_ascii=False),
+                        },
+                    }
+                ],
+            )
+        )
+        working.append(
+            LLMMessage(
+                role="tool",
+                content=result,
+                tool_call_id=call_id,
+                name=tool_name,
+            )
+        )
+        return True
+
+    def _try_direct_weather_fallback(
+        self,
+        working: List[LLMMessage],
+        *,
+        user_input: str,
+        provider: LocationToolProvider,
+    ) -> bool:
+        """模型未调 tool 时服务端直调 map_weather，成功则追加 tool 消息。"""
+        if not should_direct_weather_call(user_input):
+            return False
+
+        ctx = self._get_location_context_struct()
+        weather_args = normalize_map_weather_args({}, ctx)
+        if not weather_args:
+            region_hint = infer_weather_region(user_input, ctx)
+            weather_args = normalize_map_weather_args(
+                {"region": region_hint} if region_hint else {},
+                ctx,
+            )
+        if not weather_args:
+            logger.warning("天气直调降级：无法构造 map_weather 参数，跳过")
+            return False
+
+        result = self._execute_map_tool(
+            provider, "map_weather", weather_args, user_input=user_input
+        )
+        if result is None:
+            return False
+
+        ok = self._append_direct_tool_result(
+            working,
+            tool_name="map_weather",
+            arguments=weather_args,
+            result=result,
+            call_id_prefix="direct_weather",
+        )
+        if ok:
+            logger.info("天气直调降级成功: %s", weather_args)
+        return ok
+
+    def _try_direct_poi_fallback(
+        self,
+        working: List[LLMMessage],
+        *,
+        user_input: str,
+        provider: LocationToolProvider,
+    ) -> bool:
+        """模型未调 tool 时服务端直调 map_search_places。"""
+        if not should_direct_poi_search(user_input):
+            return False
+
+        ctx = self._get_location_context_struct()
+        query = infer_poi_query(user_input)
+        poi_args = normalize_map_search_places_args(
+            {"query": query},
+            ctx,
+            default_query=query,
+        )
+        if not poi_args:
+            logger.warning("POI 直调降级：无法构造 map_search_places 参数，跳过")
+            return False
+
+        result = self._execute_map_tool(
+            provider, "map_search_places", poi_args, user_input=user_input
+        )
+        if result is None:
+            return False
+
+        ok = self._append_direct_tool_result(
+            working,
+            tool_name="map_search_places",
+            arguments=poi_args,
+            result=result,
+            call_id_prefix="direct_poi",
+        )
+        if ok:
+            logger.info("POI 直调降级成功: %s", poi_args)
+        return ok
+
+    def _run_location_tool_loop(
+        self,
+        llm_messages: List[LLMMessage],
+        *,
+        user_input: str,
+    ) -> tuple[List[LLMMessage], Optional[str]]:
+        """执行地图 tool loop；返回更新后的 messages（不再把模型拒答当最终回复）。"""
+        provider = self._location_provider or get_location_provider(self.config.map)
+        channel = str(self.context.metadata.get("channel") or "cli")
+        tools = provider.list_openai_tools(channel=channel)
+        if not tools:
+            return llm_messages, None
+
+        working = list(llm_messages)
+        max_rounds = max(1, int(self.config.map.max_tool_rounds))
+
+        for _ in range(max_rounds):
+            self._invoke_tool_callbacks(start=True)
+            try:
+                response = self.llm.chat(
+                    messages=working,
+                    system_prompt=self._system_prompt,
+                    temperature=self.config.llm.temperature,
+                    max_tokens=self.config.llm.max_tokens,
+                    tools=tools,
+                    tool_choice="auto",
+                )
+            finally:
+                self._invoke_tool_callbacks(start=False)
+
+            if not response.tool_calls:
+                dsml_calls = extract_dsml_tool_calls(response.content or "")
+                if dsml_calls:
+                    logger.info(
+                        "DSML tool calls parsed: %s",
+                        [c.name for c in dsml_calls],
+                    )
+                    response_tool_calls = [
+                        LLMToolCall(id=c.id, name=c.name, arguments=c.arguments)
+                        for c in dsml_calls
+                    ]
+                else:
+                    response_tool_calls = None
+            else:
+                response_tool_calls = response.tool_calls
+
+            if not response_tool_calls:
+                if self._try_direct_weather_fallback(
+                    working, user_input=user_input, provider=provider
+                ):
+                    return working, None
+                if self._try_direct_poi_fallback(
+                    working, user_input=user_input, provider=provider
+                ):
+                    return working, None
+                return working, None
+
+            assistant_content = strip_dsml_blocks(response.content or "")
+            executed: list[tuple[Any, Dict[str, Any], str]] = []
+            for call in response_tool_calls:
+                try:
+                    args = json.loads(call.arguments or "{}")
+                    if not isinstance(args, dict):
+                        args = {}
+                except json.JSONDecodeError:
+                    args = {}
+
+                normalized = self._normalize_map_tool_call(
+                    call.name, args, user_input=user_input
+                )
+                if not normalized:
+                    logger.warning("跳过无效工具调用 [%s]: %s", call.name, args)
+                    continue
+
+                result = self._execute_map_tool(
+                    provider,
+                    call.name,
+                    normalized,
+                    user_input=user_input,
+                )
+                if result is None:
+                    continue
+                executed.append((call, normalized, result))
+
+            if not executed:
+                if self._try_direct_weather_fallback(
+                    working, user_input=user_input, provider=provider
+                ):
+                    return working, None
+                if self._try_direct_poi_fallback(
+                    working, user_input=user_input, provider=provider
+                ):
+                    return working, None
+                return working, None
+
+            openai_calls: List[Dict[str, Any]] = []
+            for call, normalized, _result in executed:
+                openai_calls.append(
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(normalized, ensure_ascii=False),
+                        },
+                    }
+                )
+            working.append(
+                LLMMessage(
+                    role="assistant",
+                    content=assistant_content,
+                    tool_calls=openai_calls,
+                )
+            )
+            for call, _normalized, result in executed:
+                working.append(
+                    LLMMessage(
+                        role="tool",
+                        content=result,
+                        tool_call_id=call.id,
+                        name=call.name,
+                    )
+                )
+
+        return working, None
+
+    def _generate_llm_reply(self, llm_messages: List[LLMMessage], *, user_input: str) -> str:
+        if self._location_tools_enabled(user_input):
+            llm_messages, _direct = self._run_location_tool_loop(
+                llm_messages, user_input=user_input
+            )
+
+        response = self.llm.chat(
+            messages=llm_messages,
+            system_prompt=self._system_prompt,
+            temperature=self.config.llm.temperature,
+            max_tokens=self.config.llm.max_tokens,
+        )
+        return strip_dsml_blocks(response.content or "")
+
     # -- 对话核心 ----------------------------------------------------------
 
     def chat(self, user_input: str) -> str:
@@ -266,10 +649,7 @@ class Agent:
         self._build_system_prompt()
 
         # 3. 构建上下文
-        messages = self.memory.build_context(
-            system_prompt=self._system_prompt,
-            max_history=self.config.max_history,
-        )
+        llm_messages = self._build_llm_messages()
 
         blocked_content = self._get_blocked_llm_response()
         if blocked_content is not None:
@@ -277,19 +657,9 @@ class Agent:
             self.plugins.invoke_hook("on_ai_message", agent=self, message=blocked_content)
             return blocked_content
 
-        # 4. 调用 LLM
+        # 4. 调用 LLM（含可选地图 tool loop）
         try:
-            response = self.llm.chat(
-                messages=[
-                    LLMMessage(role=m["role"], content=m["content"])
-                    for m in messages
-                    if m["role"] != "system"
-                ],
-                system_prompt=self._system_prompt,
-                temperature=self.config.llm.temperature,
-                max_tokens=self.config.llm.max_tokens,
-            )
-            final_content = response.content
+            final_content = self._generate_llm_reply(llm_messages, user_input=user_input)
         except Exception as e:
             logger.error("LLM 调用失败: %s", e, exc_info=True)
             error_msg = str(e)
@@ -339,10 +709,7 @@ class Agent:
         self.memory.add_message("user", user_input)
         self._build_system_prompt()
 
-        messages = self.memory.build_context(
-            system_prompt=self._system_prompt,
-            max_history=self.config.max_history,
-        )
+        llm_messages = self._build_llm_messages()
 
         blocked_content = self._get_blocked_llm_response()
         if blocked_content is not None:
@@ -351,17 +718,26 @@ class Agent:
             return blocked_content
 
         try:
-            response = await self.llm.chat_async(
-                messages=[
-                    LLMMessage(role=m["role"], content=m["content"])
-                    for m in messages
-                    if m["role"] != "system"
-                ],
-                system_prompt=self._system_prompt,
-                temperature=self.config.llm.temperature,
-                max_tokens=self.config.llm.max_tokens,
-            )
-            final_content = response.content
+            llm_messages_for_reply = llm_messages
+            if self._location_tools_enabled(user_input):
+                llm_messages_for_reply, _direct = self._run_location_tool_loop(
+                    llm_messages, user_input=user_input
+                )
+                response = await self.llm.chat_async(
+                    messages=llm_messages_for_reply,
+                    system_prompt=self._system_prompt,
+                    temperature=self.config.llm.temperature,
+                    max_tokens=self.config.llm.max_tokens,
+                )
+                final_content = strip_dsml_blocks(response.content or "")
+            else:
+                response = await self.llm.chat_async(
+                    messages=llm_messages_for_reply,
+                    system_prompt=self._system_prompt,
+                    temperature=self.config.llm.temperature,
+                    max_tokens=self.config.llm.max_tokens,
+                )
+                final_content = strip_dsml_blocks(response.content or "")
         except Exception as e:
             logger.error("LLM 异步调用失败: %s", e)
             final_content = self._get_fallback_response()
@@ -395,10 +771,7 @@ class Agent:
         self.memory.add_message("user", user_input)
         self._build_system_prompt()
 
-        messages = self.memory.build_context(
-            system_prompt=self._system_prompt,
-            max_history=self.config.max_history,
-        )
+        llm_messages = self._build_llm_messages()
 
         blocked_content = self._get_blocked_llm_response()
         if blocked_content is not None:
@@ -408,12 +781,16 @@ class Agent:
             return
 
         try:
+            llm_messages_for_stream = llm_messages
+            if self._location_tools_enabled(user_input):
+                llm_messages_for_stream, _direct = self._run_location_tool_loop(
+                    llm_messages, user_input=user_input
+                )
+            else:
+                llm_messages_for_stream = llm_messages
+
             stream = self.llm.chat_stream(
-                messages=[
-                    LLMMessage(role=m["role"], content=m["content"])
-                    for m in messages
-                    if m["role"] != "system"
-                ],
+                messages=llm_messages_for_stream,
                 system_prompt=self._system_prompt,
                 temperature=self.config.llm.temperature,
                 max_tokens=self.config.llm.max_tokens,
@@ -423,6 +800,11 @@ class Agent:
             for chunk in stream:
                 full_content += chunk
                 yield chunk
+
+            if not self._is_speakable_reply(full_content):
+                fallback = self._empty_reply_fallback()
+                full_content = fallback
+                yield fallback
 
             # 输出转换 Hook（流式模式下在完成后统一处理）
             hook_results = self.plugins.invoke_hook(
@@ -453,12 +835,18 @@ class Agent:
         return None
 
     @staticmethod
-    def _get_fallback_response() -> str:
-        """LLM 调用失败时的降级回复。
+    def _is_speakable_reply(text: str) -> bool:
+        """流式/TTS 是否有可朗读正文（非空且非纯括号动作）。"""
+        cleaned = re.sub(r"[\(（][^\)）]*[\)）]", "", text or "").strip()
+        return bool(cleaned)
 
-        Returns:
-            温和的降级回复文本。
-        """
+    @staticmethod
+    def _empty_reply_fallback() -> str:
+        return "地图数据暂时没查出来，你可以告诉我大概在哪个区，我再帮你查天气或附近吃的。"
+
+    @staticmethod
+    def _get_fallback_response() -> str:
+        """LLM 调用失败时的降级回复。"""
         return "模型连接有点慢，刚才没有及时响应。我们稍等一下再试。"
 
     # -- 命令处理 ----------------------------------------------------------
