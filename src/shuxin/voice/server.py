@@ -48,6 +48,7 @@ from shuxin.voice.mbti_reveal import (
     needs_mbti_reveal,
 )
 from shuxin.voice import voice_session_registry as vsr
+from shuxin.voice.miniapp_admin import miniapp_admin_router
 from shuxin.voice.service import VoiceService
 from shuxin.voice.text_sanitize import has_unclosed_parenthesis, prepare_speakable_text
 from shuxin.voice.tencent_realtime_asr import (
@@ -265,6 +266,7 @@ def create_app(
     globals()["WebSocket"] = WebSocket
 
     app = FastAPI(title="ChuXin Voice Demo")
+    app.include_router(miniapp_admin_router, prefix="/miniapp-admin", tags=["Miniapp Admin"])
     device_provider = DeviceConfigProvider(device_config)
     user_provider = UserConfigProvider(users_config)
     service = VoiceService(device_provider)
@@ -308,6 +310,8 @@ def create_app(
                 factory_verify_log_retention_days=factory_verify_log_retention_days,
             )
         )
+        from shuxin.voice.billing import BillingService
+        app.state.billing = BillingService(app.state.repo)
 
     @app.on_event("shutdown")
     async def shutdown() -> None:
@@ -326,6 +330,13 @@ def create_app(
         if value is None:
             raise RuntimeError("voice repository is not initialized")
         return value
+
+    def billing():
+        value = getattr(app.state, "billing", None)
+        if value is None:
+            raise RuntimeError("billing service is not initialized")
+        return value
+
 
     def require_admin(request: Request) -> None:
         provided = request.headers.get("X-Admin-Token") or request.cookies.get("shuxin_admin")
@@ -637,6 +648,40 @@ def create_app(
             if not session_token:
                 return JSONResponse({"error": "session_token is required"}, status_code=400)
             return JSONResponse(await repo().get_user_profile_by_session(session_token))
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/api/announcements")
+    async def get_active_announcements():
+        try:
+            items = await repo().get_active_announcements()
+            return JSONResponse({"items": items})
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+    @app.post("/api/feedbacks")
+    async def submit_feedback(request: Request):
+        try:
+            payload = await request.json()
+            session_token = str(payload.get("session_token") or "")
+            content = str(payload.get("content") or "").strip()
+            contact = str(payload.get("contact") or "").strip()
+            if not session_token:
+                return JSONResponse({"error": "session_token is required"}, status_code=400)
+            if not content:
+                return JSONResponse({"error": "content is required"}, status_code=400)
+            
+            profile = await repo().get_user_profile_by_session(session_token)
+            user_id = profile["user_id"]
+            
+            result = await repo().create_feedback(
+                user_id=user_id,
+                content=content,
+                contact=contact
+            )
+            return JSONResponse(result)
         except PermissionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
         except Exception as exc:
@@ -1179,6 +1224,91 @@ def create_app(
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
+    @app.get("/admin/api/billing/summary")
+    async def admin_billing_summary(request: Request, month: str = ""):
+        try:
+            require_admin(request)
+            if not month:
+                raise ValueError("month parameter is required (YYYY-MM)")
+            data = await repo().get_monthly_expenditure_summary(month)
+            return JSONResponse({"success": True, "data": data})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/billing/records")
+    async def admin_billing_records(
+        request: Request,
+        month: str = "",
+        user_id: str = "",
+        limit: int = 20,
+        cursor: str = "",
+    ):
+        try:
+            require_admin(request)
+            if not month:
+                raise ValueError("month parameter is required (YYYY-MM)")
+            data = await repo().list_expenditures(
+                month_str=month, user_id=user_id, limit=limit, cursor=cursor
+            )
+            return JSONResponse({"success": True, "data": data})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
+    @app.delete("/admin/api/billing/records/{id}")
+    async def admin_delete_billing_record(request: Request, id: str):
+        try:
+            require_admin(request)
+            ok = await repo().delete_expenditure(id)
+            return JSONResponse({"success": ok})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
+    @app.delete("/admin/api/billing/records/months/{year_month}")
+    async def admin_clear_monthly_billing(request: Request, year_month: str):
+        try:
+            require_admin(request)
+            count = await repo().delete_monthly_expenditures(year_month)
+            return JSONResponse({"success": True, "deleted_count": count})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
+    @app.get("/admin/api/billing/pricing")
+    async def admin_get_billing_pricing(request: Request):
+        try:
+            require_admin(request)
+            data = await repo().get_all_pricing()
+            return JSONResponse({"success": True, "data": data})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
+    @app.patch("/admin/api/billing/pricing")
+    async def admin_update_billing_pricing(request: Request):
+        try:
+            require_admin(request)
+            payload = await request.json()
+            for ptype, pdict in payload.items():
+                if ptype in ("stt", "tts", "llm") and isinstance(pdict, dict):
+                    cleaned_dict = {str(k): float(v) for k, v in pdict.items()}
+                    await repo().update_pricing(ptype, cleaned_dict)
+                    billing_svc = getattr(app.state, "billing", None)
+                    if billing_svc is not None:
+                        billing_svc.invalidate_cache(ptype)
+            return JSONResponse({"success": True})
+        except PermissionError as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=403)
+        except Exception as exc:
+            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+
     @app.get("/admin/api/bindings")
     async def admin_list_bindings(request: Request, limit: int = 50, cursor: str = "", q: str = ""):
         try:
@@ -1255,6 +1385,7 @@ def create_app(
             shuxin_home=shuxin_home,
             default_device_id=default_device_id,
             out_dir=out_dir,
+            app=app,
         )
         try:
             await session.run()
@@ -1296,6 +1427,7 @@ class _VoiceWebSocketSession:
         shuxin_home: Path,
         default_device_id: str,
         out_dir: Path,
+        app=None,
     ):
         self.websocket = websocket
         self.service = service
@@ -1303,6 +1435,7 @@ class _VoiceWebSocketSession:
         self.shuxin_home = shuxin_home
         self.default_device_id = default_device_id
         self.out_dir = out_dir
+        self.app = app
         self.user_id = DEFAULT_USER_ID
         self.user_settings = None
         self.audio_store: AudioFileStore | None = None
@@ -1748,6 +1881,32 @@ class _VoiceWebSocketSession:
                     "error_kind": error_kind or "",
                 },
             )
+
+            # 异步记录消费流水（不阻塞语音核心流）
+            billing_svc = getattr(self.app.state, "billing", None) if self.app is not None else None
+            if billing_svc is not None and self.user_settings is not None:
+                stt_seconds = len(pcm) / 32000.0 if 'pcm' in locals() else 0.0
+                stt_model = getattr(self.device.stt, "provider", "default") if self.device and self.device.stt else "default"
+
+                # 估算 LLM Token
+                input_tokens = int((2500 + len(text)) * 1.2)
+                output_tokens = int(len(reply) * 1.3)
+                llm_tokens = input_tokens + output_tokens
+                llm_model = getattr(self.agent.config.llm, "model", "default") if self.agent else "default"
+
+                tts_chars = len(reply)
+                tts_model = getattr(self.agent_record, "voice_type", "volcengine-clone") if self.agent_record else "volcengine-clone"
+
+                billing_svc.record_usage_in_background(
+                    user_id=self.user_settings.user_id,
+                    stt_seconds=stt_seconds,
+                    stt_model=stt_model,
+                    llm_tokens=llm_tokens,
+                    llm_model=llm_model,
+                    tts_chars=tts_chars,
+                    tts_model=tts_model
+                )
+
             asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
             if self.user_settings is not None:
                 asyncio.create_task(
@@ -1835,6 +1994,33 @@ class _VoiceWebSocketSession:
                     "total_elapsed_ms": _elapsed_ms(started),
                 },
             )
+
+            # 异步记录消费流水（不阻塞语音核心流）
+            billing_svc = getattr(self.app.state, "billing", None) if self.app is not None else None
+            if billing_svc is not None and self.user_settings is not None:
+                # 文本会话跳过 STT 计费
+                stt_seconds = 0.0
+                stt_model = "default"
+
+                # 估算 LLM Token
+                input_tokens = int((2500 + len(text)) * 1.2)
+                output_tokens = int(len(reply) * 1.3)
+                llm_tokens = input_tokens + output_tokens
+                llm_model = getattr(self.agent.config.llm, "model", "default") if self.agent else "default"
+
+                tts_chars = len(reply)
+                tts_model = getattr(self.agent_record, "voice_type", "volcengine-clone") if self.agent_record else "volcengine-clone"
+
+                billing_svc.record_usage_in_background(
+                    user_id=self.user_settings.user_id,
+                    stt_seconds=stt_seconds,
+                    stt_model=stt_model,
+                    llm_tokens=llm_tokens,
+                    llm_model=llm_model,
+                    tts_chars=tts_chars,
+                    tts_model=tts_model
+                )
+
             asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
             if self.user_settings is not None:
                 asyncio.create_task(
@@ -2481,6 +2667,7 @@ def _admin_html(authenticated: bool) -> str:
         <button id="tabPaymentPlans" onclick="showTab('paymentPlans')">充值套餐</button>
         <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
         <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
+        <button id="tabBilling" onclick="showTab('billing')">消费账单</button>
       </div>
       <div id="devices" class="stack">
         <div class="panel">
@@ -2647,6 +2834,81 @@ def _admin_html(authenticated: bool) -> str:
         <div class="panel"><h2>可用适配器</h2><div id="adapterList" class="list"></div></div>
         <div class="panel"><h2>调用适配器</h2><textarea id="adapterPayload"></textarea><div class="toolbar"><button onclick="callAdapter()">调用</button></div><pre id="adapterResult"></pre></div>
       </div>
+      <div id="billing" class="grid" style="display:none">
+        <div class="panel stack" style="grid-column: 1 / -1;">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>消费总览</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <select id="billingMonth" onchange="loadBillingSummary(); resetBillingList();" style="width:120px;">
+              </select>
+              <button class="secondary danger" onclick="clearMonthlyBilling()">清空当月数据</button>
+            </div>
+          </div>
+          
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:16px;">
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">本月总支出</div>
+              <div id="billingTotalCost" style="font-size:28px; font-weight:700; margin:8px 0; color:var(--text); font-family:var(--mono);">¥0.0000</div>
+              <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; background:rgba(0,0,0,0.06);">
+                <div id="barLLM" style="width:0%; background:#ff3b30; transition:width 0.3s ease;"></div>
+                <div id="barSTT" style="width:0%; background:#0071e3; transition:width 0.3s ease;"></div>
+                <div id="barTTS" style="width:0%; background:#34c759; transition:width 0.3s ease;"></div>
+              </div>
+            </div>
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">对话交互统计</div>
+              <div id="billingAvgCost" style="font-size:22px; font-weight:700; margin:8px 0; color:var(--text); font-family:var(--mono);">¥0.0000 / 轮</div>
+              <div id="billingTotalTurns" class="hint">共计 0 轮</div>
+            </div>
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">消费分布占比</div>
+              <div style="font-size:13px; line-height:1.4; display:grid; gap:2px; margin-top:4px;">
+                <div><span class="badge" style="background:rgba(255,59,48,0.1); color:#ff3b30; height:18px; padding:0 6px; font-size:10px;">LLM</span> <span id="textLLM" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+                <div><span class="badge" style="background:rgba(0,113,227,0.1); color:#0071e3; height:18px; padding:0 6px; font-size:10px;">STT</span> <span id="textSTT" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+                <div><span class="badge" style="background:rgba(52,199,89,0.1); color:#34c759; height:18px; padding:0 6px; font-size:10px;">TTS</span> <span id="textTTS" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="tabs" style="margin-top:12px; margin-bottom:12px; align-self:flex-start;">
+            <button id="subtabRecords" class="active" onclick="switchSubtab('records')">消费明细流水</button>
+            <button id="subtabPricing" onclick="switchSubtab('pricing')">服务价格配置</button>
+          </div>
+          
+          <div id="billingSubtab-records" class="stack">
+            <div class="toolbar">
+              <input id="billingUserFilter" placeholder="过滤用户 ID" oninput="resetBillingList()" />
+              <button class="secondary" onclick="resetBillingList()">查询</button>
+            </div>
+            <div id="billingRecordsList" class="table">
+            </div>
+            <div id="billingPager" class="pager">
+              <button class="secondary" id="btnPrevBilling" onclick="prevBillingPage()" style="display:none">上一页</button>
+              <button class="secondary" id="btnNextBilling" onclick="nextBillingPage()" style="display:none">下一页</button>
+            </div>
+          </div>
+          
+          <div id="billingSubtab-pricing" class="stack" style="display:none">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+              <div class="panel">
+                <h2>语音识别 (STT) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / 秒</div>
+                <div class="stack" id="pricingSTTContainer"></div>
+              </div>
+              <div class="panel">
+                <h2>语音合成 (TTS) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / 字</div>
+                <div class="stack" id="pricingTTSContainer"></div>
+              </div>
+              <div class="panel">
+                <h2>语言模型 (LLM) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / Token</div>
+                <div class="stack" id="pricingLLMContainer"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
   <div id="adminModal" class="modal-backdrop" onclick="if(event.target===this)closeAdminModal()">
@@ -2683,6 +2945,7 @@ def _admin_html(authenticated: bool) -> str:
       bindings: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindUsers: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       bindDevices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
+      billing: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
     }};
     const headers = () => ({{'Content-Type': 'application/json'}});
     function $(id) {{ return document.getElementById(id); }}
@@ -2874,14 +3137,15 @@ def _admin_html(authenticated: bool) -> str:
       authenticated = true; boot();
     }}
     function showTab(name) {{
-      for (const id of ['devices','users','agents','paymentPlans','bindings','adapters']) $(''+id).style.display = id === name ? 'grid' : 'none';
-      for (const id of ['tabDevices','tabUsers','tabAgents','tabPaymentPlans','tabBindings','tabAdapters']) $(id).classList.remove('active');
+      for (const id of ['devices','users','agents','paymentPlans','bindings','adapters','billing']) $(''+id).style.display = id === name ? 'grid' : 'none';
+      for (const id of ['tabDevices','tabUsers','tabAgents','tabPaymentPlans','tabBindings','tabAdapters','tabBilling']) $(id).classList.remove('active');
       $('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
       if (name === 'paymentPlans' && authenticated) loadPaymentPlans();
       if (name === 'bindings' && authenticated) {{
         loadBindUsers();
         loadBindDevices();
       }}
+      if (name === 'billing' && authenticated) loadBillingCenter();
     }}
     function listUrl(name, path) {{
       const state = listState[name];
@@ -3563,6 +3827,311 @@ def _admin_html(authenticated: bool) -> str:
       const res = await fetch(`/admin/api/adapters/${{body.adapter_name}}/${{body.action}}`, {{method:'POST', headers:headers(), body:JSON.stringify(body.params || {{}})}});
       $('adapterResult').textContent = JSON.stringify(await res.json(), null, 2);
     }}
+    // -- 消费账单 (Billing Center) JS 逻辑 --
+    let billingMonthsPopulated = false;
+    let pricingDebounceTimer = null;
+
+    function populateBillingMonths() {{
+      if (billingMonthsPopulated) return;
+      const select = $('billingMonth');
+      if (!select) return;
+      select.innerHTML = '';
+
+      const d = new Date();
+      for (let i = 0; i < 6; i++) {{
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const str = `${{y}}-${{m}}`;
+        const opt = document.createElement('option');
+        opt.value = str;
+        opt.textContent = str;
+        select.appendChild(opt);
+
+        // 前推一个月
+        d.setMonth(d.getMonth() - 1);
+      }}
+      billingMonthsPopulated = true;
+    }}
+
+    async function loadBillingCenter() {{
+      populateBillingMonths();
+      await Promise.all([
+        loadBillingSummary(),
+        resetBillingList(),
+        loadPricingSettings()
+      ]);
+    }}
+
+    async function loadBillingSummary() {{
+      const month = $('billingMonth').value;
+      if (!month) return;
+      try {{
+        const res = await fetch(`/admin/api/billing/summary?month=${{encodeURIComponent(month)}}`, {{headers: headers(), credentials: 'same-origin'}});
+        const payload = await res.json();
+        if (res.ok && payload.success) {{
+          const data = payload.data;
+          $('billingTotalCost').textContent = `¥${{data.total_cost.toFixed(4)}}`;
+          $('billingAvgCost').textContent = `¥${{data.average_turn_cost.toFixed(4)}} / 轮`;
+          $('billingTotalTurns').textContent = `共计 ${{data.total_turns}} 轮`;
+
+          // 占比更新
+          const bd = data.breakdown;
+          $('barLLM').style.width = `${{bd.llm.percentage}}%`;
+          $('barSTT').style.width = `${{bd.stt.percentage}}%`;
+          $('barTTS').style.width = `${{bd.tts.percentage}}%`;
+
+          $('textLLM').textContent = `¥${{bd.llm.cost.toFixed(4)}} (${{bd.llm.percentage}}%)`;
+          $('textSTT').textContent = `¥${{bd.stt.cost.toFixed(4)}} (${{bd.stt.percentage}}%)`;
+          $('textTTS').textContent = `¥${{bd.tts.cost.toFixed(4)}} (${{bd.tts.percentage}}%)`;
+        }}
+      }} catch (err) {{
+        console.error('Failed to load billing summary:', err);
+      }}
+    }}
+
+    function switchSubtab(subname) {{
+      $('billingSubtab-records').style.display = subname === 'records' ? 'block' : 'none';
+      $('billingSubtab-pricing').style.display = subname === 'pricing' ? 'block' : 'none';
+      $('subtabRecords').className = subname === 'records' ? 'active' : '';
+      $('subtabPricing').className = subname === 'pricing' ? 'active' : '';
+    }}
+
+    function resetBillingList() {{
+      const state = listState.billing;
+      state.cursor = '';
+      state.nextCursor = '';
+      state.stack = [];
+      loadBillingList();
+    }}
+
+    async function loadBillingList() {{
+      const month = $('billingMonth').value;
+      const userId = $('billingUserFilter').value.trim();
+      const state = listState.billing;
+      if (!month) return;
+
+      const params = new URLSearchParams({{
+        month: month,
+        user_id: userId,
+        limit: String(state.limit),
+        cursor: state.cursor
+      }});
+
+      try {{
+        const res = await fetch(`/admin/api/billing/records?${{params.toString()}}`, {{headers: headers(), credentials: 'same-origin'}});
+        const payload = await res.json();
+        if (res.ok && payload.success) {{
+          const data = payload.data;
+          state.nextCursor = data.next_cursor || '';
+          renderBillingRecords(data.items || []);
+        }}
+      }} catch (err) {{
+        console.error('Failed to load billing records:', err);
+      }}
+    }}
+
+    function renderBillingRecords(items) {{
+      const list = $('billingRecordsList');
+      list.innerHTML = '';
+      if (items.length === 0) {{
+        list.innerHTML = '<div class="hint" style="padding:20px;text-align:center;">暂无消费明细</div>';
+        $('btnPrevBilling').style.display = 'none';
+        $('btnNextBilling').style.display = 'none';
+        return;
+      }}
+
+      // 表头
+      const head = document.createElement('div');
+      head.className = 'table-row';
+      head.style.gridTemplateColumns = 'minmax(120px, 0.6fr) 64px minmax(120px, 0.8fr) 100px 90px minmax(140px, 1fr) 50px';
+      head.innerHTML = `
+        <div class="field-label">用户 ID</div>
+        <div class="field-label">类型</div>
+        <div class="field-label">模型/音色</div>
+        <div class="field-label">使用量</div>
+        <div class="field-label">折算金额</div>
+        <div class="field-label">消费时间</div>
+        <div class="field-label" style="text-align:right">操作</div>
+      `;
+      list.appendChild(head);
+
+      for (const item of items) {{
+        const row = document.createElement('div');
+        row.className = 'table-row';
+        row.id = `bill-row-${{item.id}}`;
+        row.style.gridTemplateColumns = 'minmax(120px, 0.6fr) 64px minmax(120px, 0.8fr) 100px 90px minmax(140px, 1fr) 50px';
+        row.style.transition = 'all 0.3s ease';
+
+        let typeBadge = '';
+        let unit = '';
+        let amt = item.usage_amount;
+        if (item.type === 'stt') {{
+          typeBadge = '<span class="badge" style="background:rgba(0,113,227,0.1); color:#0071e3">STT</span>';
+          unit = '秒';
+          amt = amt.toFixed(1);
+        }} else if (item.type === 'tts') {{
+          typeBadge = '<span class="badge" style="background:rgba(52,199,89,0.1); color:#34c759">TTS</span>';
+          unit = '字';
+          amt = amt.toFixed(0);
+        }} else if (item.type === 'llm') {{
+          typeBadge = '<span class="badge" style="background:rgba(255,59,48,0.1); color:#ff3b30">LLM</span>';
+          unit = 'tokens';
+          amt = amt.toFixed(0);
+        }}
+
+        row.innerHTML = `
+          <div class="cell-clip" onclick="copyText('${{jsQuote(item.user_id)}}')"><strong title="${{esc(item.user_id)}}">${{truncateId(item.user_id, 8, 6)}}</strong></div>
+          <div>${{typeBadge}}</div>
+          <div style="font-size:13px;color:var(--text);font-family:var(--mono);" title="${{esc(item.model)}}">${{esc(item.model)}}</div>
+          <div style="font-size:13px;color:var(--text-secondary);font-family:var(--mono);">${{amt}} ${{unit}}</div>
+          <div style="font-size:13px;color:var(--text);font-weight:600;font-family:var(--mono);">¥${{item.cost_yuan.toFixed(4)}}</div>
+          <div style="font-size:12px;color:var(--text-secondary);">${{item.created_at}}</div>
+          <div style="text-align:right">
+            <button class="btn-destructive ghost" onclick="deleteBillingRecord('${{item.id}}', this)" style="height:24px;padding:0 6px;font-size:11px;">删除</button>
+          </div>
+        `;
+        list.appendChild(row);
+      }}
+
+      const state = listState.billing;
+      $('btnPrevBilling').style.display = state.stack.length ? 'inline-block' : 'none';
+      $('btnNextBilling').style.display = state.nextCursor ? 'inline-block' : 'none';
+    }}
+
+    function prevBillingPage() {{
+      const state = listState.billing;
+      if (!state.stack.length) return;
+      state.cursor = state.stack.pop();
+      loadBillingList();
+    }}
+
+    function nextBillingPage() {{
+      const state = listState.billing;
+      if (!state.nextCursor) return;
+      state.stack.push(state.cursor);
+      state.cursor = state.nextCursor;
+      loadBillingList();
+    }}
+
+    async function deleteBillingRecord(id, btn) {{
+      if (!confirm('确认删除此计费记录吗？这将使月度消费总额重新统计。')) return;
+      try {{
+        const res = await fetch(`/admin/api/billing/records/${{id}}`, {{method: 'DELETE', headers: headers(), credentials: 'same-origin'}});
+        if (res.ok) {{
+          const row = $(`bill-row-${{id}}`);
+          if (row) {{
+            row.style.transform = 'translateX(-100px)';
+            row.style.opacity = '0';
+            setTimeout(() => {{
+              row.remove();
+              loadBillingSummary();
+            }}, 300);
+          }}
+        }} else {{
+          alert('删除失败');
+        }}
+      }} catch (err) {{
+        alert('删除请求失败');
+      }}
+    }}
+
+    async function clearMonthlyBilling() {{
+      const month = $('billingMonth').value;
+      if (!month) return;
+      if (!confirm(`警告：确认清空 ${{month}} 的所有用户消费明细流水吗？本操作不可逆！`)) return;
+      try {{
+        const res = await fetch(`/admin/api/billing/records/months/${{encodeURIComponent(month)}}`, {{method: 'DELETE', headers: headers(), credentials: 'same-origin'}});
+        const data = await res.json();
+        if (res.ok && data.success) {{
+          alert(`清理完成，共删除 ${{data.deleted_count}} 条记录`);
+          loadBillingCenter();
+        }} else {{
+          alert('清理失败');
+        }}
+      }} catch (err) {{
+        alert('清理请求失败');
+      }}
+    }}
+
+    async function loadPricingSettings() {{
+      try {{
+        const res = await fetch('/admin/api/billing/pricing', {{headers: headers(), credentials: 'same-origin'}});
+        const payload = await res.json();
+        if (res.ok && payload.success) {{
+          const data = payload.data;
+          renderPricingSection('stt', data.stt, $('pricingSTTContainer'));
+          renderPricingSection('tts', data.tts, $('pricingTTSContainer'));
+          renderPricingSection('llm', data.llm, $('pricingLLMContainer'));
+        }}
+      }} catch (err) {{
+        console.error('Failed to load pricing settings:', err);
+      }}
+    }}
+
+    function renderPricingSection(type, items, container) {{
+      container.innerHTML = '';
+      if (!items || Object.keys(items).length === 0) {{
+        container.innerHTML = '<div class="hint">暂无配置项</div>';
+        return;
+      }}
+
+      for (const [name, price] of Object.entries(items)) {{
+        const label = document.createElement('label');
+        label.style.display = 'grid';
+        label.style.gap = '4px';
+        label.style.marginBottom = '10px';
+
+        const displayName = name === 'default' ? '默认兜底模型' : name;
+        label.innerHTML = `
+          <span class="hint" style="font-weight:600;color:var(--text);">${{esc(displayName)}}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" step="any" min="0" value="${{price}}" 
+              id="price-${{type}}-${{name}}"
+              style="font-family:var(--mono);flex:1;"
+              oninput="debounceSavePricing('${{type}}', '${{name}}', this)"
+              onblur="savePricing('${{type}}', '${{name}}', this)" />
+            <span id="saved-check-${{type}}-${{name}}" style="color:#34c759;font-weight:bold;opacity:0;transition:opacity 0.2s;">✓</span>
+          </div>
+        `;
+        container.appendChild(label);
+      }}
+    }}
+
+    function debounceSavePricing(type, key, input) {{
+      if (pricingDebounceTimer) clearTimeout(pricingDebounceTimer);
+      pricingDebounceTimer = setTimeout(() => {{
+        savePricing(type, key, input);
+      }}, 800);
+    }}
+
+    async function savePricing(type, key, input) {{
+      if (pricingDebounceTimer) clearTimeout(pricingDebounceTimer);
+      const val = parseFloat(input.value);
+      if (isNaN(val) || val < 0) return;
+
+      const payload = {{}};
+      payload[type] = {{}};
+      payload[type][key] = val;
+
+      try {{
+        const res = await fetch('/admin/api/billing/pricing', {{
+          method: 'PATCH',
+          headers: headers(),
+          body: JSON.stringify(payload),
+          credentials: 'same-origin'
+        }});
+        if (res.ok) {{
+          const check = $(`saved-check-${{type}}-${{key}}`);
+          if (check) {{
+            check.style.opacity = '1';
+            setTimeout(() => {{ check.style.opacity = '0'; }}, 1200);
+          }}
+        }}
+      }} catch (err) {{
+        console.error('Failed to save pricing setting:', err);
+      }}
+    }}
+
     boot();
   </script>
 </body>

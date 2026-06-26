@@ -493,3 +493,58 @@ class VoiceLocalRepository:
         error: str = "",
     ) -> None:
         return None
+
+    async def get_active_announcements(self) -> list[dict[str, Any]]:
+        return []
+
+    async def admin_list_announcements(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        return []
+
+    async def admin_upsert_announcement(self, **kwargs) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for announcements")
+
+    async def admin_delete_announcement(self, announcement_id: int) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for announcements")
+
+    async def create_feedback(self, *, user_id: str, content: str, contact: str = "") -> dict[str, Any]:
+        return {"id": 1, "ok": True}
+
+    async def admin_list_feedbacks(self, *, limit: int = 50, offset: int = 0, status: str | None = None) -> list[dict[str, Any]]:
+        return []
+
+    async def admin_update_feedback(self, feedback_id: int, **kwargs) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for feedbacks")
+
+    async def get_pricing_by_type(self, service_type: str) -> dict[str, float]:
+        return {}
+
+    async def insert_expenditure(self, **kwargs) -> None:
+        return None
+
+    async def get_monthly_expenditure_summary(self, month_str: str) -> dict[str, Any]:
+        return {
+            "total_cost": 0.0,
+            "breakdown": {
+                "llm": {"cost": 0.0, "percentage": 0.0},
+                "stt": {"cost": 0.0, "percentage": 0.0},
+                "tts": {"cost": 0.0, "percentage": 0.0},
+            },
+            "total_turns": 0,
+            "average_turn_cost": 0.0,
+        }
+
+    async def list_expenditures(self, **kwargs) -> dict[str, Any]:
+        return {"items": [], "next_cursor": ""}
+
+    async def delete_expenditure(self, expenditure_id: str) -> bool:
+        return False
+
+    async def delete_monthly_expenditures(self, month_str: str) -> int:
+        return 0
+
+    async def get_all_pricing(self) -> dict[str, Any]:
+        return {"stt": {}, "tts": {}, "llm": {}}
+
+    async def update_pricing(self, pricing_type: str, pricing_dict: dict[str, float]) -> None:
+        raise RuntimeError("DATABASE_URL is required for pricing updates")
+

@@ -112,6 +112,13 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - **MBTI 盲盒**：出厂 `mbti`+`sealed`；小程序 bind 揭晓→`locked`（响应 `mbti` 卡片；改 `apps/wechat-miniprogram` 源码后须 `scripts/wechat_miniprogram_dev.sh build` 重编译 `dist/*/mp-weixin`，否则微信工具仍是旧包无弹窗）；`sealed` 时 `/api/devices/my` 不返 `mbti`；首次硬件 TTS 播 `mbti_profiles.yaml` 的 `reveal_script`（`你好！绑定成功，我是 XX 型的初心。`；bind 时 WS 在线经 `voice_session_registry` 即时推，否则 hello 补播，`device_intro_played`）。Slot1 `SOUL.md` 不含 MBTI，设备气质由 Slot2 `identity` 承担；日常禁止 MBTI 类型码自我解释（用户主动问除外）。`_ensure_runtime` 须以 `agent is None` 初始化 STT/TTS/Agent（MBTI intro 可先预填 device）。小程序无解绑。详见 [`docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md`](docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md)、验收 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §9.2。
 - **设备密钥加密**：批量制码/Admin 查看明文须 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`（Fernet）并重部署；未配时 Admin 黄条 + 制码 API fail-fast。历史仅 hash 设备须重制码或 `rotate-secret`。
 
+### 语音计费与宿主测试避坑约束
+
+- **Pydantic/FastAPI Python 3.8 兼容性**：由于宿主机为 Python 3.8 环境，在 Pydantic 模型（如 `AnnouncementPayload`）以及 FastAPI 路由参数中声明类型时，**禁止使用现代 Union 类型（如 `int | None`）**。即使文件开头声明了 `from __future__ import annotations`，Pydantic 仍会在运行期评估时抛出 `TypeError`。必须使用 `typing.Optional[...]` 或 `typing.Union[...]`。
+- **WebSocket 作用域约束**：`_VoiceWebSocketSession` 为顶层类。在其方法内部（如 `_process_turn`）**禁止直接引用局部 `app` 变量**（如 `app.state.billing`），否则会因作用域隔离引发 `NameError` 并被内部 Exception 静默捕获导致计费静默中止。必须在路由初始化时通过构造函数传入 `app` 实例并保存为 `self.app`，再通过 `self.app.state` 获取相关服务。
+- **异步非阻塞计费设计**：对话 Turn 结束时的消费日志记录必须通过 `BillingService.record_usage_in_background` 异步非阻塞运行（采用 `asyncio.create_task`），任何计费数据库异常必须实现强隔离（Fault Isolation），绝不能影响或拖慢 STT -> LLM -> TTS 主语音循环的实时响应。
+- **FastAPI TestClient 属性注入机制**：在编写集成测试（如 `tests/test_billing_api.py`）时，对 `app.state.repo` 等全局属性的 Mock 替换，**必须置于 `with TestClient(app) as client:` 上下文环境内部**。若在 context 外部注入，会在进入 `with` 块时被自动触发的 `startup` 事件处理器使用真实配置覆盖，导致 Mock 失效。
+
 ### 语音 Docker 运维脚本
 
 - **Docker 内开发与 TTS 试听**（不在宿主机 pip 装包；新依赖须先批准）：[`docs/VOICE_DOCKER_WORKFLOW.md`](docs/VOICE_DOCKER_WORKFLOW.md)。

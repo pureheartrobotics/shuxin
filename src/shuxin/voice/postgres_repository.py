@@ -3255,6 +3255,409 @@ class VoicePostgresRepository:
                     category,
                 )
 
+    async def get_active_announcements(self) -> list[dict[str, Any]]:
+        """获取当前生效的公告列表。"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, title, content, type, start_time, end_time, created_at, updated_at
+                FROM announcements
+                WHERE is_active = true
+                  AND (start_time IS NULL OR start_time <= now())
+                  AND (end_time IS NULL OR end_time >= now())
+                ORDER BY created_at DESC
+                """
+            )
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "content": row["content"],
+                "type": row["type"],
+                "start_time": _dt(row["start_time"]) if row["start_time"] else "",
+                "end_time": _dt(row["end_time"]) if row["end_time"] else "",
+                "created_at": _dt(row["created_at"]),
+                "updated_at": _dt(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def admin_list_announcements(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """管理员列表查询所有公告。"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, title, content, type, is_active, start_time, end_time, created_at, updated_at
+                FROM announcements
+                ORDER BY created_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "content": row["content"],
+                "type": row["type"],
+                "is_active": row["is_active"],
+                "start_time": _dt(row["start_time"]) if row["start_time"] else "",
+                "end_time": _dt(row["end_time"]) if row["end_time"] else "",
+                "created_at": _dt(row["created_at"]),
+                "updated_at": _dt(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def admin_upsert_announcement(
+        self,
+        *,
+        announcement_id: int | None = None,
+        title: str,
+        content: str,
+        type: str,
+        is_active: bool = True,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict[str, Any]:
+        """新建或更新公告。"""
+        async with self.pool.acquire() as conn:
+            if announcement_id is not None:
+                await conn.execute(
+                    """
+                    UPDATE announcements
+                    SET title = $2, content = $3, type = $4, is_active = $5,
+                        start_time = $6, end_time = $7, updated_at = now()
+                    WHERE id = $1
+                    """,
+                    announcement_id,
+                    title,
+                    content,
+                    type,
+                    is_active,
+                    start_time,
+                    end_time,
+                )
+                res_id = announcement_id
+            else:
+                res_id = await conn.fetchval(
+                    """
+                    INSERT INTO announcements (title, content, type, is_active, start_time, end_time)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING id
+                    """,
+                    title,
+                    content,
+                    type,
+                    is_active,
+                    start_time,
+                    end_time,
+                )
+        return {"id": res_id, "ok": True}
+
+    async def admin_delete_announcement(self, announcement_id: int) -> dict[str, Any]:
+        """删除公告。"""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM announcements WHERE id = $1",
+                announcement_id,
+            )
+        return {"ok": result.endswith("1")}
+
+    async def create_feedback(self, *, user_id: str, content: str, contact: str = "") -> dict[str, Any]:
+        """创建意见反馈。"""
+        async with self.pool.acquire() as conn:
+            feedback_id = await conn.fetchval(
+                """
+                INSERT INTO feedbacks (user_id, content, contact, status)
+                VALUES ($1, $2, $3, 'pending')
+                RETURNING id
+                """,
+                user_id,
+                content,
+                contact,
+            )
+        return {"id": feedback_id, "ok": True}
+
+    async def admin_list_feedbacks(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """管理员列表查询用户反馈。"""
+        async with self.pool.acquire() as conn:
+            if status:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, user_id, content, contact, created_at, status, admin_notes
+                    FROM feedbacks
+                    WHERE status = $1
+                    ORDER BY created_at DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    status,
+                    limit,
+                    offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, user_id, content, contact, created_at, status, admin_notes
+                    FROM feedbacks
+                    ORDER BY created_at DESC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    limit,
+                    offset,
+                )
+        return [
+            {
+                "id": row["id"],
+                "user_id": row["user_id"],
+                "content": row["content"],
+                "contact": row["contact"],
+                "created_at": _dt(row["created_at"]),
+                "status": row["status"],
+                "admin_notes": row["admin_notes"],
+            }
+            for row in rows
+        ]
+
+    async def admin_update_feedback(
+        self,
+        feedback_id: int,
+        *,
+        status: str,
+        admin_notes: str,
+    ) -> dict[str, Any]:
+        """更新反馈状态和备注。"""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE feedbacks
+                SET status = $2, admin_notes = $3
+                WHERE id = $1
+                """,
+                feedback_id,
+                status,
+                admin_notes,
+            )
+        return {"ok": result.endswith("1")}
+
+    async def get_pricing_by_type(self, service_type: str) -> dict[str, float]:
+        row = await self.pool.fetchrow(
+            """
+            SELECT value
+            FROM platform_settings
+            WHERE key = $1
+            """,
+            f"pricing.{service_type}",
+        )
+        if row is None:
+            return {}
+        payload = _json_obj(row["value"])
+        return {str(k): float(v) for k, v in payload.items()}
+
+    async def insert_expenditure(
+        self,
+        *,
+        user_id: str,
+        service_type: str,
+        model_name: str,
+        usage_amount: float,
+        cost_yuan: float,
+    ) -> None:
+        import uuid
+        await self.pool.execute(
+            """
+            INSERT INTO user_expenditures (
+                expenditure_id, user_id, type, model, usage_amount, cost_yuan, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, now())
+            """,
+            uuid.uuid4().hex,
+            user_id,
+            service_type,
+            model_name,
+            usage_amount,
+            cost_yuan,
+        )
+
+    async def get_monthly_expenditure_summary(self, month_str: str) -> dict[str, Any]:
+        rows = await self.pool.fetch(
+            """
+            SELECT type, COALESCE(SUM(cost_yuan), 0) as cost
+            FROM user_expenditures
+            WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+            GROUP BY type
+            """,
+            month_str,
+        )
+        
+        turns_row = await self.pool.fetchrow(
+            """
+            SELECT COUNT(DISTINCT turn_id) as turns
+            FROM conversation_events
+            WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+              AND deleted_at IS NULL
+            """,
+            month_str,
+        )
+        total_turns = int(turns_row["turns"] or 0) if turns_row else 0
+
+        breakdown = {
+            "llm": {"cost": 0.0, "percentage": 0.0},
+            "stt": {"cost": 0.0, "percentage": 0.0},
+            "tts": {"cost": 0.0, "percentage": 0.0},
+        }
+        total_cost = 0.0
+        for row in rows:
+            t = str(row["type"])
+            cost = float(row["cost"] or 0.0)
+            if t in breakdown:
+                breakdown[t]["cost"] = cost
+            total_cost += cost
+
+        if total_cost > 0:
+            for t in breakdown:
+                breakdown[t]["percentage"] = round((breakdown[t]["cost"] / total_cost) * 100, 2)
+
+        average_turn_cost = round(total_cost / total_turns, 4) if total_turns > 0 else 0.0
+
+        return {
+            "total_cost": round(total_cost, 4),
+            "breakdown": breakdown,
+            "total_turns": total_turns,
+            "average_turn_cost": average_turn_cost,
+        }
+
+    async def list_expenditures(
+        self,
+        *,
+        month_str: str,
+        user_id: str = "",
+        limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        offset = 0
+        if cursor:
+            try:
+                offset = int(cursor)
+            except ValueError:
+                pass
+
+        query_limit = max(1, min(limit, 100))
+        
+        if user_id:
+            rows = await self.pool.fetch(
+                """
+                SELECT expenditure_id, user_id, type, model, usage_amount, cost_yuan, created_at
+                FROM user_expenditures
+                WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+                  AND user_id = $2
+                ORDER BY created_at DESC, expenditure_id DESC
+                LIMIT $3 OFFSET $4
+                """,
+                month_str,
+                user_id,
+                query_limit,
+                offset,
+            )
+        else:
+            rows = await self.pool.fetch(
+                """
+                SELECT expenditure_id, user_id, type, model, usage_amount, cost_yuan, created_at
+                FROM user_expenditures
+                WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+                ORDER BY created_at DESC, expenditure_id DESC
+                LIMIT $2 OFFSET $3
+                """,
+                month_str,
+                query_limit,
+                offset,
+            )
+
+        items = []
+        for row in rows:
+            items.append({
+                "id": str(row["expenditure_id"]),
+                "user_id": str(row["user_id"]),
+                "type": str(row["type"]),
+                "model": str(row["model"]),
+                "usage_amount": float(row["usage_amount"]),
+                "cost_yuan": float(row["cost_yuan"]),
+                "created_at": _dt(row["created_at"]),
+            })
+
+        next_cursor = ""
+        if len(items) == query_limit:
+            next_cursor = str(offset + query_limit)
+
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+        }
+
+    async def delete_expenditure(self, expenditure_id: str) -> bool:
+        result = await self.pool.execute(
+            """
+            DELETE FROM user_expenditures
+            WHERE expenditure_id = $1
+            """,
+            expenditure_id,
+        )
+        return result.endswith("1")
+
+    async def delete_monthly_expenditures(self, month_str: str) -> int:
+        result = await self.pool.execute(
+            """
+            DELETE FROM user_expenditures
+            WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
+            """,
+            month_str,
+        )
+        try:
+            return int(result.split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    async def get_all_pricing(self) -> dict[str, Any]:
+        rows = await self.pool.fetch(
+            """
+            SELECT key, value
+            FROM platform_settings
+            WHERE key IN ('pricing.stt', 'pricing.tts', 'pricing.llm')
+            """
+        )
+        result = {"stt": {}, "tts": {}, "llm": {}}
+        for row in rows:
+            k = str(row["key"])
+            val = _json_obj(row["value"])
+            t = k.split(".")[-1]
+            if t in result:
+                result[t] = {str(name): float(price) for name, price in val.items()}
+        return result
+
+    async def update_pricing(self, pricing_type: str, pricing_dict: dict[str, float]) -> None:
+        if pricing_type not in ("stt", "tts", "llm"):
+            raise ValueError(f"Invalid pricing type: {pricing_type}")
+        
+        cleaned = {str(k): float(v) for k, v in pricing_dict.items()}
+        await self.pool.execute(
+            """
+            INSERT INTO platform_settings (key, value, updated_at)
+            VALUES ($1, $2::jsonb, now())
+            ON CONFLICT (key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = now()
+            """,
+            f"pricing.{pricing_type}",
+            json.dumps(cleaned, ensure_ascii=False),
+        )
+
 
 def _load_users(path: str | None) -> list[dict[str, Any]]:
     data = _load_yaml(path)
