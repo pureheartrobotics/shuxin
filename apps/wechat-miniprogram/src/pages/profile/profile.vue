@@ -29,6 +29,13 @@
         </view>
         <button class="mini" :disabled="loading" @tap="loadProfile">刷新</button>
       </view>
+      <view class="row">
+        <view>
+          <view class="label">意见反馈</view>
+          <view class="value" style="font-weight: normal; font-size: 26rpx; color: #82786d; margin-top: 6rpx;">提交您在使用中遇到的问题</view>
+        </view>
+        <button class="mini" @tap="navigateToFeedback">前往</button>
+      </view>
       <button v-if="factoryQa" class="factory" @tap="openFactoryVerify">工厂验收</button>
       <button class="danger" @tap="logout">退出登录</button>
       <view v-if="message" class="message">{{ message }}</view>
@@ -170,6 +177,10 @@ async function loadProfile() {
   } finally {
     loading.value = false;
   }
+}
+
+function navigateToFeedback() {
+  uni.navigateTo({ url: "/pages/profile/feedback" });
 }
 
 async function openPaymentSheet() {

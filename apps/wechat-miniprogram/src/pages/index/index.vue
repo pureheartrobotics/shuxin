@@ -1,5 +1,14 @@
 <template>
   <view class="page">
+    <!-- 顶部公告 Banner -->
+    <view v-if="activeBanner" class="announcement-banner">
+      <view class="banner-content">
+        <text class="banner-tag">公告</text>
+        <text class="banner-title">{{ activeBanner.title }}: {{ activeBanner.content }}</text>
+      </view>
+      <view class="banner-close" @tap="closeBanner">✕</view>
+    </view>
+
     <view class="hero">
       <view class="eyebrow">CHUXIN DEVICE</view>
       <view class="title">绑定你的初心设备</view>
@@ -42,6 +51,22 @@
       :is-first-reveal="revealIsFirst"
       @confirm="closeRevealModal"
     />
+
+    <!-- 紧急公告弹窗 -->
+    <view v-if="activePopup" class="announcement-popup-mask">
+      <view class="announcement-popup">
+        <view class="popup-header">
+          <text class="popup-tag">重要通知</text>
+          <text class="popup-title">{{ activePopup.title }}</text>
+        </view>
+        <scroll-view scroll-y class="popup-body">
+          <text class="popup-content">{{ activePopup.content }}</text>
+        </scroll-view>
+        <view class="popup-actions">
+          <button class="primary" @tap="closePopup">我知道了</button>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -49,6 +74,9 @@
 import { onLoad } from "@dcloudio/uni-app";
 import { ref } from "vue";
 import MbtiRevealModal from "../../components/MbtiRevealModal.vue";
+
+const activeBanner = ref<any>(null);
+const activePopup = ref<any>(null);
 
 const apiBase = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
 const bindCode = ref("");
@@ -67,6 +95,7 @@ const revealIsFirst = ref(true);
 onLoad((query: Record<string, string | undefined>) => {
   ensureLoggedIn();
   applyScannedCode(query?.device_code || query?.claim_code || "", query?.claim_code ? "claim_code" : "device_code");
+  fetchAnnouncements();
 });
 
 function ensureLoggedIn() {
@@ -84,6 +113,37 @@ function sessionToken(): string {
   if (!token) return "";
   if (expiresAt && Date.parse(expiresAt) <= Date.now()) return "";
   return token;
+}
+
+async function fetchAnnouncements() {
+  try {
+    const res = await requestGet("/api/announcements");
+    const items = res.items || [];
+    
+    // 找出未关闭的第一个 Banner 公告
+    const banner = items.find((x: any) => x.type === "banner" && !uni.getStorageSync("closed_announcement_" + x.id));
+    activeBanner.value = banner || null;
+
+    // 找出未读的第一个 Popup 公告
+    const popup = items.find((x: any) => x.type === "popup" && !uni.getStorageSync("shown_popup_" + x.id));
+    activePopup.value = popup || null;
+  } catch (error) {
+    console.error("获取公告失败:", error);
+  }
+}
+
+function closeBanner() {
+  if (activeBanner.value) {
+    uni.setStorageSync("closed_announcement_" + activeBanner.value.id, true);
+    activeBanner.value = null;
+  }
+}
+
+function closePopup() {
+  if (activePopup.value) {
+    uni.setStorageSync("shown_popup_" + activePopup.value.id, true);
+    activePopup.value = null;
+  }
 }
 
 function request(path: string, data: Record<string, unknown>): Promise<any> {
@@ -515,5 +575,118 @@ button {
   color: #82786d;
   font-size: 24rpx;
   margin-top: 8rpx;
+}
+
+/* 公告样式 */
+.announcement-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff3cd;
+  color: #856404;
+  padding: 18rpx 24rpx;
+  margin-bottom: 20rpx;
+  border-radius: 18rpx;
+  border: 1px solid #ffeeba;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  overflow: hidden;
+}
+
+.banner-tag {
+  font-size: 20rpx;
+  font-weight: bold;
+  background: #856404;
+  color: #fff;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  margin-right: 12rpx;
+  flex-shrink: 0;
+}
+
+.banner-title {
+  font-size: 24rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #856404;
+}
+
+.banner-close {
+  padding: 10rpx;
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #856404;
+  margin-left: 10rpx;
+}
+
+/* 弹窗公告样式 */
+.announcement-popup-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.announcement-popup {
+  width: 80%;
+  max-width: 600rpx;
+  background: #ffffff;
+  border-radius: 28rpx;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.popup-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.popup-tag {
+  font-size: 22rpx;
+  font-weight: bold;
+  background: #e33e33;
+  color: #fff;
+  padding: 4rpx 16rpx;
+  border-radius: 8rpx;
+  margin-bottom: 12rpx;
+}
+
+.popup-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #25211c;
+  text-align: center;
+}
+
+.popup-body {
+  max-height: 400rpx;
+  margin-bottom: 32rpx;
+}
+
+.popup-content {
+  font-size: 28rpx;
+  color: #5a544e;
+  line-height: 1.6;
+}
+
+.popup-actions {
+  display: flex;
 }
 </style>
