@@ -43,8 +43,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      cache_from:
-        - shuxin-voice-demo:latest
     image: shuxin-voice-demo:latest
     container_name: shuxin-voice-demo-pg
     depends_on:
