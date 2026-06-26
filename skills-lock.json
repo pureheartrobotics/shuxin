@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "wechatpay-payment-integration": {
+      "source": "wechatpay-apiv3/wechatpay-skills",
+      "sourceType": "github",
+      "skillPath": "wechatpay-payment-integration/SKILL.md",
+      "computedHash": "a79a8a243c120fd73279d077ae94849a6cdc6629a5842eee93693933140f7b94"
+    },
+    "wechatpay-product-coupon": {
+      "source": "wechatpay-apiv3/wechatpay-skills",
+      "sourceType": "github",
+      "skillPath": "wechatpay-product-coupon/SKILL.md",
+      "computedHash": "689e6ae2d9421d5471b22e24bb76ecf9e50596a241fb31a3f4990fe5a135f49d"
+    }
+  }
+}
