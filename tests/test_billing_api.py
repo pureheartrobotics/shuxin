@@ -150,3 +150,24 @@ def test_billing_pricing_routes(monkeypatch) -> None:
         assert response.status_code == 200
         assert response.json()["success"] is True
         fake_repo.update_pricing.assert_called_once_with("stt", {"tencent-realtime": 0.00025})
+
+
+def test_device_bind_quota_exhausted() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        fake_repo = FakeRepo()
+        fake_repo.get_user_quota_by_session = AsyncMock(return_value={"exhausted": True})
+        app.state.repo = fake_repo
+        
+        response = client.post(
+            "/api/devices/bind",
+            json={
+                "session_token": "test_sess",
+                "claim_code": "code123",
+                "device_code": "dev123"
+            }
+        )
+        assert response.status_code == 403
+        data = response.json()
+        assert data["error_kind"] == "quota_exhausted"
+        assert "额度已用尽" in data["error"]

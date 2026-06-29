@@ -86,6 +86,27 @@ class VoiceLocalRepository:
     async def assert_user_quota_available(self, user_id: str) -> None:
         return None
 
+    async def get_device_quota(self, device_id: str, *, admin_detail: bool = False) -> dict[str, Any]:
+        return {
+            "device_id": device_id,
+            "configured": False,
+            "exhausted": False,
+            "remain_yuan": 999.0,
+            "total_minutes_left": 999.0,
+            "subscription_minutes_left": 999.0,
+            "fuel_minutes_left": 0.0,
+            "daily_allowance_left": 0.0,
+            "subscription_expires_at": None,
+            "unlimited_quota": True,
+            "message": "",
+        }
+
+    async def deduct_device_minutes_quota(self, device_id: str, cost_minutes: float) -> None:
+        return None
+
+    async def assert_device_quota_available(self, device_id: str) -> None:
+        return None
+
     async def top_up_user_dmx_quota(
         self,
         user_id: str,

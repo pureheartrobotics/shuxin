@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("shuxin.voice.billing")
 
@@ -105,6 +105,7 @@ class BillingService:
         self,
         user_id: str,
         *,
+        device_id: Optional[str] = None,
         stt_seconds: float = 0.0,
         stt_model: str = "",
         llm_tokens: int = 0,
@@ -115,7 +116,25 @@ class BillingService:
         """非阻塞异步后台记账入口"""
         async def _run() -> None:
             try:
-                # 记录 STT 消费
+                # 1. 记录分钟数额度扣减
+                cost_minutes = (stt_seconds + tts_chars * 0.25) / 60.0
+                if cost_minutes > 0:
+                    try:
+                        target_device_id = device_id
+                        if not target_device_id and hasattr(self.repo, "get_user_quota_by_user_id"):
+                            quota = await self.repo.get_user_quota_by_user_id(user_id)
+                            target_device_id = quota.get("device_id")
+
+                        if target_device_id and hasattr(self.repo, "deduct_device_minutes_quota"):
+                            await self.repo.deduct_device_minutes_quota(target_device_id, cost_minutes)
+                            logger.debug("Deducted device minutes quota: device=%s, cost_minutes=%s", target_device_id, cost_minutes)
+                        elif hasattr(self.repo, "deduct_user_minutes_quota"):
+                            await self.repo.deduct_user_minutes_quota(user_id, cost_minutes)
+                            logger.debug("Deducted user minutes quota: user=%s, cost_minutes=%s", user_id, cost_minutes)
+                    except Exception as quota_exc:
+                        logger.error("Failed to deduct minutes quota for user %s/device %s: %s", user_id, device_id, quota_exc)
+
+                # 2. 记录 STT 消费
                 if stt_seconds > 0:
                     await self.calculate_and_record(
                         user_id=user_id,
@@ -124,7 +143,7 @@ class BillingService:
                         usage_amount=stt_seconds
                     )
 
-                # 记录 LLM 消费
+                # 3. 记录 LLM 消费
                 if llm_tokens > 0:
                     await self.calculate_and_record(
                         user_id=user_id,
@@ -133,7 +152,7 @@ class BillingService:
                         usage_amount=llm_tokens
                     )
 
-                # 记录 TTS 消费
+                # 4. 记录 TTS 消费
                 if tts_chars > 0:
                     await self.calculate_and_record(
                         user_id=user_id,
@@ -151,7 +170,7 @@ class BillingService:
 
         # 创建后台异步任务，对核心会话流程完全非阻塞
         asyncio.create_task(_run())
-        logger.debug("Spawned background expenditure task for user %s", user_id)
+        logger.debug("Spawned background expenditure task for user %s, device %s", user_id, device_id)
 
     def invalidate_cache(self, service_type: str = "") -> None:
         """清除缓存（当管理员修改价格配置后应调用此方法刷新配置）"""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -13,7 +14,7 @@ logger = logging.getLogger("shuxin.voice.dmx")
 QUOTA_UNITS_PER_YUAN = 500_000
 DEFAULT_QUOTA_YUAN = 10.0
 MAX_TOP_UP_YUAN = 1000.0
-QUOTA_EXHAUSTED_MESSAGE = "额度已用尽，请联系客服"
+QUOTA_EXHAUSTED_MESSAGE = "额度已用尽，请充值"
 
 
 def voice_test_mode_enabled() -> bool:
@@ -326,7 +327,10 @@ async def top_up_token_by_name(*, name: str, add_yuan: float) -> dict[str, Any]:
         return await _top_up_token_record(client, current, add_yuan=add_yuan, label=name)
 
 
-async def get_token_balance(api_key: str) -> dict[str, Any]:
+_balance_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+CACHE_TTL = 300.0  # 5 minutes cache
+
+async def get_token_balance(api_key: str, timeout: float = 3.0) -> dict[str, Any]:
     selected = _normalize_api_key(api_key)
     if not selected:
         return {
@@ -336,6 +340,14 @@ async def get_token_balance(api_key: str) -> dict[str, Any]:
             "exhausted": False,
             "configured": False,
         }
+
+    # Check cache
+    now = time.time()
+    if selected in _balance_cache:
+        cached_time, cached_val = _balance_cache[selected]
+        if now - cached_time < CACHE_TTL:
+            return cached_val
+
     if not os.environ.get("DMX_API_USER_ID", "").strip():
         return {
             "remain_yuan": None,
@@ -349,10 +361,12 @@ async def get_token_balance(api_key: str) -> dict[str, Any]:
         "Accept": "application/json",
         "Rix-Api-User": os.environ["DMX_API_USER_ID"].strip(),
     }
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(
             f"{_dmx_api_root()}/api/token/key/{selected}",
             headers=headers,
         )
         response.raise_for_status()
-        return parse_balance_payload(response.json())
+        res = parse_balance_payload(response.json())
+        _balance_cache[selected] = (time.time(), res)
+        return res

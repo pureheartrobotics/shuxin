@@ -52,6 +52,7 @@
     "FOUND_NEW_ASSETS": "发现新资源 2",
     "HELLO_MY_FRIEND": "你好，我的朋友！",
     "FACTORY_VERIFY_SUCCESS": "验证成功",
-    "FACTORY_VERIFY_FAILED": "验证失败"
+    "FACTORY_VERIFY_FAILED": "验证失败",
+    "QUOTA_EXHAUSTED": "额度已用尽，请充值"
   }
 }

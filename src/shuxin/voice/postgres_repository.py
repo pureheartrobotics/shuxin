@@ -228,6 +228,49 @@ class VoicePostgresRepository:
 
         return load_payment_plans()
 
+    async def list_miniapp_payment_plans(self) -> list[dict[str, Any]]:
+        """获取所有已启用的订阅套餐和充值加油包，格式化后供小程序直接加载展示。"""
+        async with self.pool.acquire() as conn:
+            sub_rows = await conn.fetch(
+                """
+                SELECT plan_id, name, amount_fen, duration_minutes, description
+                FROM miniapp_subscription_plans
+                WHERE enabled = true
+                ORDER BY sort_order ASC, plan_id ASC
+                """
+            )
+            fuel_rows = await conn.fetch(
+                """
+                SELECT package_id, name, amount_fen, duration_minutes, description
+                FROM miniapp_fuel_packages
+                WHERE enabled = true
+                ORDER BY sort_order ASC, package_id ASC
+                """
+            )
+        
+        items = []
+        for r in sub_rows:
+            items.append({
+                "id": r["plan_id"],
+                "name": r["name"],
+                "description": r["description"] or f"{r['duration_minutes']}分钟/月",
+                "amount_fen": r["amount_fen"],
+                "amount_yuan": round(r["amount_fen"] / 100, 2),
+                "type": "subscription",
+                "duration_minutes": r["duration_minutes"],
+            })
+        for r in fuel_rows:
+            items.append({
+                "id": r["package_id"],
+                "name": r["name"],
+                "description": r["description"] or f"{r['duration_minutes']}分钟",
+                "amount_fen": r["amount_fen"],
+                "amount_yuan": round(r["amount_fen"] / 100, 2),
+                "type": "fuel_pack",
+                "duration_minutes": r["duration_minutes"],
+            })
+        return items
+
     async def get_payment_plan(self, plan_id: str) -> PaymentPlan:
         selected = str(plan_id or "").strip()
         row = await self.pool.fetchrow(
@@ -348,103 +391,142 @@ class VoicePostgresRepository:
         await self._persist_display_balance(conn, user_id, metadata, updated)
         return updated
 
-    async def get_user_quota_by_user_id(
-        self, user_id: str, *, admin_detail: bool = False
+    async def get_device_quota(
+        self, device_id: str, *, admin_detail: bool = False
     ) -> dict[str, Any]:
-        selected_id = validate_user_id(user_id)
         row = await self.pool.fetchrow(
             """
-            SELECT llm_config, metadata
-            FROM users
-            WHERE user_id = $1 AND enabled = true AND deleted_at IS NULL
+            SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+                   subscription_expires_at, fuel_minutes_balance, last_reset_month,
+                   daily_allowance_date, daily_allowance_seconds_used
+            FROM devices
+            WHERE device_id = $1
             """,
-            selected_id,
+            device_id,
         )
         if row is None:
             return {
-                "user_id": selected_id,
+                "device_id": device_id,
                 "configured": False,
-                "exhausted": False,
-                "remain_yuan": None,
-                "used_yuan": None,
-                "message": "",
-            }
-        metadata = _json_obj(row["metadata"])
-        stored_display = await self._get_display_balance(metadata)
-        api_key = str(_json_obj(row["llm_config"]).get("api_key") or "").strip()
-        if not api_key:
-            return {
-                "user_id": selected_id,
-                "configured": False,
-                "exhausted": False,
-                "remain_yuan": None,
-                "used_yuan": None,
-                "message": "",
-            }
-        dmx_remain_yuan: float | None = None
-        used_yuan = None
-        dmx_exhausted = False
-        try:
-            balance = await get_token_balance(api_key)
-            dmx_remain_yuan = balance.get("remain_yuan")
-            used_yuan = balance.get("used_yuan")
-            dmx_exhausted = bool(balance.get("exhausted"))
-        except Exception as exc:
-            logger.warning("DMX balance query failed for %s: %s", selected_id, exc)
-            balance = {
-                "configured": True,
-                "exhausted": False,
-                "remain_yuan": None,
-                "used_yuan": None,
+                "exhausted": True,
+                "remain_yuan": 0.0,
+                "total_minutes_left": 0.0,
+                "subscription_minutes_left": 0.0,
+                "fuel_minutes_left": 0.0,
+                "daily_allowance_left": 0.0,
+                "subscription_expires_at": None,
                 "unlimited_quota": False,
-            }
-            if stored_display <= 0:
-                return {
-                    "user_id": selected_id,
-                    **balance,
-                    "remain_yuan": stored_display,
-                    "message": "",
-                }
-            return {
-                "user_id": selected_id,
-                **balance,
-                "remain_yuan": stored_display,
-                "message": "",
+                "message": QUOTA_EXHAUSTED_MESSAGE,
             }
 
-        credit_ratio = await self.get_credit_ratio()
-        effective_display = stored_display
-        if (
-            stored_display <= 0
-            and dmx_remain_yuan is not None
-            and float(dmx_remain_yuan) > 0
-        ):
-            stored_display = round(float(dmx_remain_yuan), 4)
-            await self._persist_display_balance(
-                self.pool,
-                selected_id,
-                metadata,
-                stored_display,
-            )
-            effective_display = stored_display
-        elif dmx_remain_yuan is not None and credit_ratio > 0:
-            max_display = round(float(dmx_remain_yuan) / credit_ratio, 4)
-            effective_display = min(stored_display, max_display)
-            if effective_display < stored_display:
-                await self._persist_display_balance(
-                    self.pool,
-                    selected_id,
-                    metadata,
-                    effective_display,
+        # 1. 跨月惰性重置
+        subscription_minutes_limit = float(row["subscription_minutes_limit"] or 0)
+        subscription_minutes_used = float(row["subscription_minutes_used"] or 0.0)
+        subscription_expires_at = row["subscription_expires_at"]
+        fuel_minutes_balance = float(row["fuel_minutes_balance"] or 0.0)
+        last_reset_month = str(row["last_reset_month"] or "").strip()
+        daily_allowance_date = row["daily_allowance_date"]
+        daily_allowance_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
+
+        from datetime import datetime, timezone
+        now_dt = datetime.now(timezone.utc)
+        current_month_str = now_dt.strftime("%Y-%m")
+
+        if last_reset_month != current_month_str:
+            subscription_minutes_used = 0.0
+            fuel_minutes_balance = 0.0
+            last_reset_month = current_month_str
+            # 执行更新
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE devices
+                    SET subscription_minutes_used = 0.0000,
+                        fuel_minutes_balance = 0.0000,
+                        last_reset_month = $2,
+                        updated_at = now()
+                    WHERE device_id = $1
+                    """,
+                    device_id,
+                    current_month_str,
                 )
+
+        # 2. 计算订阅剩余分钟数
+        is_sub_valid = (subscription_expires_at is not None and subscription_expires_at > now_dt)
+        sub_remaining = max(0.0, subscription_minutes_limit - subscription_minutes_used) if is_sub_valid else 0.0
+
+        # 3. 计算加油包剩余分钟数
+        fuel_remaining = fuel_minutes_balance
+
+        # 4. 计算今日低保剩余分钟数
+        allowance_row = await self.pool.fetchrow(
+            "SELECT daily_free_minutes, enabled FROM miniapp_allowance_settings WHERE id = 1"
+        )
+        daily_free_minutes = 1.5
+        allowance_enabled = True
+        if allowance_row is not None:
+            daily_free_minutes = float(allowance_row["daily_free_minutes"])
+            allowance_enabled = bool(allowance_row["enabled"])
+
+        allowance_remaining = 0.0
+        if allowance_enabled:
+            today = now_dt.date()
+            if daily_allowance_date != today:
+                allowance_remaining = daily_free_minutes
+            else:
+                allowance_limit_seconds = daily_free_minutes * 60.0
+                rem_seconds = max(0.0, allowance_limit_seconds - daily_allowance_seconds_used)
+                allowance_remaining = rem_seconds / 60.0
+
+        # 5. 总剩余分钟数
+        total_minutes_left = sub_remaining + fuel_remaining + allowance_remaining
+
+        # 6. 向后兼容：把总分钟数映射为 remain_yuan 返回，支持旧小程序正常显示数值
+        effective_display = round(total_minutes_left, 2)
         display_exhausted = effective_display <= 0
+
+        # 7. 获取绑定用户，同时拉取底层 DMX 状态（如果配置了）
+        bound_row = await self.pool.fetchrow(
+            """
+            SELECT user_id FROM device_bindings
+            WHERE device_id = $1 AND status = 'active'
+            ORDER BY bound_at DESC LIMIT 1
+            """,
+            device_id
+        )
+        user_id = bound_row["user_id"] if bound_row else None
+        
+        api_key = ""
+        credit_ratio = 1.0
+        dmx_exhausted = False
+        dmx_remain_yuan = None
+        used_yuan = None
+        if user_id:
+            user_row = await self.pool.fetchrow("SELECT llm_config FROM users WHERE user_id = $1 AND enabled = true", user_id)
+            if user_row:
+                api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
+                if api_key:
+                    try:
+                        balance = await get_token_balance(api_key)
+                        dmx_remain_yuan = balance.get("remain_yuan")
+                        used_yuan = balance.get("used_yuan")
+                        dmx_exhausted = bool(balance.get("exhausted"))
+                        credit_ratio = await self.get_credit_ratio()
+                    except Exception as exc:
+                        logger.warning("DMX balance query failed during quota check for device %s: %s", device_id, exc)
+
         exhausted = display_exhausted or dmx_exhausted
+
         result = {
-            "user_id": selected_id,
+            "device_id": device_id,
             "configured": True,
             "exhausted": exhausted,
-            "remain_yuan": effective_display,
-            "used_yuan": used_yuan,
+            "remain_yuan": effective_display, # 返回剩余分钟数
+            "total_minutes_left": effective_display,
+            "subscription_minutes_left": round(sub_remaining, 2),
+            "fuel_minutes_left": round(fuel_remaining, 2),
+            "daily_allowance_left": round(allowance_remaining, 2),
+            "subscription_expires_at": _dt(subscription_expires_at) if subscription_expires_at else None,
             "unlimited_quota": False,
             "message": QUOTA_EXHAUSTED_MESSAGE if exhausted else "",
         }
@@ -453,6 +535,48 @@ class VoicePostgresRepository:
             result["dmx_remain_yuan"] = dmx_remain_yuan
             result["credit_ratio"] = credit_ratio
         return result
+
+    async def get_user_quota_by_user_id(
+        self, user_id: str, *, admin_detail: bool = False
+    ) -> dict[str, Any]:
+        selected_id = validate_user_id(user_id)
+        # Find the latest active bound device for this user
+        row = await self.pool.fetchrow(
+            """
+            SELECT d.device_id
+            FROM devices d
+            JOIN device_bindings b ON b.device_id = d.device_id AND b.status = 'active'
+            WHERE b.user_id = $1
+            ORDER BY b.bound_at DESC
+            LIMIT 1
+            """,
+            selected_id,
+        )
+        if row is not None:
+            return await self.get_device_quota(row["device_id"], admin_detail=admin_detail)
+        
+        # Fallback: if no active bound device, return default exhausted quota
+        return {
+            "user_id": selected_id,
+            "configured": False,
+            "exhausted": True,
+            "remain_yuan": 0.0,
+            "total_minutes_left": 0.0,
+            "subscription_minutes_left": 0.0,
+            "fuel_minutes_left": 0.0,
+            "daily_allowance_left": 0.0,
+            "subscription_expires_at": None,
+            "unlimited_quota": False,
+            "message": QUOTA_EXHAUSTED_MESSAGE,
+        }
+
+    async def assert_device_quota_available(self, device_id: str) -> None:
+        quota = await self.get_device_quota(device_id)
+        if quota.get("exhausted"):
+            raise PermissionError(QUOTA_EXHAUSTED_MESSAGE)
+        remain = quota.get("remain_yuan")
+        if remain is not None and float(remain) <= 0:
+            raise PermissionError(QUOTA_EXHAUSTED_MESSAGE)
 
     async def get_user_quota_by_session(self, session_token: str) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
@@ -573,12 +697,114 @@ class VoicePostgresRepository:
         *,
         session_token: str,
         plan_id: str,
+        device_id: str | None = None,
     ) -> dict[str, Any]:
+        # Try finding in miniapp subscription plans
+        async with self.pool.acquire() as conn:
+            plan_row = await conn.fetchrow(
+                "SELECT name, amount_fen, duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1",
+                plan_id
+            )
+            is_miniapp_plan = False
+            if plan_row:
+                is_miniapp_plan = True
+                plan_name = plan_row["name"]
+                amount_fen = plan_row["amount_fen"]
+                duration_days = 30
+            else:
+                # Try finding in miniapp fuel packages
+                plan_row = await conn.fetchrow(
+                    "SELECT name, amount_fen, duration_minutes FROM miniapp_fuel_packages WHERE package_id = $1",
+                    plan_id
+                )
+                if plan_row:
+                    is_miniapp_plan = True
+                    plan_name = plan_row["name"]
+                    amount_fen = plan_row["amount_fen"]
+                    duration_days = 0
+
+        if is_miniapp_plan:
+            pay_yuan = float(amount_fen) / 100.0
+            display_credit = 0.0
+            dmx_credit = 0.0
+            credit_ratio = 1.0
+            async with self.pool.acquire() as conn:
+                user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+                target_device_id = device_id
+                if not target_device_id:
+                    dev_row = await conn.fetchrow(
+                        """
+                        SELECT device_id FROM device_bindings
+                        WHERE user_id = $1 AND status = 'active'
+                        ORDER BY bound_at DESC LIMIT 1
+                        """,
+                        user_id
+                    )
+                    if dev_row:
+                        target_device_id = dev_row["device_id"]
+
+                order_id = uuid.uuid4().hex
+                out_trade_no = f"sx{uuid.uuid4().hex[:28]}"
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO payment_orders (
+                        order_id, user_id, out_trade_no, plan_id, plan_name,
+                        amount_fen, add_yuan, duration_days, status,
+                        pay_yuan, display_credited, dmx_credited, credit_ratio,
+                        device_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10, $11, $12, $13)
+                    RETURNING order_id, out_trade_no, plan_id, plan_name, amount_fen, add_yuan,
+                              duration_days, status, created_at, pay_yuan, display_credited,
+                              dmx_credited, credit_ratio, device_id
+                    """,
+                    order_id,
+                    user_id,
+                    out_trade_no,
+                    plan_id,
+                    plan_name,
+                    amount_fen,
+                    0.0,
+                    duration_days,
+                    pay_yuan,
+                    0.0,
+                    0.0,
+                    credit_ratio,
+                    target_device_id,
+                )
+            return {
+                "order_id": str(row["order_id"]),
+                "user_id": user_id,
+                "device_id": target_device_id,
+                "out_trade_no": str(row["out_trade_no"]),
+                "plan": {
+                    "id": plan_id,
+                    "name": plan_name,
+                    "amount_fen": amount_fen,
+                    "amount_yuan": pay_yuan,
+                },
+                "status": str(row["status"]),
+                "created_at": _dt(row["created_at"]),
+            }
+
         plan = await self.get_payment_plan(plan_id)
         credit_ratio = await self.get_credit_ratio()
         pay_yuan, display_credit, dmx_credit = compute_payment_credits(plan.amount_fen, credit_ratio)
         async with self.pool.acquire() as conn:
             user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
+            target_device_id = device_id
+            if not target_device_id:
+                dev_row = await conn.fetchrow(
+                    """
+                    SELECT device_id FROM device_bindings
+                    WHERE user_id = $1 AND status = 'active'
+                    ORDER BY bound_at DESC LIMIT 1
+                    """,
+                    user_id
+                )
+                if dev_row:
+                    target_device_id = dev_row["device_id"]
+
             order_id = uuid.uuid4().hex
             out_trade_no = f"sx{uuid.uuid4().hex[:28]}"
             row = await conn.fetchrow(
@@ -586,12 +812,13 @@ class VoicePostgresRepository:
                 INSERT INTO payment_orders (
                     order_id, user_id, out_trade_no, plan_id, plan_name,
                     amount_fen, add_yuan, duration_days, status,
-                    pay_yuan, display_credited, dmx_credited, credit_ratio
+                    pay_yuan, display_credited, dmx_credited, credit_ratio,
+                    device_id
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'pending', $8, $9, $10, $11)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'pending', $8, $9, $10, $11, $12)
                 RETURNING order_id, out_trade_no, plan_id, plan_name, amount_fen, add_yuan,
                           duration_days, status, created_at, pay_yuan, display_credited,
-                          dmx_credited, credit_ratio
+                          dmx_credited, credit_ratio, device_id
                 """,
                 order_id,
                 user_id,
@@ -604,10 +831,12 @@ class VoicePostgresRepository:
                 display_credit,
                 dmx_credit,
                 credit_ratio,
+                target_device_id,
             )
         return {
             "order_id": str(row["order_id"]),
             "user_id": user_id,
+            "device_id": target_device_id,
             "out_trade_no": str(row["out_trade_no"]),
             "plan": plan.to_public_dict(),
             "status": str(row["status"]),
@@ -667,7 +896,7 @@ class VoicePostgresRepository:
                     """
                     SELECT order_id, user_id, plan_id, plan_name, amount_fen, add_yuan,
                            duration_days, status, wx_transaction_id, pay_yuan,
-                           display_credited, dmx_credited, credit_ratio
+                           display_credited, dmx_credited, credit_ratio, device_id
                     FROM payment_orders
                     WHERE out_trade_no = $1
                     FOR UPDATE
@@ -702,43 +931,102 @@ class VoicePostgresRepository:
                         credit_ratio,
                     )
 
-                user_row = await conn.fetchrow(
-                    """
-                    SELECT llm_config, quota_note, metadata
-                    FROM users
-                    WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
-                    FOR UPDATE
-                    """,
-                    user_id,
-                )
-                if user_row is None:
-                    raise PermissionError("user is disabled or not found")
-                api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
-                if not api_key:
-                    raise PermissionError("user has no DMX api_key; ask user to login first")
+                device_id = row["device_id"]
+                if not device_id:
+                    dev_row = await conn.fetchrow(
+                        """
+                        SELECT device_id FROM device_bindings
+                        WHERE user_id = $1 AND status = 'active'
+                        ORDER BY bound_at DESC LIMIT 1
+                        """,
+                        user_id
+                    )
+                    if dev_row:
+                        device_id = dev_row["device_id"]
 
-                metadata = _json_obj(user_row["metadata"])
-                await self._add_display_balance(
-                    conn,
-                    user_id,
-                    delta=display_credit,
-                    metadata=metadata,
+                # Check if it is miniapp subscription plan or fuel package
+                is_miniapp_plan = False
+                sub_plan_row = await conn.fetchrow(
+                    "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1",
+                    row["plan_id"]
                 )
-                top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=dmx_credit)
-                note_text = f"wxpay:{selected_trade_no}"
-                stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                line = f"{stamp} +{display_credit:g}元(用户)/{dmx_credit:g}元(DMX) {note_text}"
-                existing_note = str(user_row["quota_note"] or "").strip()
-                merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
-                await conn.execute(
-                    """
-                    UPDATE users
-                    SET quota_note = $2, updated_at = now()
-                    WHERE user_id = $1 AND deleted_at IS NULL
-                    """,
-                    user_id,
-                    merged_note,
-                )
+                if device_id:
+                    if sub_plan_row:
+                        is_miniapp_plan = True
+                        await conn.execute(
+                            """
+                            UPDATE devices
+                            SET subscription_plan_id = $2,
+                                subscription_minutes_limit = $3,
+                                subscription_minutes_used = 0.0000,
+                                subscription_expires_at = now() + INTERVAL '30 days',
+                                updated_at = now()
+                            WHERE device_id = $1
+                            """,
+                            device_id,
+                            row["plan_id"],
+                            sub_plan_row["duration_minutes"],
+                        )
+                    else:
+                        fuel_pack_row = await conn.fetchrow(
+                            "SELECT duration_minutes FROM miniapp_fuel_packages WHERE package_id = $1",
+                            row["plan_id"]
+                        )
+                        if fuel_pack_row:
+                            is_miniapp_plan = True
+                            await conn.execute(
+                                """
+                                UPDATE devices
+                                SET fuel_minutes_balance = COALESCE(fuel_minutes_balance, 0.0000) + $2,
+                                    updated_at = now()
+                                WHERE device_id = $1
+                                """,
+                                device_id,
+                                float(fuel_pack_row["duration_minutes"]),
+                            )
+                else:
+                    if sub_plan_row or await conn.fetchrow("SELECT 1 FROM miniapp_fuel_packages WHERE package_id = $1", row["plan_id"]):
+                        is_miniapp_plan = True
+                        logger.warning("Fulfillment target device not found for order %s (user %s)", row["order_id"], user_id)
+
+                if not is_miniapp_plan:
+                    user_row = await conn.fetchrow(
+                        """
+                        SELECT llm_config, quota_note, metadata
+                        FROM users
+                        WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                        FOR UPDATE
+                        """,
+                        user_id,
+                    )
+                    if user_row is None:
+                        raise PermissionError("user is disabled or not found")
+                    api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
+                    if not api_key:
+                        raise PermissionError("user has no DMX api_key; ask user to login first")
+
+                    metadata = _json_obj(user_row["metadata"])
+                    await self._add_display_balance(
+                        conn,
+                        user_id,
+                        delta=display_credit,
+                        metadata=metadata,
+                    )
+                    top_up_result = await top_up_token_by_api_key(api_key=api_key, add_yuan=dmx_credit)
+                    note_text = f"wxpay:{selected_trade_no}"
+                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    line = f"{stamp} +{display_credit:g}元(用户)/{dmx_credit:g}元(DMX) {note_text}"
+                    existing_note = str(user_row["quota_note"] or "").strip()
+                    merged_note = f"{existing_note}\n{line}".strip() if existing_note else line
+                    await conn.execute(
+                        """
+                        UPDATE users
+                        SET quota_note = $2, updated_at = now()
+                        WHERE user_id = $1 AND deleted_at IS NULL
+                        """,
+                        user_id,
+                        merged_note,
+                    )
 
                 await conn.execute(
                     """
@@ -1357,6 +1645,13 @@ class VoicePostgresRepository:
             return result
 
         binding_id = uuid.uuid4().hex
+        
+        # Check if the device is being bound/activated for the first time
+        is_first_activation = False
+        device_row = await conn.fetchrow("SELECT status FROM devices WHERE device_id = $1", device_id)
+        if device_row and device_row["status"] == "provisioned":
+            is_first_activation = True
+
         await conn.execute(
             """
             INSERT INTO device_bindings (binding_id, user_id, device_id, status)
@@ -1374,6 +1669,40 @@ class VoicePostgresRepository:
             """,
             device_id,
         )
+
+        if is_first_activation:
+            gift = await conn.fetchrow(
+                """
+                SELECT gift_subscription_plan_id, gift_duration_months
+                FROM miniapp_allowance_settings
+                WHERE id = 1
+                """
+            )
+            if gift and gift["gift_subscription_plan_id"] and gift["gift_duration_months"] > 0:
+                gift_plan_id = gift["gift_subscription_plan_id"]
+                gift_months = gift["gift_duration_months"]
+                plan_row = await conn.fetchrow(
+                    "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1 AND enabled = true",
+                    gift_plan_id
+                )
+                if plan_row:
+                    duration_minutes = plan_row["duration_minutes"]
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET subscription_plan_id = $2,
+                            subscription_minutes_limit = $3,
+                            subscription_minutes_used = 0.0000,
+                            subscription_expires_at = now() + ($4 * INTERVAL '30 days'),
+                            updated_at = now()
+                        WHERE device_id = $1
+                        """,
+                        device_id,
+                        gift_plan_id,
+                        duration_minutes,
+                        gift_months,
+                    )
+
         await self._record_binding_event(
             conn,
             event_type=event_type,
@@ -3446,6 +3775,330 @@ class VoicePostgresRepository:
                 admin_notes,
             )
         return {"ok": result.endswith("1")}
+
+    # === 小程序订阅套餐管理 ===
+    async def admin_list_subscription_plans(self) -> list[dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT plan_id, name, amount_fen, duration_minutes, description, sort_order, enabled, created_at, updated_at
+                FROM miniapp_subscription_plans
+                ORDER BY sort_order ASC, plan_id ASC
+                """
+            )
+        return [
+            {
+                "plan_id": row["plan_id"],
+                "name": row["name"],
+                "amount_fen": row["amount_fen"],
+                "amount_yuan": round(row["amount_fen"] / 100, 2),
+                "duration_minutes": row["duration_minutes"],
+                "description": row["description"],
+                "sort_order": row["sort_order"],
+                "enabled": row["enabled"],
+                "created_at": _dt(row["created_at"]),
+                "updated_at": _dt(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def admin_upsert_subscription_plan(
+        self,
+        *,
+        plan_id: str,
+        name: str,
+        amount_fen: int,
+        duration_minutes: int,
+        description: str = "",
+        sort_order: int = 0,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO miniapp_subscription_plans (
+                    plan_id, name, amount_fen, duration_minutes, description, sort_order, enabled, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                ON CONFLICT (plan_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    amount_fen = EXCLUDED.amount_fen,
+                    duration_minutes = EXCLUDED.duration_minutes,
+                    description = EXCLUDED.description,
+                    sort_order = EXCLUDED.sort_order,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = now()
+                """,
+                plan_id,
+                name,
+                amount_fen,
+                duration_minutes,
+                description,
+                sort_order,
+                enabled,
+            )
+        return {"plan_id": plan_id, "ok": True}
+
+    async def admin_delete_subscription_plan(self, plan_id: str) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM miniapp_subscription_plans WHERE plan_id = $1",
+                plan_id,
+            )
+        return {"ok": result.endswith("1")}
+
+    # === 小程序充值加油包管理 ===
+    async def admin_list_fuel_packages(self) -> list[dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT package_id, name, amount_fen, duration_minutes, description, sort_order, enabled, created_at, updated_at
+                FROM miniapp_fuel_packages
+                ORDER BY sort_order ASC, package_id ASC
+                """
+            )
+        return [
+            {
+                "package_id": row["package_id"],
+                "name": row["name"],
+                "amount_fen": row["amount_fen"],
+                "amount_yuan": round(row["amount_fen"] / 100, 2),
+                "duration_minutes": row["duration_minutes"],
+                "description": row["description"],
+                "sort_order": row["sort_order"],
+                "enabled": row["enabled"],
+                "created_at": _dt(row["created_at"]),
+                "updated_at": _dt(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def admin_upsert_fuel_package(
+        self,
+        *,
+        package_id: str,
+        name: str,
+        amount_fen: int,
+        duration_minutes: int,
+        description: str = "",
+        sort_order: int = 0,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO miniapp_fuel_packages (
+                    package_id, name, amount_fen, duration_minutes, description, sort_order, enabled, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                ON CONFLICT (package_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    amount_fen = EXCLUDED.amount_fen,
+                    duration_minutes = EXCLUDED.duration_minutes,
+                    description = EXCLUDED.description,
+                    sort_order = EXCLUDED.sort_order,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = now()
+                """,
+                package_id,
+                name,
+                amount_fen,
+                duration_minutes,
+                description,
+                sort_order,
+                enabled,
+            )
+        return {"package_id": package_id, "ok": True}
+
+    async def admin_delete_fuel_package(self, package_id: str) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM miniapp_fuel_packages WHERE package_id = $1",
+                package_id,
+            )
+        return {"ok": result.endswith("1")}
+
+    # === 小程序每日低保管理 ===
+    async def admin_get_allowance_settings(self) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT daily_free_minutes, enabled, gift_subscription_plan_id, gift_duration_months
+                FROM miniapp_allowance_settings
+                WHERE id = 1
+                """
+            )
+        if row is None:
+            return {
+                "daily_free_minutes": 1.5,
+                "enabled": True,
+                "gift_subscription_plan_id": None,
+                "gift_duration_months": 0,
+            }
+        return {
+            "daily_free_minutes": float(row["daily_free_minutes"]),
+            "enabled": bool(row["enabled"]),
+            "gift_subscription_plan_id": row["gift_subscription_plan_id"],
+            "gift_duration_months": int(row["gift_duration_months"] or 0),
+        }
+
+    async def admin_update_allowance_settings(
+        self,
+        *,
+        daily_free_minutes: float,
+        enabled: bool,
+        gift_subscription_plan_id: str | None = None,
+        gift_duration_months: int = 0,
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO miniapp_allowance_settings (
+                    id, daily_free_minutes, enabled, gift_subscription_plan_id, gift_duration_months, updated_at
+                )
+                VALUES (1, $1, $2, $3, $4, now())
+                ON CONFLICT (id) DO UPDATE SET
+                    daily_free_minutes = EXCLUDED.daily_free_minutes,
+                    enabled = EXCLUDED.enabled,
+                    gift_subscription_plan_id = EXCLUDED.gift_subscription_plan_id,
+                    gift_duration_months = EXCLUDED.gift_duration_months,
+                    updated_at = now()
+                """,
+                daily_free_minutes,
+                enabled,
+                gift_subscription_plan_id,
+                gift_duration_months,
+            )
+        return {"ok": True}
+
+    # === 扣减设备分钟额度 (状态机) ===
+    async def deduct_device_minutes_quota(self, device_id: str, cost_minutes: float) -> None:
+        """从设备的月度订阅、加油包和低保额度中扣除会话分钟数（高精度）。"""
+        if cost_minutes <= 0:
+            return
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # 获取设备当前额度状态
+                row = await conn.fetchrow(
+                    """
+                    SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+                           subscription_expires_at, fuel_minutes_balance, last_reset_month,
+                           daily_allowance_date, daily_allowance_seconds_used
+                    FROM devices
+                    WHERE device_id = $1
+                    FOR UPDATE
+                    """,
+                    device_id,
+                )
+                if row is None:
+                    return
+
+                subscription_plan_id = row["subscription_plan_id"]
+                subscription_minutes_limit = float(row["subscription_minutes_limit"] or 0)
+                subscription_minutes_used = float(row["subscription_minutes_used"] or 0.0)
+                subscription_expires_at = row["subscription_expires_at"]
+                fuel_minutes_balance = float(row["fuel_minutes_balance"] or 0.0)
+                last_reset_month = str(row["last_reset_month"] or "").strip()
+                daily_allowance_date = row["daily_allowance_date"]
+                daily_allowance_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
+
+                from datetime import datetime, timezone
+                now_dt = datetime.now(timezone.utc)
+                current_month_str = now_dt.strftime("%Y-%m")
+
+                # 1. 跨月惰性重置
+                if last_reset_month != current_month_str:
+                    subscription_minutes_used = 0.0
+                    fuel_minutes_balance = 0.0
+                    last_reset_month = current_month_str
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET subscription_minutes_used = 0.0000,
+                            fuel_minutes_balance = 0.0000,
+                            last_reset_month = $2,
+                            updated_at = now()
+                        WHERE device_id = $1
+                        """,
+                        device_id,
+                        current_month_str,
+                    )
+
+                # 2. 判断订阅是否有效（未过期）
+                is_sub_valid = (subscription_expires_at is not None and subscription_expires_at > now_dt)
+
+                # 3. 优先级扣减：订阅额度 -> 加油包 -> 每日低保
+                remaining_cost = cost_minutes
+
+                # 3.1 订阅额度扣减
+                if is_sub_valid:
+                    sub_rem = max(0.0, subscription_minutes_limit - subscription_minutes_used)
+                    if sub_rem > 0:
+                        if sub_rem >= remaining_cost:
+                            subscription_minutes_used += remaining_cost
+                            remaining_cost = 0.0
+                        else:
+                            subscription_minutes_used = subscription_minutes_limit
+                            remaining_cost -= sub_rem
+
+                # 3.2 加油包扣减
+                if remaining_cost > 0 and fuel_minutes_balance > 0:
+                    if fuel_minutes_balance >= remaining_cost:
+                        fuel_minutes_balance -= remaining_cost
+                        remaining_cost = 0.0
+                    else:
+                        remaining_cost -= fuel_minutes_balance
+                        fuel_minutes_balance = 0.0
+
+                # 3.3 每日温情低保扣减
+                if remaining_cost > 0:
+                    # 获取全局低保设置
+                    allowance_row = await conn.fetchrow(
+                        "SELECT daily_free_minutes, enabled FROM miniapp_allowance_settings WHERE id = 1"
+                    )
+                    daily_free_minutes = 1.5
+                    allowance_enabled = True
+                    if allowance_row is not None:
+                        daily_free_minutes = float(allowance_row["daily_free_minutes"])
+                        allowance_enabled = bool(allowance_row["enabled"])
+
+                    if allowance_enabled:
+                        today = now_dt.date()
+                        if daily_allowance_date != today:
+                            daily_allowance_date = today
+                            daily_allowance_seconds_used = 0.0
+
+                        cost_seconds = remaining_cost * 60.0
+                        allowance_limit_seconds = daily_free_minutes * 60.0
+                        rem_seconds = max(0.0, allowance_limit_seconds - daily_allowance_seconds_used)
+
+                        if rem_seconds >= cost_seconds:
+                            daily_allowance_seconds_used += cost_seconds
+                            remaining_cost = 0.0
+                        else:
+                            daily_allowance_seconds_used = allowance_limit_seconds
+                            remaining_cost -= (rem_seconds / 60.0)
+
+                # 更新设备额度列到数据库
+                await conn.execute(
+                    """
+                    UPDATE devices
+                    SET subscription_minutes_used = $2,
+                        fuel_minutes_balance = $3,
+                        last_reset_month = $4,
+                        daily_allowance_date = $5,
+                        daily_allowance_seconds_used = $6,
+                        updated_at = now()
+                    WHERE device_id = $1
+                    """,
+                    device_id,
+                    subscription_minutes_used,
+                    fuel_minutes_balance,
+                    last_reset_month,
+                    daily_allowance_date,
+                    daily_allowance_seconds_used,
+                )
 
     async def get_pricing_by_type(self, service_type: str) -> dict[str, float]:
         row = await self.pool.fetchrow(

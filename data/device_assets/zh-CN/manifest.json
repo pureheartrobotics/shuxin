@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-20T03:00:14.795093+00:00",
+  "generated_at": "2026-06-29T14:15:36.786136+00:00",
   "agent_id": "shuxin",
   "voice_type": "S_gt4hvQ552",
   "profile": "flash",
@@ -608,6 +608,17 @@
       "sample_rate": 16000,
       "frame_duration_ms": 60,
       "opus_frame_count": 24
+    },
+    {
+      "key": "QUOTA_EXHAUSTED",
+      "text": "额度已用尽，请充值",
+      "files": {
+        "opus_bin": "QUOTA_EXHAUSTED.opus.bin",
+        "ogg": "QUOTA_EXHAUSTED.ogg"
+      },
+      "sample_rate": 16000,
+      "frame_duration_ms": 60,
+      "opus_frame_count": 41
     }
   ],
   "skipped": [],

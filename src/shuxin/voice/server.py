@@ -690,9 +690,10 @@ def create_app(
     @app.get("/api/payment/plans")
     async def payment_plans():
         try:
-            plans = await repo().list_payment_plans(include_disabled=False)
-            return JSONResponse({"items": [plan.to_public_dict() for plan in plans]})
+            plans = await repo().list_miniapp_payment_plans()
+            return JSONResponse({"items": plans})
         except Exception as exc:
+            logger.warning("Failed to list miniapp payment plans, falling back: %s", exc)
             from shuxin.voice.payment_config import list_payment_plan_dicts
 
             return JSONResponse({"items": list_payment_plan_dicts()})
@@ -717,7 +718,8 @@ def create_app(
             if not wechat_pay_configured():
                 return JSONResponse({"error": "WeChat Pay is not configured"}, status_code=503)
 
-            order = await repo().create_payment_order(session_token=session_token, plan_id=plan_id)
+            device_id = str(payload.get("device_id") or "").strip() or None
+            order = await repo().create_payment_order(session_token=session_token, plan_id=plan_id, device_id=device_id)
             plan_payload = dict(order.get("plan") or {})
             amount_fen = int(plan_payload.get("amount_fen") or 0)
             plan_name = str(plan_payload.get("name") or plan_id)
@@ -795,7 +797,8 @@ def create_app(
             if session_token:
                 quota = await repo().get_user_quota_by_session(session_token)
                 if quota.get("exhausted"):
-                    return JSONResponse({"error": QUOTA_EXHAUSTED_MESSAGE}, status_code=403)
+                    msg = quota.get("message") or QUOTA_EXHAUSTED_MESSAGE
+                    return JSONResponse({"error": msg, "error_kind": "quota_exhausted"}, status_code=403)
             result = await repo().bind_device(
                 wx_code=str(payload.get("wx_code") or ""),
                 session_token=session_token,
@@ -1400,9 +1403,10 @@ _FACTORY_ACCEPTANCE_DISABLED = "factory acceptance mode: conversation disabled"
 
 def _client_ip_from_websocket(websocket) -> str:
     """从 WebSocket 连接解析客户端 IP（支持 X-Forwarded-For）。"""
-    forwarded = websocket.headers.get("x-forwarded-for") or websocket.headers.get(
-        "X-Forwarded-For"
-    )
+    headers = getattr(websocket, "headers", None)
+    forwarded = None
+    if headers is not None and hasattr(headers, "get"):
+        forwarded = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
     if forwarded:
         return str(forwarded).split(",")[0].strip()
     client = getattr(websocket, "client", None)
@@ -1899,6 +1903,7 @@ class _VoiceWebSocketSession:
 
                 billing_svc.record_usage_in_background(
                     user_id=self.user_settings.user_id,
+                    device_id=self.device_id,
                     stt_seconds=stt_seconds,
                     stt_model=stt_model,
                     llm_tokens=llm_tokens,
@@ -1931,7 +1936,11 @@ class _VoiceWebSocketSession:
                 }
             )
         except Exception as exc:
-            await self._send_json({"type": "error", "message": str(exc)})
+            err_msg = str(exc)
+            if err_msg == QUOTA_EXHAUSTED_MESSAGE or "额度已用尽" in err_msg or "quota" in err_msg.lower():
+                await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
+            else:
+                await self._send_json({"type": "error", "message": err_msg})
         finally:
             self.audio_chunks = []
 
@@ -2039,7 +2048,11 @@ class _VoiceWebSocketSession:
                 }
             )
         except Exception as exc:
-            await self._send_json({"type": "error", "message": str(exc)})
+            err_msg = str(exc)
+            if err_msg == QUOTA_EXHAUSTED_MESSAGE or "额度已用尽" in err_msg or "quota" in err_msg.lower():
+                await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
+            else:
+                await self._send_json({"type": "error", "message": err_msg})
 
     async def _reset_runtime(self) -> None:
         """切换用户或设备时重建运行态，确保配置和记忆目录重新绑定。"""
@@ -2336,7 +2349,9 @@ class _VoiceWebSocketSession:
                 self.user_settings.llm_config,
             )
         if self.agent is None:
-            if hasattr(self.repo, "assert_user_quota_available"):
+            if hasattr(self.repo, "assert_device_quota_available"):
+                await self.repo.assert_device_quota_available(self.device_id)
+            elif hasattr(self.repo, "assert_user_quota_available"):
                 await self.repo.assert_user_quota_available(self.user_id)
             if not self.device.llm.api_key:
                 raise ValueError("LLM api_key is not configured for this device/user")
@@ -2664,7 +2679,6 @@ def _admin_html(authenticated: bool) -> str:
         <button id="tabDevices" class="active" onclick="showTab('devices')">设备</button>
         <button id="tabUsers" onclick="showTab('users')">用户</button>
         <button id="tabAgents" onclick="showTab('agents')">Agent</button>
-        <button id="tabPaymentPlans" onclick="showTab('paymentPlans')">充值套餐</button>
         <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
         <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
         <button id="tabBilling" onclick="showTab('billing')">消费账单</button>
@@ -2753,34 +2767,7 @@ def _admin_html(authenticated: bool) -> str:
           <div id="agentsPager" class="pager"></div>
         </div>
       </div>
-      <div id="paymentPlans" class="stack" style="display:none">
-        <div class="panel">
-          <h2>全局到账比例</h2>
-          <div class="form-row compact">
-            <label><span class="hint">credit_ratio（0.01–1.00）</span><input id="creditRatio" type="number" min="0.01" max="1" step="0.01" value="0.95" /></label>
-            <button onclick="saveCreditRatio()">保存比例</button>
-          </div>
-          <p class="hint" style="margin:8px 0 0">用户付 100 元 → 界面余额 +100，DMX 实际 +100×比例。仅影响<strong>新创建</strong>订单；履约使用下单时快照。</p>
-        </div>
-        <div class="panel">
-          <h2>新增充值档位</h2>
-          <div class="form-row compact">
-            <label><span class="hint">plan_id</span><input id="newPlanId" placeholder="plan_100" /></label>
-            <label><span class="hint">名称</span><input id="newPlanName" placeholder="100 元档" /></label>
-            <label><span class="hint">支付价（分）</span><input id="newPlanAmountFen" type="number" min="1" placeholder="10000" /></label>
-            <label><span class="hint">排序</span><input id="newPlanSort" type="number" value="0" /></label>
-            <label><span class="hint">描述</span><input id="newPlanDesc" placeholder="可选" /></label>
-          </div>
-          <div class="toolbar" style="margin-top:12px"><button onclick="createPaymentPlan()">保存档位</button></div>
-        </div>
-        <div class="panel">
-          <div class="toolbar" style="justify-content:space-between">
-            <h2>充值套餐列表</h2>
-            <button class="secondary" onclick="loadPaymentPlans()">刷新</button>
-          </div>
-          <div id="paymentPlanList" class="table"></div>
-        </div>
-      </div>
+      <!-- paymentPlans tab removed -->
       <div id="bindings" class="grid" style="display:none">
         <div class="panel" style="grid-column:1 / -1">
           <div class="toolbar" style="justify-content:space-between">
