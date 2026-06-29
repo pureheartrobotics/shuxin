@@ -78,3 +78,6 @@ docs/交底书修订*.md
 docs/math_figures/
 docs/patent-filing/
 scripts/fill_proposal_docx.py
+
+# Agent workspace configurations
+.agents/

@@ -3720,8 +3720,8 @@ def _admin_html(authenticated: bool) -> str:
       const display = quota.display_balance_yuan ?? quota.remain_yuan;
       const dmx = quota.dmx_remain_yuan;
       if (display == null && dmx == null) return '查询失败';
-      const displayText = display != null ? `${{display}} 元` : '—';
-      const dmxText = dmx != null ? `${{dmx}} 元` : '—';
+      const displayText = display != null ? `${{Number(display).toFixed(2)}} 元` : '—';
+      const dmxText = dmx != null ? `${{Number(dmx).toFixed(2)}} 元` : '—';
       const suffix = quota.exhausted ? '（已用尽）' : '';
       return `用户 ${{displayText}} / DMX ${{dmxText}}${{suffix}}`;
     }}
