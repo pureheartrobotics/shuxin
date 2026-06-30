@@ -23,6 +23,7 @@ from shuxin.voice.payment_config import (
     normalize_credit_ratio,
     plan_from_row,
 )
+from shuxin.voice.time_display import format_beijing_display, format_beijing_iso
 from shuxin.voice.dmx_client import (
     DEFAULT_QUOTA_YUAN,
     MAX_TOP_UP_YUAN,
@@ -122,7 +123,7 @@ class VoicePostgresRepository:
             )
         result = {
             "session_token": session_token,
-            "expires_at": _dt(expires_at),
+            "expires_at": _dt_iso(expires_at),
             "user_id": user_id,
         }
         await self.ensure_user_dmx_llm(user_id)
@@ -1560,7 +1561,7 @@ class VoicePostgresRepository:
                 "operator_user": str(r["operator_user"]),
                 "result": str(r["result"]),
                 "fail_reason": str(r["fail_reason"]),
-                "verified_at": r["verified_at"].isoformat() if r["verified_at"] else None,
+                "verified_at": _dt(r["verified_at"]) if r["verified_at"] else None,
                 "meta": _json_obj(r["meta"]),
             }
             for r in rows
@@ -4425,7 +4426,11 @@ def _payment_order_item(row: Any) -> dict[str, Any]:
 
 
 def _dt(value: Any) -> str:
-    return value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+    return format_beijing_display(value)
+
+
+def _dt_iso(value: Any) -> str:
+    return format_beijing_iso(value)
 
 
 def _device_row(row) -> dict[str, Any]:

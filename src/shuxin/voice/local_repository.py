@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
+from shuxin.voice.time_display import format_beijing_iso
 from shuxin.voice.memory_summary import should_merge_summary
 from shuxin.voice.storage import UserVoiceStorage
 from shuxin.voice.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
@@ -37,13 +37,14 @@ class VoiceLocalRepository:
         user_id = f"wx_{hashlib.sha256(code.encode('utf-8')).hexdigest()[:24]}"
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+        expires_str = format_beijing_iso(expires_at)
         self.wechat_sessions[token] = {
             "user_id": user_id,
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_str,
         }
         result = {
             "session_token": token,
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_str,
             "user_id": user_id,
         }
         await self.ensure_user_dmx_llm(user_id)
