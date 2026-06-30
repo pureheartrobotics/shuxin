@@ -249,7 +249,14 @@ async function purchasePlan(plan: PaymentPlan) {
     await loadProfile();
   } catch (error: any) {
     const text = error.message || String(error);
-    if (!text.includes("cancel")) {
+    if (text.includes("无法重复购买")) {
+      uni.showModal({
+        title: "提示",
+        content: text,
+        showCancel: false,
+        confirmText: "确定"
+      });
+    } else if (!text.includes("cancel")) {
       message.value = text;
     }
   } finally {
