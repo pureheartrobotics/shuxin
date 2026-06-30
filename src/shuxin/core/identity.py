@@ -209,7 +209,7 @@ class IdentityProfile:
     """
     mbti: str = "INFJ"
     name: str = "初心"
-    species: str = "灵狐"
+    species: str = "陪伴机器人"
     age: int = 22
     gender: str = "无性别"
     prefix: str = "初心"

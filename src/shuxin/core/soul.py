@@ -40,7 +40,7 @@ class SoulProfile:
         raw_content: SOUL.md 原始内容。
     """
     name: str = "初心"
-    species: str = "灵狐"
+    species: str = "陪伴机器人"
     mbti: str = "INFJ"
     age: int = 22
     gender: str = "无性别"
@@ -212,7 +212,7 @@ class SoulEngine:
 
         Example:
             >>> engine.get_system_prompt_block()
-            '## 你的身份\\n\\n你是初心，一只灵狐。\\n...'
+            '## 你的身份\n\n你是初心，一只陪伴机器人。\n...'
         """
         p = self.profile
         lines = [
@@ -248,7 +248,7 @@ class SoulEngine:
 
         Example:
             >>> engine.get_profile_summary()
-            '初心 · 灵狐 · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
+            '初心 · 陪伴机器人 · 22岁\n特质: 温柔/敏锐/忠诚\n信念: 我不是工具，我是陪伴者'
         """
         p = self.profile
         return (

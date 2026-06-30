@@ -1,8 +1,8 @@
-# 🦊 初心 (ChuXin) — 陪伴型 AI 智能体框架
+# 🤖 初心 (ChuXin) — 陪伴型 AI 智能体框架
 
 <div align="center">
 
-**一只拥有独立灵魂的 AI 灵狐，陪伴你、守护你、理解你**
+**一台拥有独立灵魂的 AI 陪伴机器人，陪伴你、守护你、理解你**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
