@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, date, timezone
 from typing import Any
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from shuxin.voice.postgres_repository import VoicePostgresRepository
 
@@ -154,3 +157,135 @@ def test_device_binding_welcome_gift() -> None:
     assert args[1] == "gift_plan_id"
     assert args[2] == 100
     assert args[3] == 3
+
+
+def test_create_miniapp_payment_order_uses_pay_yuan_for_add_yuan() -> None:
+    insert_return = {
+        "order_id": "order-mini-1",
+        "out_trade_no": "sxmini",
+        "plan_id": "jichuban",
+        "plan_name": "基础版",
+        "amount_fen": 1,
+        "add_yuan": 0.01,
+        "duration_days": 30,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc),
+        "pay_yuan": 0.01,
+        "display_credited": 0.0,
+        "dmx_credited": 0.0,
+        "credit_ratio": 1.0,
+        "device_id": "SX-000119",
+    }
+
+    class CreateOrderConn(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "miniapp_subscription_plans" in query:
+                return {"name": "基础版", "amount_fen": 1, "duration_minutes": 60}
+            if "INSERT INTO payment_orders" in query:
+                assert args[6] == 0.01  # add_yuan placeholder, not 0
+                return insert_return
+            if "device_bindings" in query:
+                return {"device_id": "SX-000119"}
+            return None
+
+    conn = CreateOrderConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        with patch.object(
+            repo,
+            "_user_id_from_wechat_auth",
+            new=AsyncMock(return_value="wx_user"),
+        ):
+            return await repo.create_payment_order(
+                session_token="sess",
+                plan_id="jichuban",
+                device_id="SX-000119",
+            )
+
+    result = asyncio.run(run())
+    assert result["plan"]["amount_fen"] == 1
+    assert result["plan"]["amount_yuan"] == 0.01
+
+
+class MiniappFulfillConn:
+    def __init__(self) -> None:
+        self.executed: list[tuple] = []
+
+    async def fetchrow(self, query: str, *args):
+        if "FROM payment_orders" in query:
+            return {
+                "order_id": "order-mini-1",
+                "user_id": "wx_user",
+                "plan_id": "jichuban",
+                "plan_name": "基础版",
+                "amount_fen": 1,
+                "add_yuan": 0.01,
+                "duration_days": 30,
+                "status": "pending",
+                "wx_transaction_id": None,
+                "pay_yuan": 0.01,
+                "display_credited": 0.0,
+                "dmx_credited": 0.0,
+                "credit_ratio": 1.0,
+                "device_id": "SX-000119",
+            }
+        if "miniapp_subscription_plans" in query:
+            return {"duration_minutes": 60}
+        return None
+
+    async def execute(self, query: str, *args):
+        self.executed.append((query, args))
+
+    @asynccontextmanager
+    async def transaction(self):
+        yield
+
+
+class MiniappFulfillAcquire:
+    def __init__(self, conn: MiniappFulfillConn) -> None:
+        self.conn = conn
+
+    async def __aenter__(self):
+        return self.conn
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class MiniappFulfillPool:
+    def __init__(self, conn: MiniappFulfillConn) -> None:
+        self.conn = conn
+
+    def acquire(self):
+        return MiniappFulfillAcquire(self.conn)
+
+    async def execute(self, query, *args):
+        await self.conn.execute(query, *args)
+
+
+def test_fulfill_miniapp_payment_order_preserves_add_yuan() -> None:
+    conn = MiniappFulfillConn()
+    repo = VoicePostgresRepository(pool=MiniappFulfillPool(conn))
+    notify = {"amount": {"total": 1}}
+
+    async def run():
+        with patch(
+            "shuxin.voice.postgres_repository.top_up_token_by_api_key",
+            new=AsyncMock(return_value={"ok": True}),
+        ) as top_up:
+            result = await repo.fulfill_payment_order(
+                out_trade_no="sxmini",
+                wx_transaction_id="wx-tx-mini",
+                notify_payload=notify,
+            )
+        return result, top_up
+
+    result, top_up = asyncio.run(run())
+    assert result["status"] == "paid"
+    assert result["add_yuan"] == 0.01
+    top_up.assert_not_awaited()
+    order_updates = [args for query, args in conn.executed if "UPDATE payment_orders" in query]
+    assert order_updates
+    assert order_updates[0][7] == 0.01

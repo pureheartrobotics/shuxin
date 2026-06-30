@@ -82,6 +82,7 @@ def _paid_order_row(*, amount_fen: int = 10000) -> dict[str, Any]:
         "display_credited": 100.0,
         "dmx_credited": 95.0,
         "credit_ratio": 0.95,
+        "device_id": None,
     }
 
 
