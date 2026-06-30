@@ -52,3 +52,11 @@ def test_admin_route_returns_html() -> None:
     assert res.status_code == 200
     assert "function showTab(name)" in res.text
     assert 'id="bindings"' in res.text
+
+
+def test_admin_html_uses_beijing_datetime_formatter() -> None:
+    html = _admin_html(authenticated=False)
+    assert "function formatDateTimeCN(iso)" in html
+    assert "Asia/Shanghai" in html
+    assert "formatDateTimeCN(item.created_at)" in html
+    assert "formatDateTimeCN(b.bound_at)" in html
