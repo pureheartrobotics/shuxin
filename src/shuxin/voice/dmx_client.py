@@ -197,7 +197,12 @@ def parse_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def create_user_token(*, name: str, quota_yuan: float = DEFAULT_QUOTA_YUAN) -> str:
+async def create_user_token(
+    *,
+    name: str,
+    quota_yuan: float = DEFAULT_QUOTA_YUAN,
+    unlimited_quota: bool = False,
+) -> str:
     """Create a DMX user token and return the sk- API key."""
     if not dmx_admin_configured():
         raise PermissionError("DMX admin credentials are not configured")
@@ -205,8 +210,8 @@ async def create_user_token(*, name: str, quota_yuan: float = DEFAULT_QUOTA_YUAN
     amount = max(0.0, float(quota_yuan))
     body = {
         "name": name,
-        "unlimited_quota": False,
-        "remain_quota": int(amount * QUOTA_UNITS_PER_YUAN),
+        "unlimited_quota": unlimited_quota,
+        "remain_quota": 0 if unlimited_quota else int(amount * QUOTA_UNITS_PER_YUAN),
         "unlimited_count": True,
         "remain_count": 0,
         "expired_time": -1,
