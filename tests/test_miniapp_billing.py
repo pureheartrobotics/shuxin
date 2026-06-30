@@ -289,3 +289,65 @@ def test_fulfill_miniapp_payment_order_preserves_add_yuan() -> None:
     order_updates = [args for query, args in conn.executed if "UPDATE payment_orders" in query]
     assert order_updates
     assert order_updates[0][7] == 0.01
+
+    # Assert last_reset_month is written to devices
+    device_updates = [args for query, args in conn.executed if "UPDATE devices" in query]
+    assert device_updates
+    # args: device_id, plan_id, duration_minutes, current_month_str
+    assert device_updates[0][3] == datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def test_create_miniapp_payment_order_duplicate_purchase() -> None:
+    from datetime import timedelta
+    insert_return = {
+        "order_id": "order-mini-1",
+        "out_trade_no": "sxmini",
+        "plan_id": "jichuban",
+        "plan_name": "基础版",
+        "amount_fen": 1,
+        "add_yuan": 0.01,
+        "duration_days": 30,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc),
+        "pay_yuan": 0.01,
+        "display_credited": 0.0,
+        "dmx_credited": 0.0,
+        "credit_ratio": 1.0,
+        "device_id": "SX-000119",
+    }
+
+    class DuplicateOrderConn(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "miniapp_subscription_plans" in query:
+                return {"name": "基础版", "amount_fen": 1, "duration_minutes": 60}
+            if "INSERT INTO payment_orders" in query:
+                return insert_return
+            if "device_bindings" in query:
+                return {"device_id": "SX-000119"}
+            if "devices" in query:
+                return {
+                    "subscription_plan_id": "jichuban",
+                    "subscription_expires_at": datetime.now(timezone.utc) + timedelta(days=10)
+                }
+            return None
+
+    conn = DuplicateOrderConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        with patch.object(
+            repo,
+            "_user_id_from_wechat_auth",
+            new=AsyncMock(return_value="wx_user"),
+        ):
+            await repo.create_payment_order(
+                session_token="sess",
+                plan_id="jichuban",
+                device_id="SX-000119",
+            )
+
+    with pytest.raises(PermissionError) as exc_info:
+        asyncio.run(run())
+    assert "无法重复购买" in str(exc_info.value)
+

@@ -408,7 +408,7 @@ class VoicePostgresRepository:
         if row is None:
             return {
                 "device_id": device_id,
-                "configured": False,
+                "configured": True,
                 "exhausted": True,
                 "remain_yuan": 0.0,
                 "total_minutes_left": 0.0,
@@ -559,7 +559,7 @@ class VoicePostgresRepository:
         # Fallback: if no active bound device, return default exhausted quota
         return {
             "user_id": selected_id,
-            "configured": False,
+            "configured": True,
             "exhausted": True,
             "remain_yuan": 0.0,
             "total_minutes_left": 0.0,
@@ -745,6 +745,22 @@ class VoicePostgresRepository:
                     )
                     if dev_row:
                         target_device_id = dev_row["device_id"]
+
+                if duration_days > 0 and target_device_id:
+                    dev_quota = await conn.fetchrow(
+                        """
+                        SELECT subscription_plan_id, subscription_expires_at
+                        FROM devices
+                        WHERE device_id = $1
+                        """,
+                        target_device_id
+                    )
+                    if dev_quota:
+                        sub_plan_id = dev_quota["subscription_plan_id"]
+                        sub_expires_at = dev_quota["subscription_expires_at"]
+                        from datetime import datetime, timezone
+                        if sub_plan_id == plan_id and sub_expires_at is not None and sub_expires_at > datetime.now(timezone.utc):
+                            raise PermissionError("您已拥有该月度套餐，在有效期内无法重复购买。")
 
                 order_id = uuid.uuid4().hex
                 out_trade_no = f"sx{uuid.uuid4().hex[:28]}"
@@ -953,6 +969,8 @@ class VoicePostgresRepository:
                     "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1",
                     row["plan_id"]
                 )
+                from datetime import datetime, timezone
+                current_month_str = datetime.now(timezone.utc).strftime("%Y-%m")
                 if device_id:
                     if sub_plan_row:
                         is_miniapp_plan = True
@@ -963,12 +981,14 @@ class VoicePostgresRepository:
                                 subscription_minutes_limit = $3,
                                 subscription_minutes_used = 0.0000,
                                 subscription_expires_at = now() + INTERVAL '30 days',
+                                last_reset_month = $4,
                                 updated_at = now()
                             WHERE device_id = $1
                             """,
                             device_id,
                             row["plan_id"],
                             sub_plan_row["duration_minutes"],
+                            current_month_str,
                         )
                     else:
                         fuel_pack_row = await conn.fetchrow(
@@ -981,11 +1001,13 @@ class VoicePostgresRepository:
                                 """
                                 UPDATE devices
                                 SET fuel_minutes_balance = COALESCE(fuel_minutes_balance, 0.0000) + $2,
+                                    last_reset_month = $3,
                                     updated_at = now()
                                 WHERE device_id = $1
                                 """,
                                 device_id,
                                 float(fuel_pack_row["duration_minutes"]),
+                                current_month_str,
                             )
                 else:
                     if sub_plan_row or await conn.fetchrow("SELECT 1 FROM miniapp_fuel_packages WHERE package_id = $1", row["plan_id"]):
