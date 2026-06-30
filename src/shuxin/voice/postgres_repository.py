@@ -92,12 +92,21 @@ class VoicePostgresRepository:
 
     def __init__(self, pool) -> None:
         self.pool = pool
+        self._auth_cache = {}
 
     async def create_wechat_session(self, *, wx_code: str) -> dict[str, Any]:
         """小程序登录: wx.login code -> openid -> 自定义 session_token。"""
         user_id = validate_user_id(await _openid_from_wx_code(wx_code))
         session_token = secrets.token_urlsafe(32)
         async with self.pool.acquire() as conn:
+            user_row = await conn.fetchrow(
+                "SELECT enabled, deleted_at FROM users WHERE user_id = $1",
+                user_id,
+            )
+            if user_row:
+                if not user_row["enabled"] or user_row["deleted_at"] is not None:
+                    raise PermissionError("User account is disabled or deleted")
+
             expires_at = await conn.fetchval(
                 """
                 WITH upsert_user AS (
@@ -144,11 +153,15 @@ class VoicePostgresRepository:
             return
         llm_config = _json_obj(row["llm_config"])
         metadata = _json_obj(row["metadata"])
+        import copy
+        orig_llm_config = copy.deepcopy(llm_config)
+        orig_metadata = copy.deepcopy(metadata)
+
         api_key = str(llm_config.get("api_key") or "").strip()
         newly_provisioned = False
         if not api_key:
             try:
-                api_key = await create_user_token(name=selected_id, quota_yuan=DEFAULT_QUOTA_YUAN)
+                api_key = await create_user_token(name=selected_id, quota_yuan=DEFAULT_QUOTA_YUAN, unlimited_quota=True)
                 newly_provisioned = True
                 logger.info("DMX provisioned token for %s", selected_id)
             except Exception as exc:
@@ -163,19 +176,23 @@ class VoicePostgresRepository:
                 4,
             )
         llm_config = merge_platform_llm_defaults(llm_config)
-        await self.pool.execute(
-            """
-            UPDATE users
-            SET llm_config = $2::jsonb,
-                metadata = $3::jsonb,
-                updated_at = now()
-            WHERE user_id = $1 AND deleted_at IS NULL
-            """,
-            selected_id,
-            json.dumps(llm_config, ensure_ascii=False),
-            json.dumps(metadata, ensure_ascii=False),
-        )
-        logger.info("DMX saved llm_config for %s", selected_id)
+        
+        if newly_provisioned or llm_config != orig_llm_config or metadata != orig_metadata:
+            await self.pool.execute(
+                """
+                UPDATE users
+                SET llm_config = $2::jsonb,
+                    metadata = $3::jsonb,
+                    updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                selected_id,
+                json.dumps(llm_config, ensure_ascii=False),
+                json.dumps(metadata, ensure_ascii=False),
+            )
+            logger.info("DMX saved llm_config for %s", selected_id)
+        else:
+            logger.info("DMX config unchanged for %s, skipping UPDATE", selected_id)
 
     async def get_credit_ratio(self) -> float:
         row = await self.pool.fetchrow(
@@ -395,17 +412,64 @@ class VoicePostgresRepository:
     async def get_device_quota(
         self, device_id: str, *, admin_detail: bool = False
     ) -> dict[str, Any]:
-        row = await self.pool.fetchrow(
+        # =====================================================================
+        # 【备用旧代码注释开始】 - 单设备额度查询逻辑
+        # =====================================================================
+        # row = await self.pool.fetchrow(
+        #     """
+        #     SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+        #            subscription_expires_at, fuel_minutes_balance, last_reset_month,
+        #            daily_allowance_date, daily_allowance_seconds_used
+        #     FROM devices
+        #     WHERE device_id = $1
+        #     """,
+        #     device_id,
+        # )
+        # if row is None:
+        #     return { ... }
+        # ... 原单设备逻辑在此省略以备未来可能恢复使用，详细可见 Git 历史或文档 ...
+        # =====================================================================
+        # 【备用旧代码注释结束】
+        # =====================================================================
+
+        # 1. 查找当前设备绑定的活跃用户
+        bound_row = await self.pool.fetchrow(
             """
-            SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
-                   subscription_expires_at, fuel_minutes_balance, last_reset_month,
-                   daily_allowance_date, daily_allowance_seconds_used
-            FROM devices
-            WHERE device_id = $1
+            SELECT user_id FROM device_bindings
+            WHERE device_id = $1 AND status = 'active'
+            ORDER BY bound_at DESC LIMIT 1
             """,
-            device_id,
+            device_id
         )
-        if row is None:
+        user_id = bound_row["user_id"] if bound_row else None
+
+        # 2. 获取该用户名下的所有活跃设备（如果是未绑定状态，退回仅针对该单设备）
+        if user_id:
+            device_rows = await self.pool.fetch(
+                """
+                SELECT d.device_id, d.subscription_plan_id, d.subscription_minutes_limit, d.subscription_minutes_used,
+                       d.subscription_expires_at, d.fuel_minutes_balance, d.last_reset_month,
+                       d.daily_allowance_date, d.daily_allowance_seconds_used
+                FROM devices d
+                JOIN device_bindings b ON b.device_id = d.device_id AND b.status = 'active'
+                WHERE b.user_id = $1
+                """,
+                user_id
+            )
+        else:
+            single_row = await self.pool.fetchrow(
+                """
+                SELECT device_id, subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+                       subscription_expires_at, fuel_minutes_balance, last_reset_month,
+                       daily_allowance_date, daily_allowance_seconds_used
+                FROM devices
+                WHERE device_id = $1
+                """,
+                device_id
+            )
+            device_rows = [single_row] if single_row else []
+
+        if not device_rows:
             return {
                 "device_id": device_id,
                 "configured": True,
@@ -420,46 +484,17 @@ class VoicePostgresRepository:
                 "message": QUOTA_EXHAUSTED_MESSAGE,
             }
 
-        # 1. 跨月惰性重置
-        subscription_minutes_limit = float(row["subscription_minutes_limit"] or 0)
-        subscription_minutes_used = float(row["subscription_minutes_used"] or 0.0)
-        subscription_expires_at = row["subscription_expires_at"]
-        fuel_minutes_balance = float(row["fuel_minutes_balance"] or 0.0)
-        last_reset_month = str(row["last_reset_month"] or "").strip()
-        daily_allowance_date = row["daily_allowance_date"]
-        daily_allowance_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
-
         from datetime import datetime, timezone
         now_dt = datetime.now(timezone.utc)
         current_month_str = now_dt.strftime("%Y-%m")
 
-        if last_reset_month != current_month_str:
-            subscription_minutes_used = 0.0
-            fuel_minutes_balance = 0.0
-            last_reset_month = current_month_str
-            # 执行更新
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE devices
-                    SET subscription_minutes_used = 0.0000,
-                        fuel_minutes_balance = 0.0000,
-                        last_reset_month = $2,
-                        updated_at = now()
-                    WHERE device_id = $1
-                    """,
-                    device_id,
-                    current_month_str,
-                )
+        # 3. 统计各活跃设备的总额度
+        total_sub_remaining = 0.0
+        total_fuel_remaining = 0.0
+        total_allowance_remaining = 0.0
+        max_expires_at = None
 
-        # 2. 计算订阅剩余分钟数
-        is_sub_valid = (subscription_expires_at is not None and subscription_expires_at > now_dt)
-        sub_remaining = max(0.0, subscription_minutes_limit - subscription_minutes_used) if is_sub_valid else 0.0
-
-        # 3. 计算加油包剩余分钟数
-        fuel_remaining = fuel_minutes_balance
-
-        # 4. 计算今日低保剩余分钟数
+        # 获取全局低保设置
         allowance_row = await self.pool.fetchrow(
             "SELECT daily_free_minutes, enabled FROM miniapp_allowance_settings WHERE id = 1"
         )
@@ -469,41 +504,73 @@ class VoicePostgresRepository:
             daily_free_minutes = float(allowance_row["daily_free_minutes"])
             allowance_enabled = bool(allowance_row["enabled"])
 
-        allowance_remaining = 0.0
-        if allowance_enabled:
-            today = now_dt.date()
-            if daily_allowance_date != today:
-                allowance_remaining = daily_free_minutes
-            else:
-                allowance_limit_seconds = daily_free_minutes * 60.0
-                rem_seconds = max(0.0, allowance_limit_seconds - daily_allowance_seconds_used)
-                allowance_remaining = rem_seconds / 60.0
+        for row in device_rows:
+            d_id = row["device_id"]
+            sub_limit = float(row["subscription_minutes_limit"] or 0)
+            sub_used = float(row["subscription_minutes_used"] or 0.0)
+            sub_expires = row["subscription_expires_at"]
+            fuel_bal = float(row["fuel_minutes_balance"] or 0.0)
+            last_reset = str(row["last_reset_month"] or "").strip()
+            daily_date = row["daily_allowance_date"]
+            daily_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
 
-        # 5. 总剩余分钟数
-        total_minutes_left = sub_remaining + fuel_remaining + allowance_remaining
+            # 跨月惰性重置处理
+            if last_reset != current_month_str:
+                sub_used = 0.0
+                fuel_bal = 0.0
+                last_reset = current_month_str
+                async with self.pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET subscription_minutes_used = 0.0000,
+                            fuel_minutes_balance = 0.0000,
+                            last_reset_month = $2,
+                            updated_at = now()
+                        WHERE device_id = $1
+                        """,
+                        d_id,
+                        current_month_str,
+                    )
 
-        # 6. 向后兼容：把总分钟数映射为 remain_yuan 返回，支持旧小程序正常显示数值
+            # 计算此设备的订阅时长
+            is_sub_valid = (sub_expires is not None and sub_expires > now_dt)
+            if is_sub_valid:
+                total_sub_remaining += max(0.0, sub_limit - sub_used)
+                if max_expires_at is None or sub_expires > max_expires_at:
+                    max_expires_at = sub_expires
+
+            # 计算加油包
+            total_fuel_remaining += fuel_bal
+
+            # 计算每日低保
+            allowance_remaining = 0.0
+            if allowance_enabled:
+                today = now_dt.date()
+                if daily_date != today:
+                    allowance_remaining = daily_free_minutes
+                else:
+                    allowance_limit_seconds = daily_free_minutes * 60.0
+                    rem_seconds = max(0.0, allowance_limit_seconds - daily_seconds_used)
+                    allowance_remaining = rem_seconds / 60.0
+            total_allowance_remaining += allowance_remaining
+
+        total_minutes_left = total_sub_remaining + total_fuel_remaining + total_allowance_remaining
         effective_display = round(total_minutes_left, 2)
         display_exhausted = effective_display <= 0
 
-        # 7. 获取绑定用户，同时拉取底层 DMX 状态（如果配置了）
-        bound_row = await self.pool.fetchrow(
-            """
-            SELECT user_id FROM device_bindings
-            WHERE device_id = $1 AND status = 'active'
-            ORDER BY bound_at DESC LIMIT 1
-            """,
-            device_id
-        )
-        user_id = bound_row["user_id"] if bound_row else None
-        
+        # DMX 校验信息（仅 admin_detail 需要）
         api_key = ""
         credit_ratio = 1.0
         dmx_exhausted = False
         dmx_remain_yuan = None
         used_yuan = None
-        if user_id:
-            user_row = await self.pool.fetchrow("SELECT llm_config FROM users WHERE user_id = $1 AND enabled = true", user_id)
+
+        if admin_detail and user_id:
+            user_row = await self.pool.fetchrow(
+                "SELECT llm_config FROM users WHERE user_id = $1 AND enabled = true",
+                user_id
+            )
             if user_row:
                 api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
                 if api_key:
@@ -516,18 +583,17 @@ class VoicePostgresRepository:
                     except Exception as exc:
                         logger.warning("DMX balance query failed during quota check for device %s: %s", device_id, exc)
 
-        exhausted = display_exhausted or dmx_exhausted
-
+        exhausted = display_exhausted
         result = {
             "device_id": device_id,
             "configured": True,
             "exhausted": exhausted,
-            "remain_yuan": effective_display, # 返回剩余分钟数
+            "remain_yuan": effective_display,
             "total_minutes_left": effective_display,
-            "subscription_minutes_left": round(sub_remaining, 2),
-            "fuel_minutes_left": round(fuel_remaining, 2),
-            "daily_allowance_left": round(allowance_remaining, 2),
-            "subscription_expires_at": _dt(subscription_expires_at) if subscription_expires_at else None,
+            "subscription_minutes_left": round(total_sub_remaining, 2),
+            "fuel_minutes_left": round(total_fuel_remaining, 2),
+            "daily_allowance_left": round(total_allowance_remaining, 2),
+            "subscription_expires_at": _dt(max_expires_at) if max_expires_at else None,
             "unlimited_quota": False,
             "message": QUOTA_EXHAUSTED_MESSAGE if exhausted else "",
         }
@@ -1703,37 +1769,7 @@ class VoicePostgresRepository:
         )
 
         if is_first_activation:
-            gift = await conn.fetchrow(
-                """
-                SELECT gift_subscription_plan_id, gift_duration_months
-                FROM miniapp_allowance_settings
-                WHERE id = 1
-                """
-            )
-            if gift and gift["gift_subscription_plan_id"] and gift["gift_duration_months"] > 0:
-                gift_plan_id = gift["gift_subscription_plan_id"]
-                gift_months = gift["gift_duration_months"]
-                plan_row = await conn.fetchrow(
-                    "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1 AND enabled = true",
-                    gift_plan_id
-                )
-                if plan_row:
-                    duration_minutes = plan_row["duration_minutes"]
-                    await conn.execute(
-                        """
-                        UPDATE devices
-                        SET subscription_plan_id = $2,
-                            subscription_minutes_limit = $3,
-                            subscription_minutes_used = 0.0000,
-                            subscription_expires_at = now() + ($4 * INTERVAL '30 days'),
-                            updated_at = now()
-                        WHERE device_id = $1
-                        """,
-                        device_id,
-                        gift_plan_id,
-                        duration_minutes,
-                        gift_months,
-                    )
+            await self._apply_first_activation_gift(conn, device_id)
 
         await self._record_binding_event(
             conn,
@@ -1777,6 +1813,40 @@ class VoicePostgresRepository:
         if is_mbti_locked(metadata):
             return build_mbti_client_payload(metadata, is_first_reveal=False)
         return None
+
+    async def _apply_first_activation_gift(self, conn, device_id: str) -> None:
+        """从设置中查询赠送规则并为设备注入首次激活的订阅套餐。"""
+        gift = await conn.fetchrow(
+            """
+            SELECT gift_subscription_plan_id, gift_duration_months
+            FROM miniapp_allowance_settings
+            WHERE id = 1
+            """
+        )
+        if gift and gift["gift_subscription_plan_id"] and gift["gift_duration_months"] > 0:
+            gift_plan_id = gift["gift_subscription_plan_id"]
+            gift_months = gift["gift_duration_months"]
+            plan_row = await conn.fetchrow(
+                "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1 AND enabled = true",
+                gift_plan_id
+            )
+            if plan_row:
+                duration_minutes = plan_row["duration_minutes"]
+                await conn.execute(
+                    """
+                    UPDATE devices
+                    SET subscription_plan_id = $2,
+                        subscription_minutes_limit = $3,
+                        subscription_minutes_used = 0.0000,
+                        subscription_expires_at = now() + ($4 * INTERVAL '30 days'),
+                        updated_at = now()
+                    WHERE device_id = $1
+                    """,
+                    device_id,
+                    gift_plan_id,
+                    duration_minutes,
+                    gift_months,
+                )
 
     async def _try_reveal_and_lock_conn(
         self,
@@ -1864,6 +1934,17 @@ class VoicePostgresRepository:
     ) -> UserSettings:
         """设备 hello 鉴权，并解析当前 active binding 对应的用户。"""
         selected_code = _validate_device_code(device_code or "")
+        import time
+
+        # Check in-memory cache
+        cached = getattr(self, "_auth_cache", {}).get(selected_code)
+        if cached:
+            cached_row_dict, user_settings, expire_time = cached
+            if time.time() < expire_time:
+                if _verify_device_secret(cached_row_dict, device_secret or ""):
+                    logger.info("Cache hit for device authentication: %s", selected_code)
+                    return user_settings
+
         row = await self.pool.fetchrow(
             """
             SELECT d.device_id, d.auth_mode, d.device_secret_hash, b.user_id,
@@ -1893,13 +1974,19 @@ class VoicePostgresRepository:
         )
         llm_config = _json_obj(llm_row["llm_config"]) if llm_row else _json_obj(row["llm_config"])
 
-        return UserSettings(
+        user_settings = UserSettings(
             user_id=user_id,
             token="",
             audio_quota_mb=int(row["audio_quota_mb"]),
             llm_config=llm_config,
             agent_id=str(row["agent_id"] or ""),
         )
+
+        # Cache the result for 300 seconds (5 minutes)
+        if hasattr(self, "_auth_cache"):
+            self._auth_cache[selected_code] = (dict(row), user_settings, time.time() + 300)
+
+        return user_settings
 
     async def authenticate_device_for_factory(
         self,
@@ -2079,6 +2166,11 @@ class VoicePostgresRepository:
                         "already_bound": True,
                     }
 
+                is_first_activation = False
+                device_row = await conn.fetchrow("SELECT status FROM devices WHERE device_id = $1", selected_device)
+                if device_row and device_row["status"] == "provisioned":
+                    is_first_activation = True
+
                 binding_id = uuid.uuid4().hex
                 await conn.execute(
                     """
@@ -2097,6 +2189,9 @@ class VoicePostgresRepository:
                     """,
                     selected_device,
                 )
+                if is_first_activation:
+                    await self._apply_first_activation_gift(conn, selected_device)
+
                 await self._record_binding_event(
                     conn,
                     event_type="device_bound_by_admin",
@@ -3974,35 +4069,6 @@ class VoicePostgresRepository:
             "gift_duration_months": int(row["gift_duration_months"] or 0),
         }
 
-    async def admin_update_allowance_settings(
-        self,
-        *,
-        daily_free_minutes: float,
-        enabled: bool,
-        gift_subscription_plan_id: str | None = None,
-        gift_duration_months: int = 0,
-    ) -> dict[str, Any]:
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO miniapp_allowance_settings (
-                    id, daily_free_minutes, enabled, gift_subscription_plan_id, gift_duration_months, updated_at
-                )
-                VALUES (1, $1, $2, $3, $4, now())
-                ON CONFLICT (id) DO UPDATE SET
-                    daily_free_minutes = EXCLUDED.daily_free_minutes,
-                    enabled = EXCLUDED.enabled,
-                    gift_subscription_plan_id = EXCLUDED.gift_subscription_plan_id,
-                    gift_duration_months = EXCLUDED.gift_duration_months,
-                    updated_at = now()
-                """,
-                daily_free_minutes,
-                enabled,
-                gift_subscription_plan_id,
-                gift_duration_months,
-            )
-        return {"ok": True}
-
     # === 扣减设备分钟额度 (状态机) ===
     async def deduct_device_minutes_quota(self, device_id: str, cost_minutes: float) -> None:
         """从设备的月度订阅、加油包和低保额度中扣除会话分钟数（高精度）。"""
@@ -4011,81 +4077,148 @@ class VoicePostgresRepository:
 
         async with self.pool.acquire() as conn:
             async with conn.transaction():
-                # 获取设备当前额度状态
-                row = await conn.fetchrow(
-                    """
-                    SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
-                           subscription_expires_at, fuel_minutes_balance, last_reset_month,
-                           daily_allowance_date, daily_allowance_seconds_used
-                    FROM devices
-                    WHERE device_id = $1
-                    FOR UPDATE
-                    """,
-                    device_id,
-                )
-                if row is None:
-                    return
+                # =====================================================================
+                # 【备用旧代码注释开始】 - 单设备扣减逻辑
+                # =====================================================================
+                # row = await conn.fetchrow(
+                #     """
+                #     SELECT subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+                #            subscription_expires_at, fuel_minutes_balance, last_reset_month,
+                #            daily_allowance_date, daily_allowance_seconds_used
+                #     FROM devices
+                #     WHERE device_id = $1
+                #     FOR UPDATE
+                #     """,
+                #     device_id,
+                # )
+                # ... 原单设备逻辑在此省略以备未来可能恢复使用，详细可见 Git 历史或文档 ...
+                # =====================================================================
+                # 【备用旧代码注释结束】
+                # =====================================================================
 
-                subscription_plan_id = row["subscription_plan_id"]
-                subscription_minutes_limit = float(row["subscription_minutes_limit"] or 0)
-                subscription_minutes_used = float(row["subscription_minutes_used"] or 0.0)
-                subscription_expires_at = row["subscription_expires_at"]
-                fuel_minutes_balance = float(row["fuel_minutes_balance"] or 0.0)
-                last_reset_month = str(row["last_reset_month"] or "").strip()
-                daily_allowance_date = row["daily_allowance_date"]
-                daily_allowance_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
+                # 1. 查找当前设备绑定的活跃用户
+                bound_row = await conn.fetchrow(
+                    """
+                    SELECT user_id FROM device_bindings
+                    WHERE device_id = $1 AND status = 'active'
+                    ORDER BY bound_at DESC LIMIT 1
+                    """,
+                    device_id
+                )
+                user_id = bound_row["user_id"] if bound_row else None
+
+                # 2. 获取锁定该用户下所有的活跃设备行（若是未绑定状态，退回仅锁定并更新该单设备）
+                if user_id:
+                    device_rows = await conn.fetch(
+                        """
+                        SELECT d.device_id, d.subscription_plan_id, d.subscription_minutes_limit, d.subscription_minutes_used,
+                               d.subscription_expires_at, d.fuel_minutes_balance, d.last_reset_month,
+                               d.daily_allowance_date, d.daily_allowance_seconds_used
+                        FROM devices d
+                        JOIN device_bindings b ON b.device_id = d.device_id AND b.status = 'active'
+                        WHERE b.user_id = $1
+                        FOR UPDATE
+                        """,
+                        user_id
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        """
+                        SELECT device_id, subscription_plan_id, subscription_minutes_limit, subscription_minutes_used,
+                               subscription_expires_at, fuel_minutes_balance, last_reset_month,
+                               daily_allowance_date, daily_allowance_seconds_used
+                        FROM devices
+                        WHERE device_id = $1
+                        FOR UPDATE
+                        """,
+                        device_id
+                    )
+                    device_rows = [row] if row else []
+
+                if not device_rows:
+                    return
 
                 from datetime import datetime, timezone
                 now_dt = datetime.now(timezone.utc)
                 current_month_str = now_dt.strftime("%Y-%m")
 
-                # 1. 跨月惰性重置
-                if last_reset_month != current_month_str:
-                    subscription_minutes_used = 0.0
-                    fuel_minutes_balance = 0.0
-                    last_reset_month = current_month_str
-                    await conn.execute(
-                        """
-                        UPDATE devices
-                        SET subscription_minutes_used = 0.0000,
-                            fuel_minutes_balance = 0.0000,
-                            last_reset_month = $2,
-                            updated_at = now()
-                        WHERE device_id = $1
-                        """,
-                        device_id,
-                        current_month_str,
-                    )
+                devices_state = []
+                for row in device_rows:
+                    d_id = row["device_id"]
+                    sub_plan_id = row["subscription_plan_id"]
+                    sub_limit = float(row["subscription_minutes_limit"] or 0)
+                    sub_used = float(row["subscription_minutes_used"] or 0.0)
+                    sub_expires = row["subscription_expires_at"]
+                    fuel_bal = float(row["fuel_minutes_balance"] or 0.0)
+                    last_reset = str(row["last_reset_month"] or "").strip()
+                    daily_date = row["daily_allowance_date"]
+                    daily_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
 
-                # 2. 判断订阅是否有效（未过期）
-                is_sub_valid = (subscription_expires_at is not None and subscription_expires_at > now_dt)
+                    # 跨月惰性重置
+                    if last_reset != current_month_str:
+                        sub_used = 0.0
+                        fuel_bal = 0.0
+                        last_reset = current_month_str
+                        await conn.execute(
+                            """
+                            UPDATE devices
+                            SET subscription_minutes_used = 0.0000,
+                                fuel_minutes_balance = 0.0000,
+                                last_reset_month = $2,
+                                updated_at = now()
+                            WHERE device_id = $1
+                            """,
+                            d_id,
+                            current_month_str,
+                        )
 
-                # 3. 优先级扣减：订阅额度 -> 加油包 -> 每日低保
+                    devices_state.append({
+                        "device_id": d_id,
+                        "subscription_plan_id": sub_plan_id,
+                        "subscription_minutes_limit": sub_limit,
+                        "subscription_minutes_used": sub_used,
+                        "subscription_expires_at": sub_expires,
+                        "fuel_minutes_balance": fuel_bal,
+                        "last_reset_month": last_reset,
+                        "daily_allowance_date": daily_date,
+                        "daily_allowance_seconds_used": daily_seconds_used,
+                        "dirty": False
+                    })
+
                 remaining_cost = cost_minutes
 
-                # 3.1 订阅额度扣减
-                if is_sub_valid:
-                    sub_rem = max(0.0, subscription_minutes_limit - subscription_minutes_used)
-                    if sub_rem > 0:
-                        if sub_rem >= remaining_cost:
-                            subscription_minutes_used += remaining_cost
+                # 3.1 第一优先级：扣减订阅时长
+                for state in devices_state:
+                    if remaining_cost <= 0:
+                        break
+                    sub_expires = state["subscription_expires_at"]
+                    is_sub_valid = (sub_expires is not None and sub_expires > now_dt)
+                    if is_sub_valid:
+                        sub_rem = max(0.0, state["subscription_minutes_limit"] - state["subscription_minutes_used"])
+                        if sub_rem > 0:
+                            if sub_rem >= remaining_cost:
+                                state["subscription_minutes_used"] += remaining_cost
+                                remaining_cost = 0.0
+                            else:
+                                state["subscription_minutes_used"] = state["subscription_minutes_limit"]
+                                remaining_cost -= sub_rem
+                            state["dirty"] = True
+
+                # 3.2 第二优先级：扣减加油包
+                for state in devices_state:
+                    if remaining_cost <= 0:
+                        break
+                    if state["fuel_minutes_balance"] > 0:
+                        if state["fuel_minutes_balance"] >= remaining_cost:
+                            state["fuel_minutes_balance"] -= remaining_cost
                             remaining_cost = 0.0
                         else:
-                            subscription_minutes_used = subscription_minutes_limit
-                            remaining_cost -= sub_rem
+                            remaining_cost -= state["fuel_minutes_balance"]
+                            state["fuel_minutes_balance"] = 0.0
+                        state["dirty"] = True
 
-                # 3.2 加油包扣减
-                if remaining_cost > 0 and fuel_minutes_balance > 0:
-                    if fuel_minutes_balance >= remaining_cost:
-                        fuel_minutes_balance -= remaining_cost
-                        remaining_cost = 0.0
-                    else:
-                        remaining_cost -= fuel_minutes_balance
-                        fuel_minutes_balance = 0.0
-
-                # 3.3 每日温情低保扣减
+                # 3.3 第三优先级：扣减每日低保
                 if remaining_cost > 0:
-                    # 获取全局低保设置
                     allowance_row = await conn.fetchrow(
                         "SELECT daily_free_minutes, enabled FROM miniapp_allowance_settings WHERE id = 1"
                     )
@@ -4097,40 +4230,53 @@ class VoicePostgresRepository:
 
                     if allowance_enabled:
                         today = now_dt.date()
-                        if daily_allowance_date != today:
-                            daily_allowance_date = today
-                            daily_allowance_seconds_used = 0.0
+                        for state in devices_state:
+                            if remaining_cost <= 0:
+                                break
+                            
+                            daily_date = state["daily_allowance_date"]
+                            daily_seconds_used = state["daily_allowance_seconds_used"]
+                            
+                            if daily_date != today:
+                                daily_date = today
+                                daily_seconds_used = 0.0
 
-                        cost_seconds = remaining_cost * 60.0
-                        allowance_limit_seconds = daily_free_minutes * 60.0
-                        rem_seconds = max(0.0, allowance_limit_seconds - daily_allowance_seconds_used)
+                            cost_seconds = remaining_cost * 60.0
+                            allowance_limit_seconds = daily_free_minutes * 60.0
+                            rem_seconds = max(0.0, allowance_limit_seconds - daily_seconds_used)
 
-                        if rem_seconds >= cost_seconds:
-                            daily_allowance_seconds_used += cost_seconds
-                            remaining_cost = 0.0
-                        else:
-                            daily_allowance_seconds_used = allowance_limit_seconds
-                            remaining_cost -= (rem_seconds / 60.0)
+                            if rem_seconds >= cost_seconds:
+                                daily_seconds_used += cost_seconds
+                                remaining_cost = 0.0
+                            else:
+                                daily_seconds_used = allowance_limit_seconds
+                                remaining_cost -= (rem_seconds / 60.0)
+                            
+                            state["daily_allowance_date"] = daily_date
+                            state["daily_allowance_seconds_used"] = daily_seconds_used
+                            state["dirty"] = True
 
-                # 更新设备额度列到数据库
-                await conn.execute(
-                    """
-                    UPDATE devices
-                    SET subscription_minutes_used = $2,
-                        fuel_minutes_balance = $3,
-                        last_reset_month = $4,
-                        daily_allowance_date = $5,
-                        daily_allowance_seconds_used = $6,
-                        updated_at = now()
-                    WHERE device_id = $1
-                    """,
-                    device_id,
-                    subscription_minutes_used,
-                    fuel_minutes_balance,
-                    last_reset_month,
-                    daily_allowance_date,
-                    daily_allowance_seconds_used,
-                )
+                # 写回修改的设备额度列到数据库
+                for state in devices_state:
+                    if state["dirty"]:
+                        await conn.execute(
+                            """
+                            UPDATE devices
+                            SET subscription_minutes_used = $2,
+                                fuel_minutes_balance = $3,
+                                last_reset_month = $4,
+                                daily_allowance_date = $5,
+                                daily_allowance_seconds_used = $6,
+                                updated_at = now()
+                            WHERE device_id = $1
+                            """,
+                            state["device_id"],
+                            state["subscription_minutes_used"],
+                            state["fuel_minutes_balance"],
+                            state["last_reset_month"],
+                            state["daily_allowance_date"],
+                            state["daily_allowance_seconds_used"],
+                        )
 
     async def get_pricing_by_type(self, service_type: str) -> dict[str, float]:
         row = await self.pool.fetchrow(
