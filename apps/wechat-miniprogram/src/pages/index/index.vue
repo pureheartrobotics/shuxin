@@ -146,6 +146,17 @@ function closePopup() {
   }
 }
 
+function handleSessionError(errorMsg: string): boolean {
+  if (errorMsg === "session_token is invalid or expired") {
+    uni.removeStorageSync("shuxin_session_token");
+    uni.removeStorageSync("shuxin_session_expires_at");
+    uni.removeStorageSync("shuxin_user_id");
+    uni.redirectTo({ url: "/pages/login/login" });
+    return true;
+  }
+  return false;
+}
+
 function request(path: string, data: Record<string, unknown>): Promise<any> {
   return new Promise((resolve, reject) => {
     uni.request({
@@ -157,6 +168,7 @@ function request(path: string, data: Record<string, unknown>): Promise<any> {
           resolve(res.data);
         } else {
           const errorText = res.data?.error || `请求失败: ${res.statusCode}`;
+          handleSessionError(errorText);
           reject(new Error(path === "/api/devices/bind" ? formatBindError(errorText) : errorText));
         }
       },
@@ -176,7 +188,9 @@ function requestGet(path: string): Promise<any> {
         if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
           resolve(res.data);
         } else {
-          reject(new Error(res.data?.error || `请求失败: ${res.statusCode}`));
+          const errorText = res.data?.error || `请求失败: ${res.statusCode}`;
+          handleSessionError(errorText);
+          reject(new Error(errorText));
         }
       },
       fail: (error) => {

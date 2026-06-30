@@ -16,7 +16,7 @@
       </view>
       <view class="row">
         <view class="balance-block">
-          <view class="label">账户余额</view>
+          <view class="label">账户剩余时长</view>
           <view class="value" :class="{ exhausted: quotaExhausted }">{{ balanceLabel }}</view>
           <view v-if="quotaExhausted" class="hint">额度已用尽，请充值后继续使用</view>
         </view>
@@ -43,8 +43,8 @@
 
     <view v-if="showPaymentSheet" class="sheet-mask" @tap="closePaymentSheet">
       <view class="sheet" @tap.stop>
-        <view class="sheet-title">选择订阅套餐</view>
-        <view class="sheet-subtitle">支付成功后自动充值到账户余额</view>
+        <view class="sheet-title">选择购买套餐</view>
+        <view class="sheet-subtitle">支付成功后自动增加到账户剩余时长</view>
         <view v-if="plansLoading" class="sheet-hint">加载套餐中...</view>
         <view v-else-if="!plans.length" class="sheet-hint">暂无可用套餐</view>
         <view v-else class="plan-list">
@@ -99,7 +99,7 @@ const displayUserId = computed(() => userId.value || String(uni.getStorageSync("
 const balanceLabel = computed(() => {
   if (!quotaConfigured.value) return "—";
   if (remainYuan.value == null) return "查询失败";
-  return `${remainYuan.value} 元`;
+  return `${remainYuan.value} 分钟`;
 });
 
 onShow(() => {
@@ -114,6 +114,17 @@ function sessionToken(): string {
   return token;
 }
 
+function handleSessionError(errorMsg: string): boolean {
+  if (errorMsg === "session_token is invalid or expired") {
+    uni.removeStorageSync("shuxin_session_token");
+    uni.removeStorageSync("shuxin_session_expires_at");
+    uni.removeStorageSync("shuxin_user_id");
+    uni.redirectTo({ url: "/pages/login/login" });
+    return true;
+  }
+  return false;
+}
+
 function request(path: string, data: Record<string, unknown>): Promise<any> {
   return new Promise((resolve, reject) => {
     uni.request({
@@ -124,7 +135,9 @@ function request(path: string, data: Record<string, unknown>): Promise<any> {
         if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
           resolve(res.data);
         } else {
-          reject(new Error(res.data?.error || `请求失败: ${res.statusCode}`));
+          const errorMsg = res.data?.error || `请求失败: ${res.statusCode}`;
+          handleSessionError(errorMsg);
+          reject(new Error(errorMsg));
         }
       },
       fail: (error) => reject(new Error(error.errMsg || "请求失败"))
@@ -141,7 +154,9 @@ function requestGet(path: string): Promise<any> {
         if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
           resolve(res.data);
         } else {
-          reject(new Error(res.data?.error || `请求失败: ${res.statusCode}`));
+          const errorMsg = res.data?.error || `请求失败: ${res.statusCode}`;
+          handleSessionError(errorMsg);
+          reject(new Error(errorMsg));
         }
       },
       fail: (error) => reject(new Error(error.errMsg || "请求失败"))
@@ -229,7 +244,7 @@ async function purchasePlan(plan: PaymentPlan) {
         fail: (error) => reject(new Error(error.errMsg || "支付失败"))
       });
     });
-    message.value = "支付成功，余额更新中";
+    message.value = "支付成功，额度更新中";
     showPaymentSheet.value = false;
     await loadProfile();
   } catch (error: any) {

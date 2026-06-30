@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/wechat-miniprogram"
 APPID="${WECHAT_MINIPROGRAM_APPID:-touristappid}"
 MODE="${1:-dev}"
-DEFAULT_API_BASE="https://shuxinzzx.com.cn"
+# DEFAULT_API_BASE="https://shuxinzzx.com.cn"
+DEFAULT_API_BASE="http://localhost:8765"
 
 check_api_base() {
   if ! curl -fsS "$API_BASE/health" >/dev/null; then
