@@ -42,6 +42,30 @@ class FeedbackUpdatePayload(BaseModel):
     status: str
     admin_notes: str
 
+class SubscriptionPlanPayload(BaseModel):
+    plan_id: str
+    name: str
+    amount_fen: int
+    duration_minutes: int
+    description: Optional[str] = ""
+    sort_order: Optional[int] = 0
+    enabled: Optional[bool] = True
+
+class FuelPackagePayload(BaseModel):
+    package_id: str
+    name: str
+    amount_fen: int
+    duration_minutes: int
+    description: Optional[str] = ""
+    sort_order: Optional[int] = 0
+    enabled: Optional[bool] = True
+
+class AllowanceSettingsPayload(BaseModel):
+    daily_free_minutes: float
+    enabled: bool
+    gift_subscription_plan_id: Optional[str] = None
+    gift_duration_months: Optional[int] = 0
+
 @miniapp_admin_router.post("/api/login")
 async def admin_login(payload: LoginPayload, response: Response):
     token = _get_miniapp_admin_token()
@@ -124,6 +148,83 @@ async def update_feedback(request: Request, feedback_id: int, payload: FeedbackU
     )
     return result
 
+@miniapp_admin_router.get("/api/subscription-plans")
+async def list_subscription_plans(request: Request):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    items = await repo.admin_list_subscription_plans()
+    return {"items": items}
+
+@miniapp_admin_router.post("/api/subscription-plans")
+async def upsert_subscription_plan(request: Request, payload: SubscriptionPlanPayload):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    result = await repo.admin_upsert_subscription_plan(
+        plan_id=payload.plan_id,
+        name=payload.name,
+        amount_fen=payload.amount_fen,
+        duration_minutes=payload.duration_minutes,
+        description=payload.description or "",
+        sort_order=payload.sort_order or 0,
+        enabled=payload.enabled if payload.enabled is not None else True
+    )
+    return result
+
+@miniapp_admin_router.delete("/api/subscription-plans/{plan_id}")
+async def delete_subscription_plan(request: Request, plan_id: str):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    result = await repo.admin_delete_subscription_plan(plan_id)
+    return result
+
+@miniapp_admin_router.get("/api/fuel-packages")
+async def list_fuel_packages(request: Request):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    items = await repo.admin_list_fuel_packages()
+    return {"items": items}
+
+@miniapp_admin_router.post("/api/fuel-packages")
+async def upsert_fuel_package(request: Request, payload: FuelPackagePayload):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    result = await repo.admin_upsert_fuel_package(
+        package_id=payload.package_id,
+        name=payload.name,
+        amount_fen=payload.amount_fen,
+        duration_minutes=payload.duration_minutes,
+        description=payload.description or "",
+        sort_order=payload.sort_order or 0,
+        enabled=payload.enabled if payload.enabled is not None else True
+    )
+    return result
+
+@miniapp_admin_router.delete("/api/fuel-packages/{package_id}")
+async def delete_fuel_package(request: Request, package_id: str):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    result = await repo.admin_delete_fuel_package(package_id)
+    return result
+
+@miniapp_admin_router.get("/api/allowance-settings")
+async def get_allowance_settings(request: Request):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    data = await repo.admin_get_allowance_settings()
+    return {"data": data}
+
+@miniapp_admin_router.put("/api/allowance-settings")
+async def update_allowance_settings(request: Request, payload: AllowanceSettingsPayload):
+    require_miniapp_admin(request)
+    repo = request.app.state.repo
+    result = await repo.admin_update_allowance_settings(
+        daily_free_minutes=payload.daily_free_minutes,
+        enabled=payload.enabled,
+        gift_subscription_plan_id=payload.gift_subscription_plan_id,
+        gift_duration_months=payload.gift_duration_months or 0
+    )
+    return result
+
 @miniapp_admin_router.get("", response_class=HTMLResponse)
 async def admin_portal(request: Request):
     """渲染精美的小程序专属后台管理界面。"""
@@ -131,7 +232,7 @@ async def admin_portal(request: Request):
     provided = request.headers.get("X-Miniapp-Admin-Token") or request.cookies.get("shuxin_miniapp_admin")
     authenticated = (provided == token)
 
-    html_content = f"""<!DOCTYPE html>
+    html_content = rf"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -143,13 +244,81 @@ async def admin_portal(request: Request):
     <style>
         body {{
             font-family: 'Outfit', 'Noto Sans SC', sans-serif;
-            background-color: #0b0f19;
-            color: #f3f4f6;
+            background: linear-gradient(135deg, #fdfbf7 0%, #f3ede2 100%);
+            color: #2e2a25;
         }}
         .glass {{
-            background: rgba(17, 24, 39, 0.7);
-            backdrop-filter: blur(12px);
-            border: 1px rgba(255, 255, 255, 0.08) solid;
+            background: rgba(255, 255, 255, 0.82) !important;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(139, 115, 85, 0.15) !important;
+            box-shadow: 0 8px 32px rgba(139, 115, 85, 0.05);
+        }}
+        /* Overrides to map dark utility classes to beautiful light mode theme */
+        .text-white {{ color: #23201d !important; }}
+        .text-gray-100 {{ color: #2e2a25 !important; }}
+        .text-gray-200 {{ color: #3d3832 !important; }}
+        .text-gray-300 {{ color: #4d463f !important; }}
+        .text-gray-450 {{ color: #5c554e !important; }}
+        .text-gray-455 {{ color: #5c554e !important; }}
+        .text-gray-400 {{ color: #736b60 !important; }}
+        .text-gray-500 {{ color: #9c9182 !important; }}
+        .text-indigo-400 {{ color: #2f604f !important; }}
+        
+        .bg-indigo-600 {{ background-color: #2f604f !important; }}
+        .hover\:bg-indigo-500:hover {{ background-color: #23473b !important; }}
+        .bg-indigo-600\/10 {{ background-color: rgba(47, 96, 79, 0.08) !important; }}
+        .border-indigo-500 {{ border-color: #2f604f !important; }}
+        
+        .bg-gray-900 {{ background-color: #ffffff !important; }}
+        .bg-gray-900\/30 {{ background-color: rgba(139, 115, 85, 0.06) !important; }}
+        .bg-gray-900\/80 {{ background-color: #ffffff !important; }}
+        .bg-emerald-500\/10 {{ background-color: rgba(47, 96, 79, 0.08) !important; }}
+        .text-emerald-400 {{ color: #2f604f !important; }}
+        
+        .border-gray-800 {{ border-color: rgba(139, 115, 85, 0.15) !important; }}
+        .border-gray-850 {{ border-color: rgba(139, 115, 85, 0.12) !important; }}
+        .divide-gray-800 > :not([hidden]) ~ :not([hidden]) {{ border-color: rgba(139, 115, 85, 0.12) !important; }}
+        
+        .hover\:bg-gray-850:hover {{ background-color: rgba(139, 115, 85, 0.06) !important; }}
+        .hover\:bg-gray-900\/10:hover {{ background-color: rgba(139, 115, 85, 0.04) !important; }}
+        
+        /* Form inputs custom styling */
+        input[type="text"], input[type="password"], input[type="number"], textarea, select {{
+            background-color: #ffffff !important;
+            border: 1px solid rgba(139, 115, 85, 0.25) !important;
+            color: #2e2a25 !important;
+        }}
+        input:focus, textarea:focus, select:focus {{
+            border-color: #2f604f !important;
+            box-shadow: 0 0 0 2px rgba(47, 96, 79, 0.2) !important;
+        }}
+        
+        /* Amber background adjustments */
+        .bg-amber-955\/20, .bg-amber-950\/20 {{
+            background-color: rgba(217, 119, 6, 0.08) !important;
+            border-color: rgba(217, 119, 6, 0.2) !important;
+            color: #b45309 !important;
+        }}
+        
+        /* Modal backdrop opacity */
+        .bg-black\/75 {{
+            background-color: rgba(46, 44, 41, 0.45) !important;
+        }}
+        
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {{
+            width: 8px;
+            height: 8px;
+        }}
+        ::-webkit-scrollbar-track {{
+            background: rgba(139, 115, 85, 0.05);
+        }}
+        ::-webkit-scrollbar-thumb {{
+            background: rgba(139, 115, 85, 0.2);
+            border-radius: 4px;
+        }}
+        ::-webkit-scrollbar-thumb:hover {{
+            background: rgba(139, 115, 85, 0.35);
         }}
     </style>
 </head>
@@ -201,7 +370,7 @@ async def admin_portal(request: Request):
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
                         </svg>
-                        公告公告发布
+                        公告发布
                     </button>
                     <button @click="currentTab = 'feedbacks'" 
                         :class="currentTab === 'feedbacks' ? 'bg-indigo-600/10 text-indigo-400 border-l-4 border-indigo-500' : 'text-gray-400 hover:bg-gray-850 hover:text-gray-200'"
@@ -210,6 +379,14 @@ async def admin_portal(request: Request):
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                         </svg>
                         用户意见反馈
+                    </button>
+                    <button @click="currentTab = 'pricing'" 
+                        :class="currentTab === 'pricing' ? 'bg-indigo-600/10 text-indigo-400 border-l-4 border-indigo-500' : 'text-gray-400 hover:bg-gray-850 hover:text-gray-200'"
+                        class="w-full flex items-center px-4 py-3 rounded-xl font-medium text-left transition duration-150">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        套餐定价设置
                     </button>
                 </nav>
                 <div class="p-4 border-t border-gray-800">
@@ -226,10 +403,10 @@ async def admin_portal(request: Request):
                 <header class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
                         <h2 class="text-3xl font-bold tracking-tight">
-                            {{{{ currentTab === 'announcements' ? '公告管理' : '用户意见反馈' }}}}
+                            {{{{ currentTab === 'announcements' ? '公告管理' : currentTab === 'feedbacks' ? '用户意见反馈' : '套餐与低保设置' }}}}
                         </h2>
                         <p class="text-gray-400 text-sm mt-1">
-                            {{{{ currentTab === 'announcements' ? '发布小程序端顶部通知横幅或紧急大屏弹窗' : '查看小程序用户的意见反馈和客服跟进' }}}}
+                            {{{{ currentTab === 'announcements' ? '发布小程序端顶部通知横幅或紧急大屏弹窗' : currentTab === 'feedbacks' ? '查看小程序用户的意见反馈和客服跟进' : '动态调整包月订阅套餐、充值加油包及每日低保额度' }}}}
                         </p>
                     </div>
                     <div v-if="currentTab === 'announcements'">
@@ -337,6 +514,174 @@ async def admin_portal(request: Request):
                                     处理 / 备注
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 套餐与低保配置选项卡 -->
+                <div v-if="currentTab === 'pricing'" class="space-y-8">
+                    <!-- 每日温情低保设置卡片 -->
+                    <div class="glass p-6 rounded-2xl border border-gray-800 space-y-4">
+                        <h3 class="text-lg font-bold text-white flex items-center">
+                            <span class="mr-2">🎁</span> 每日温情低保设定
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">每日赠送分钟数 (分钟)</label>
+                                <input type="number" step="0.1" v-model="allowanceForm.daily_free_minutes"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            </div>
+                            <div class="flex items-center h-[46px]">
+                                <input type="checkbox" v-model="allowanceForm.enabled" id="allowance_enabled" 
+                                    class="w-5 h-5 text-indigo-600 bg-gray-900 border-gray-800 rounded focus:ring-indigo-500/50">
+                                <label for="allowance_enabled" class="ml-2 text-sm text-gray-300 cursor-pointer">开启低保功能</label>
+                            </div>
+                            <div>
+                                <button @click="submitAllowanceSettings" :disabled="loading"
+                                    class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-5 rounded-xl transition">
+                                    保存低保设置
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bg-amber-950/20 p-4 rounded-xl border border-amber-900/30 text-amber-300 text-xs">
+                            💡 **额度说明**：付费分钟数耗尽后，若开启低保，用户每天通话前重置获取该免费分钟额度。当天不用完作废，不可累计。
+                        </div>
+                    </div>
+
+                    <!-- 设备首次激活赠送设定 -->
+                    <div class="glass p-6 rounded-2xl border border-gray-800 space-y-4">
+                        <h3 class="text-lg font-bold text-white flex items-center">
+                            <span class="mr-2">🚀</span> 设备首次激活赠送设定
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">赠送订阅套餐</label>
+                                <select v-model="allowanceForm.gift_subscription_plan_id"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                                    <option :value="null">不赠送</option>
+                                    <option v-for="plan in subPlans" :key="plan.plan_id" :value="plan.plan_id">
+                                        {{{{ plan.name }}}} ({{{{ plan.duration_minutes }}}} 分钟/月)
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">赠送期限 (月)</label>
+                                <input type="number" min="0" step="1" v-model="allowanceForm.gift_duration_months"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            </div>
+                            <div>
+                                <button @click="submitAllowanceSettings" :disabled="loading"
+                                    class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-5 rounded-xl transition">
+                                    保存赠送设置
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bg-amber-955/20 p-4 rounded-xl border border-amber-900/30 text-amber-300 text-xs">
+                            💡 **赠送说明**：当出厂设备首次执行用户绑定激活时，系统将自动读取该规则，为其注入指定时长与期限的包月限额。更新该规则仅影响新激活的设备，已绑定的用户不受影响。
+                        </div>
+                    </div>
+
+                    <!-- 包月订阅套餐管理 -->
+                    <div class="glass rounded-2xl overflow-hidden shadow-xl border border-gray-800 p-6 space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-bold text-white flex items-center">
+                                <span class="mr-2">📅</span> 包月订阅套餐档位
+                            </h3>
+                            <button @click="openAddSubPlanModal"
+                                class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 px-4 rounded-xl text-sm transition">
+                                新增订阅套餐
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/30 border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider font-semibold">
+                                        <th class="py-3 px-4">标识 (ID)</th>
+                                        <th class="py-3 px-4">套餐名称</th>
+                                        <th class="py-3 px-4">月度价格 (元)</th>
+                                        <th class="py-3 px-4">每月额度 (分钟)</th>
+                                        <th class="py-3 px-4">说明描述</th>
+                                        <th class="py-3 px-4">排序</th>
+                                        <th class="py-3 px-4">状态</th>
+                                        <th class="py-3 px-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-800 text-sm">
+                                    <tr v-if="!subPlans.length" class="text-gray-500 text-center">
+                                        <td colspan="8" class="py-8">暂无订阅套餐数据</td>
+                                    </tr>
+                                    <tr v-for="plan in subPlans" :key="plan.plan_id" class="hover:bg-gray-900/10">
+                                        <td class="py-3 px-4 font-mono text-xs text-gray-400">{{{{ plan.plan_id }}}}</td>
+                                        <td class="py-3 px-4 font-semibold text-white">{{{{ plan.name }}}}</td>
+                                        <td class="py-3 px-4">¥{{{{ plan.amount_yuan }}}}</td>
+                                        <td class="py-3 px-4">{{{{ plan.duration_minutes }}}} 分钟</td>
+                                        <td class="py-3 px-4 text-gray-450">{{{{ plan.description }}}}</td>
+                                        <td class="py-3 px-4">{{{{ plan.sort_order }}}}</td>
+                                        <td class="py-3 px-4">
+                                            <span :class="plan.enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-500'"
+                                                class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border border-current">
+                                                {{{{ plan.enabled ? '已启用' : '已禁用' }}}}
+                                            </span>
+                                        </td>
+                                        <td class="py-3 px-4 text-right space-x-2">
+                                            <button @click="editSubPlan(plan)" class="text-indigo-400 hover:text-indigo-300">编辑</button>
+                                            <button @click="deleteSubPlan(plan.plan_id)" class="text-rose-400 hover:text-rose-300">删除</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 弹性充值加油包管理 -->
+                    <div class="glass rounded-2xl overflow-hidden shadow-xl border border-gray-800 p-6 space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-bold text-white flex items-center">
+                                <span class="mr-2">⚡</span> 弹性充值加油包 (月底清零)
+                            </h3>
+                            <button @click="openAddFuelPackModal"
+                                class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 px-4 rounded-xl text-sm transition">
+                                新增弹性加油包
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/30 border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider font-semibold">
+                                        <th class="py-3 px-4">标识 (ID)</th>
+                                        <th class="py-3 px-4">加油包名称</th>
+                                        <th class="py-3 px-4">加油包价格 (元)</th>
+                                        <th class="py-3 px-4">包含时长 (分钟)</th>
+                                        <th class="py-3 px-4">说明描述</th>
+                                        <th class="py-3 px-4">排序</th>
+                                        <th class="py-3 px-4">状态</th>
+                                        <th class="py-3 px-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-800 text-sm">
+                                    <tr v-if="!fuelPacks.length" class="text-gray-500 text-center">
+                                        <td colspan="8" class="py-8">暂无充值加油包数据</td>
+                                    </tr>
+                                    <tr v-for="pack in fuelPacks" :key="pack.package_id" class="hover:bg-gray-900/10">
+                                        <td class="py-3 px-4 font-mono text-xs text-gray-400">{{{{ pack.package_id }}}}</td>
+                                        <td class="py-3 px-4 font-semibold text-white">{{{{ pack.name }}}}</td>
+                                        <td class="py-3 px-4">¥{{{{ pack.amount_yuan }}}}</td>
+                                        <td class="py-3 px-4">{{{{ pack.duration_minutes }}}} 分钟</td>
+                                        <td class="py-3 px-4 text-gray-455">{{{{ pack.description }}}}</td>
+                                        <td class="py-3 px-4">{{{{ pack.sort_order }}}}</td>
+                                        <td class="py-3 px-4">
+                                            <span :class="pack.enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-500'"
+                                                class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border border-current">
+                                                {{{{ pack.enabled ? '已启用' : '已禁用' }}}}
+                                            </span>
+                                        </td>
+                                        <td class="py-3 px-4 text-right space-x-2">
+                                            <button @click="editFuelPack(pack)" class="text-indigo-400 hover:text-indigo-300">编辑</button>
+                                            <button @click="deleteFuelPack(pack.package_id)" class="text-rose-400 hover:text-rose-300">删除</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -450,6 +795,138 @@ async def admin_portal(request: Request):
                 </form>
             </div>
         </div>
+
+        <!-- 订阅套餐 Modal -->
+        <div v-if="showSubPlanModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div class="glass w-full max-w-lg p-8 rounded-2xl shadow-2xl space-y-6">
+                <div class="flex justify-between items-center pb-4 border-b border-gray-850">
+                    <h3 class="text-xl font-bold text-white">{{{{ subPlanForm.is_edit ? '编辑订阅套餐' : '新建订阅套餐' }}}}</h3>
+                    <button @click="showSubPlanModal = false" class="text-gray-400 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form @submit.prevent="submitSubPlan" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">套餐标识 (ID)</label>
+                        <input type="text" v-model="subPlanForm.plan_id" required :disabled="subPlanForm.is_edit" 
+                            placeholder="如 sub_basic"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">名称</label>
+                            <input type="text" v-model="subPlanForm.name" required placeholder="如 基础版"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">月度额度 (分钟)</label>
+                            <input type="number" v-model="subPlanForm.duration_minutes" required placeholder="如 120"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">价格 (分)</label>
+                            <input type="number" v-model="subPlanForm.amount_fen" required placeholder="如 1900"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">排序值</label>
+                            <input type="number" v-model="subPlanForm.sort_order" required placeholder="升序排序"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                    </div>
+                    <div class="py-2">
+                        <div class="flex items-center">
+                            <input type="checkbox" v-model="subPlanForm.enabled" id="sub_plan_enabled" 
+                                class="w-5 h-5 text-indigo-600 bg-gray-900 border-gray-800 rounded focus:ring-indigo-500/50">
+                            <label for="sub_plan_enabled" class="ml-2 text-sm text-gray-300 cursor-pointer">启用该订阅套餐</label>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">描述信息</label>
+                        <input type="text" v-model="subPlanForm.description" placeholder="套餐描述信息"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-850">
+                        <button type="button" @click="showSubPlanModal = false"
+                            class="px-5 py-2.5 rounded-xl border border-gray-800 text-gray-400 hover:text-white transition">取消</button>
+                        <button type="submit" :disabled="loading"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl transition">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 弹性加油包 Modal -->
+        <div v-if="showFuelPackModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div class="glass w-full max-w-lg p-8 rounded-2xl shadow-2xl space-y-6">
+                <div class="flex justify-between items-center pb-4 border-b border-gray-850">
+                    <h3 class="text-xl font-bold text-white">{{{{ fuelPackForm.is_edit ? '编辑弹性加油包' : '新建弹性加油包' }}}}</h3>
+                    <button @click="showFuelPackModal = false" class="text-gray-400 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form @submit.prevent="submitFuelPack" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">加油包标识 (ID)</label>
+                        <input type="text" v-model="fuelPackForm.package_id" required :disabled="fuelPackForm.is_edit" 
+                            placeholder="如 fuel_breeze"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">名称</label>
+                            <input type="text" v-model="fuelPackForm.name" required placeholder="如 微风加油包"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">包含时长 (分钟)</label>
+                            <input type="number" v-model="fuelPackForm.duration_minutes" required placeholder="如 60"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">价格 (分)</label>
+                            <input type="number" v-model="fuelPackForm.amount_fen" required placeholder="如 990"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">排序值</label>
+                            <input type="number" v-model="fuelPackForm.sort_order" required placeholder="升序排序"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                    </div>
+                    <div class="py-2">
+                        <div class="flex items-center">
+                            <input type="checkbox" v-model="fuelPackForm.enabled" id="fuel_pack_enabled" 
+                                class="w-5 h-5 text-indigo-600 bg-gray-900 border-gray-800 rounded focus:ring-indigo-500/50">
+                            <label for="fuel_pack_enabled" class="ml-2 text-sm text-gray-300 cursor-pointer">启用该加油包</label>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">描述信息</label>
+                        <input type="text" v-model="fuelPackForm.description" placeholder="加油包描述信息"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-850">
+                        <button type="button" @click="showFuelPackModal = false"
+                            class="px-5 py-2.5 rounded-xl border border-gray-800 text-gray-400 hover:text-white transition">取消</button>
+                        <button type="submit" :disabled="loading"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl transition">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -485,6 +962,40 @@ async def admin_portal(request: Request):
                 const feedbackForm = ref({{
                     status: 'pending',
                     admin_notes: ''
+                }});
+
+                // 套餐、加油包及低保
+                const subPlans = ref([]);
+                const fuelPacks = ref([]);
+                const allowanceForm = ref({{
+                    daily_free_minutes: 1.5,
+                    enabled: true,
+                    gift_subscription_plan_id: null,
+                    gift_duration_months: 0
+                }});
+
+                const showSubPlanModal = ref(false);
+                const subPlanForm = ref({{
+                    plan_id: '',
+                    name: '',
+                    amount_fen: 0,
+                    duration_minutes: 0,
+                    description: '',
+                    sort_order: 0,
+                    enabled: true,
+                    is_edit: false
+                }});
+
+                const showFuelPackModal = ref(false);
+                const fuelPackForm = ref({{
+                    package_id: '',
+                    name: '',
+                    amount_fen: 0,
+                    duration_minutes: 0,
+                    description: '',
+                    sort_order: 0,
+                    enabled: true,
+                    is_edit: false
                 }});
 
                 const filteredFeedbacks = computed(() => {{
@@ -534,12 +1045,23 @@ async def admin_portal(request: Request):
                 const loadData = async () => {{
                     if (!authenticated.value) return;
                     try {{
-                        const [annRes, fbRes] = await Promise.all([
+                        const [annRes, fbRes, subRes, fuelRes, allowanceRes] = await Promise.all([
                             apiRequest('/api/announcements'),
-                            apiRequest('/api/feedbacks')
+                            apiRequest('/api/feedbacks'),
+                            apiRequest('/api/subscription-plans').catch(() => ({{items:[]}})),
+                            apiRequest('/api/fuel-packages').catch(() => ({{items:[]}})),
+                            apiRequest('/api/allowance-settings').catch(() => ({{data:{{daily_free_minutes:1.5,enabled:true,gift_subscription_plan_id:null,gift_duration_months:0}}}}))
                         ]);
                         announcements.value = annRes.items || [];
                         feedbacks.value = fbRes.items || [];
+                        subPlans.value = subRes.items || [];
+                        fuelPacks.value = fuelRes.items || [];
+                        if (allowanceRes && allowanceRes.data) {{
+                            allowanceForm.value.daily_free_minutes = allowanceRes.data.daily_free_minutes;
+                            allowanceForm.value.enabled = allowanceRes.data.enabled;
+                            allowanceForm.value.gift_subscription_plan_id = allowanceRes.data.gift_subscription_plan_id;
+                            allowanceForm.value.gift_duration_months = allowanceRes.data.gift_duration_months;
+                        }}
                     }} catch (err) {{
                         console.error('加载数据失败:', err);
                     }}
@@ -640,6 +1162,124 @@ async def admin_portal(request: Request):
                     }}
                 }};
 
+                // === 每日低保 ===
+                const submitAllowanceSettings = async () => {{
+                    loading.value = true;
+                    try {{
+                        await apiRequest('/api/allowance-settings', 'PUT', allowanceForm.value);
+                        alert('低保设置已保存');
+                        loadData();
+                    }} catch (err) {{
+                        alert(err.message);
+                    }} finally {{
+                        loading.value = false;
+                    }}
+                }};
+
+                // === 订阅套餐 ===
+                const openAddSubPlanModal = () => {{
+                    subPlanForm.value = {{
+                        plan_id: '',
+                        name: '',
+                        amount_fen: 0,
+                        duration_minutes: 0,
+                        description: '',
+                        sort_order: 0,
+                        enabled: true,
+                        is_edit: false
+                    }};
+                    showSubPlanModal.value = true;
+                }};
+
+                const editSubPlan = (plan) => {{
+                    subPlanForm.value = {{
+                        plan_id: plan.plan_id,
+                        name: plan.name,
+                        amount_fen: plan.amount_fen,
+                        duration_minutes: plan.duration_minutes,
+                        description: plan.description || '',
+                        sort_order: plan.sort_order || 0,
+                        enabled: plan.enabled,
+                        is_edit: true
+                    }};
+                    showSubPlanModal.value = true;
+                }};
+
+                const submitSubPlan = async () => {{
+                    loading.value = true;
+                    try {{
+                        await apiRequest('/api/subscription-plans', 'POST', subPlanForm.value);
+                        showSubPlanModal.value = false;
+                        loadData();
+                    }} catch (err) {{
+                        alert(err.message);
+                    }} finally {{
+                        loading.value = false;
+                    }}
+                }};
+
+                const deleteSubPlan = async (id) => {{
+                    if (!confirm('确定要删除这个订阅套餐吗？')) return;
+                    try {{
+                        await apiRequest(`/api/subscription-plans/${{id}}`, 'DELETE');
+                        loadData();
+                    }} catch (err) {{
+                        alert(err.message);
+                    }}
+                }};
+
+                // === 弹性加油包 ===
+                const openAddFuelPackModal = () => {{
+                    fuelPackForm.value = {{
+                        package_id: '',
+                        name: '',
+                        amount_fen: 0,
+                        duration_minutes: 0,
+                        description: '',
+                        sort_order: 0,
+                        enabled: true,
+                        is_edit: false
+                    }};
+                    showFuelPackModal.value = true;
+                }};
+
+                const editFuelPack = (pack) => {{
+                    fuelPackForm.value = {{
+                        package_id: pack.package_id,
+                        name: pack.name,
+                        amount_fen: pack.amount_fen,
+                        duration_minutes: pack.duration_minutes,
+                        description: pack.description || '',
+                        sort_order: pack.sort_order || 0,
+                        enabled: pack.enabled,
+                        is_edit: true
+                    }};
+                    showFuelPackModal.value = true;
+                }};
+
+                const submitFuelPack = async () => {{
+                    loading.value = true;
+                    try {{
+                        await apiRequest('/api/fuel-packages', 'POST', fuelPackForm.value);
+                        showFuelPackModal.value = false;
+                        loadData();
+                    }} catch (err) {{
+                        alert(err.message);
+                    }} finally {{
+                        loading.value = false;
+                    }}
+                }};
+
+                const deleteFuelPack = async (id) => {{
+                    if (!confirm('确定要删除这个加油包吗？')) return;
+                    try {{
+                        await apiRequest(`/api/fuel-packages/${{id}}`, 'DELETE');
+                        loadData();
+                    }} catch (err) {{
+                        alert(err.message);
+                    }}
+                }};
+
                 onMounted(() => {{
                     loadData();
                 }});
@@ -667,7 +1307,23 @@ async def admin_portal(request: Request):
                     feedbackForm,
                     openFeedbackModal,
                     submitFeedbackUpdate,
-                    formatTime
+                    formatTime,
+                    subPlans,
+                    fuelPacks,
+                    allowanceForm,
+                    submitAllowanceSettings,
+                    showSubPlanModal,
+                    subPlanForm,
+                    openAddSubPlanModal,
+                    editSubPlan,
+                    submitSubPlan,
+                    deleteSubPlan,
+                    showFuelPackModal,
+                    fuelPackForm,
+                    openAddFuelPackModal,
+                    editFuelPack,
+                    submitFuelPack,
+                    deleteFuelPack
                 }};
             }}
         }}).mount('#app');
