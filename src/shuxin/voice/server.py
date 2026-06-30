@@ -1462,6 +1462,7 @@ class _VoiceWebSocketSession:
         self.factory_acceptance = False
         self.client_ip = _client_ip_from_websocket(websocket)
         self._location_cache: dict | None = None
+        self._agent_init_task: Optional[asyncio.Task] = None
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
@@ -1480,6 +1481,9 @@ class _VoiceWebSocketSession:
 
     async def shutdown(self, mark_offline: bool = True) -> None:
         """关闭连接时释放当前 Agent，避免插件状态和资源泄漏。"""
+        if self._agent_init_task is not None:
+            self._agent_init_task.cancel()
+            self._agent_init_task = None
         if self.user_settings is not None:
             try:
                 await self.repo.maybe_merge_rolling_summary(
@@ -1554,16 +1558,20 @@ class _VoiceWebSocketSession:
             self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
             self.session_id = data.get("session_id") or uuid.uuid4().hex
             if not self.factory_acceptance:
-                await self.repo.ensure_session(
-                    session_id=self.session_id,
-                    user_id=self.user_id,
-                    device_id=self.device_id,
-                    client_id=self.client_id,
+                asyncio.create_task(
+                    self.repo.ensure_session(
+                        session_id=self.session_id,
+                        user_id=self.user_id,
+                        device_id=self.device_id,
+                        client_id=self.client_id,
+                    )
                 )
-            await self.repo.touch_device_status(
-                device_id=self.device_id,
-                online=True,
-                session_id=self.session_id,
+            asyncio.create_task(
+                self.repo.touch_device_status(
+                    device_id=self.device_id,
+                    online=True,
+                    session_id=self.session_id,
+                )
             )
             self.hardware_session = bool(data.get("device_code") or data.get("device_secret"))
             self.audio_params = _negotiate_audio_params(data.get("audio_params"))
@@ -1616,10 +1624,14 @@ class _VoiceWebSocketSession:
             await self._send_json(hello_ok)
             vsr.register(self.device_id, self)
             if not self.factory_acceptance:
-                try:
-                    await self._maybe_reveal_mbti_on_hello()
-                except Exception as exc:
-                    logger.warning("mbti reveal on hello failed: %s", exc)
+                self._agent_init_task = asyncio.create_task(self._ensure_runtime())
+
+                async def run_mbti_reveal():
+                    try:
+                        await self._maybe_reveal_mbti_on_hello()
+                    except Exception as exc:
+                        logger.warning("mbti reveal on hello failed: %s", exc)
+                asyncio.create_task(run_mbti_reveal())
             return
 
         if self.factory_acceptance and message_type in {"listen", "text_turn"}:
@@ -2296,7 +2308,8 @@ class _VoiceWebSocketSession:
 
     async def _start_realtime_asr_if_needed(self) -> None:
         """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
-        await self._ensure_runtime()
+        if self.device is None:
+            self.device = await self.repo.get_device(self.device_id)
         if self.device is None or not is_tencent_realtime_stt(self.device.stt):
             return
         if self.realtime_asr is not None:
@@ -2330,6 +2343,13 @@ class _VoiceWebSocketSession:
 
     async def _ensure_runtime(self) -> None:
         """懒加载设备配置、STT/TTS provider 和按用户隔离的 Agent。"""
+        if self.agent is not None:
+            return
+
+        if self._agent_init_task is not None and asyncio.current_task() != self._agent_init_task:
+            await self._agent_init_task
+            return
+
         if self.audio_store is None:
             self.user_settings = await self.repo.authenticate_user(DEFAULT_USER_ID, "")
             self.user_id = self.user_settings.user_id
