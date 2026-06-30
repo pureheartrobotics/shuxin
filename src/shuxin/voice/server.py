@@ -2945,6 +2945,17 @@ def _admin_html(authenticated: bool) -> str:
     function esc(value) {{
       return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
     }}
+    function formatDateTimeCN(iso) {{
+      if (!iso || iso === '-') return '—';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString('zh-CN', {{
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      }});
+    }}
     function jsQuote(value) {{
       return String(value ?? '').replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/\\n/g, '\\\\n');
     }}
@@ -3565,8 +3576,8 @@ def _admin_html(authenticated: bool) -> str:
           + bindings.map(b => `<div class="table-row bindings">
           ${{renderClipCell(b.user_id, '', '用户 ID')}}
           ${{renderClipCell(b.device_id, '', '设备 ID')}}
-          <div class="meta">${{esc(b.bound_at || '-')}}</div>
-          <div class="meta">${{esc(b.unbound_at || '-')}}</div>
+          <div class="meta">${{esc(formatDateTimeCN(b.bound_at) || '-')}}</div>
+          <div class="meta">${{esc(formatDateTimeCN(b.unbound_at) || '-')}}</div>
           <div><span class="badge ${{b.online ? '' : 'off'}}">${{b.online ? '在线' : '离线'}}</span></div>
           <div><button type="button" class="btn-destructive" onclick="unbindBinding('${{esc(b.binding_id)}}', '${{jsQuote(b.user_id || '')}}', '${{jsQuote(b.device_id || '')}}')">解绑</button></div>
         </div>`).join('')
@@ -3984,7 +3995,7 @@ def _admin_html(authenticated: bool) -> str:
           <div style="font-size:13px;color:var(--text);font-family:var(--mono);" title="${{esc(item.model)}}">${{esc(item.model)}}</div>
           <div style="font-size:13px;color:var(--text-secondary);font-family:var(--mono);">${{amt}} ${{unit}}</div>
           <div style="font-size:13px;color:var(--text);font-weight:600;font-family:var(--mono);">¥${{item.cost_yuan.toFixed(4)}}</div>
-          <div style="font-size:12px;color:var(--text-secondary);">${{item.created_at}}</div>
+          <div style="font-size:12px;color:var(--text-secondary);">${{esc(formatDateTimeCN(item.created_at))}}</div>
           <div style="text-align:right">
             <button class="btn-destructive ghost" onclick="deleteBillingRecord('${{item.id}}', this)" style="height:24px;padding:0 6px;font-size:11px;">删除</button>
           </div>
