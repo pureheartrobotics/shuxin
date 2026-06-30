@@ -114,7 +114,7 @@ class CompanionPlugin:
         growth_context = self._get_growth_context()
 
         location_context = ""
-        if agent is not None:
+        if agent is not None and hasattr(agent, "context") and agent.context is not None:
             location_context = str(agent.context.metadata.get("location_context") or "").strip()
 
         location_block = (
@@ -122,7 +122,7 @@ class CompanionPlugin:
         )
 
         low_confidence_hint = ""
-        if agent is not None:
+        if agent is not None and hasattr(agent, "context") and agent.context is not None:
             raw_ctx = agent.context.metadata.get("location_ctx")
             if isinstance(raw_ctx, dict) and raw_ctx.get("confidence") == "low":
                 low_confidence_hint = (

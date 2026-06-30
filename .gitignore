@@ -77,6 +77,8 @@ docs/*盲盒人格*.md
 docs/交底书修订*.md
 docs/math_figures/
 docs/patent-filing/
+docs/superpowers/
+
 scripts/fill_proposal_docx.py
 
 # Agent workspace configurations

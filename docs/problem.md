@@ -1,3 +1,8 @@
+<!--
+ * @Author: Haibo Huang
+ * @Date: 2026-06-13 11:37:09
+ * @Description: 文件用途描述
+-->
 1.支付功能   完成
 2.配网后端
 3.验证功能   完成
@@ -9,3 +14,6 @@
 6.api的实现  比如 天气
 7.mbti的可能会出现是enfj这种需要修改   完成（SOUL 与设备 MBTI 分层；日常禁止类型码自我解释）
 8.推理模型思维链泄漏到 agent/reply   完成（llm.py 过滤 reasoning_content 与 think 标签）
+
+
+目前的想法 干掉 apple 腾讯 大疆  在硬件上面 不需要去走他们   我们纯语音交流  看看想法  做出来
