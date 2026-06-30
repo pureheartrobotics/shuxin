@@ -729,6 +729,8 @@ class VoicePostgresRepository:
             display_credit = 0.0
             dmx_credit = 0.0
             credit_ratio = 1.0
+            # add_yuan must satisfy CHECK (add_yuan > 0); not DMX credit for miniapp orders.
+            miniapp_add_yuan = pay_yuan
             async with self.pool.acquire() as conn:
                 user_id = await self._user_id_from_wechat_auth(conn, session_token=session_token)
                 target_device_id = device_id
@@ -765,7 +767,7 @@ class VoicePostgresRepository:
                     plan_id,
                     plan_name,
                     amount_fen,
-                    0.0,
+                    miniapp_add_yuan,
                     duration_days,
                     pay_yuan,
                     0.0,
@@ -990,6 +992,7 @@ class VoicePostgresRepository:
                         is_miniapp_plan = True
                         logger.warning("Fulfillment target device not found for order %s (user %s)", row["order_id"], user_id)
 
+                top_up_result: dict[str, Any] = {}
                 if not is_miniapp_plan:
                     user_row = await conn.fetchrow(
                         """
@@ -1029,6 +1032,11 @@ class VoicePostgresRepository:
                         merged_note,
                     )
 
+                if is_miniapp_plan:
+                    fulfill_add_yuan = float(row["pay_yuan"] or row["add_yuan"] or 0)
+                else:
+                    fulfill_add_yuan = display_credit
+
                 await conn.execute(
                     """
                     UPDATE payment_orders
@@ -1041,7 +1049,7 @@ class VoicePostgresRepository:
                         display_credited = $5,
                         dmx_credited = $6,
                         credit_ratio = $7,
-                        add_yuan = $5
+                        add_yuan = $8
                     WHERE out_trade_no = $1
                     """,
                     selected_trade_no,
@@ -1051,6 +1059,7 @@ class VoicePostgresRepository:
                     display_credit,
                     dmx_credit,
                     credit_ratio,
+                    fulfill_add_yuan,
                 )
         await self.audit(
             "payment_fulfilled",
@@ -1072,7 +1081,7 @@ class VoicePostgresRepository:
             "already_fulfilled": False,
             "display_credited": display_credit,
             "dmx_credited": dmx_credit,
-            "add_yuan": display_credit,
+            "add_yuan": fulfill_add_yuan,
         }
 
     async def _extend_subscription(
