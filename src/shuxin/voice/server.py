@@ -2934,6 +2934,12 @@ def _admin_html(authenticated: bool) -> str:
       bindDevices: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
       billing: {{cursor:'', nextCursor:'', stack:[], q:'', limit:20}},
     }};
+    const TAB_PANELS = ['devices', 'users', 'agents', 'bindings', 'adapters', 'billing'];
+    const TAB_BUTTONS = ['tabDevices', 'tabUsers', 'tabAgents', 'tabBindings', 'tabAdapters', 'tabBilling'];
+    const TAB_BUTTON_BY_PANEL = {{
+      devices: 'tabDevices', users: 'tabUsers', agents: 'tabAgents',
+      bindings: 'tabBindings', adapters: 'tabAdapters', billing: 'tabBilling',
+    }};
     const headers = () => ({{'Content-Type': 'application/json'}});
     function $(id) {{ return document.getElementById(id); }}
     function esc(value) {{
@@ -3124,10 +3130,16 @@ def _admin_html(authenticated: bool) -> str:
       authenticated = true; boot();
     }}
     function showTab(name) {{
-      for (const id of ['devices','users','agents','paymentPlans','bindings','adapters','billing']) $(''+id).style.display = id === name ? 'grid' : 'none';
-      for (const id of ['tabDevices','tabUsers','tabAgents','tabPaymentPlans','tabBindings','tabAdapters','tabBilling']) $(id).classList.remove('active');
-      $('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
-      if (name === 'paymentPlans' && authenticated) loadPaymentPlans();
+      for (const id of TAB_PANELS) {{
+        const el = $(id);
+        if (el) el.style.display = id === name ? 'grid' : 'none';
+      }}
+      for (const id of TAB_BUTTONS) {{
+        const btn = $(id);
+        if (btn) btn.classList.remove('active');
+      }}
+      const activeBtn = $(TAB_BUTTON_BY_PANEL[name]);
+      if (activeBtn) activeBtn.classList.add('active');
       if (name === 'bindings' && authenticated) {{
         loadBindUsers();
         loadBindDevices();
