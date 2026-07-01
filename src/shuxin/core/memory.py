@@ -21,9 +21,12 @@ from typing import Any, Dict, List, Optional
 
 from dataclasses import dataclass, field
 
+import time
+
 logger = logging.getLogger("shuxin.memory")
 
 _MEM0_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="shuxin-mem0")
+_MEM0_SEARCH_CACHE_TTL = 300  # 5 分钟内相同问题复用 embedding 结果，减少 TTFT
 
 _SYNC_USER_PATTERNS = (
     re.compile(r"我叫([^，。,.!！?？]{1,20})"),
@@ -110,6 +113,9 @@ class MemoryManager:
         self._mem0_client: Any = None
         self._mem0_init_attempted = False
         self._mem0_top_k = max(1, int(os.environ.get("SHUXIN_MEM0_SEARCH_TOP_K", "8") or "8"))
+        # 搜索结果缓存：{query: (timestamp, results)}，减少重复 embedding API 调用
+        self._mem0_search_cache: Dict[str, tuple] = {}
+        self._mem0_cache_lock = threading.Lock()
 
         self._load_facts()
         if self._mem0_enabled():
@@ -247,6 +253,24 @@ class MemoryManager:
         q = query.strip()
         if not q:
             return []
+
+        # 缓存命中：相同查询文本 5 分钟内直接复用结果，避免重复调 embedding API
+        now = time.monotonic()
+        with self._mem0_cache_lock:
+            cached = self._mem0_search_cache.get(q)
+            if cached is not None:
+                ts, results = cached
+                if now - ts < _MEM0_SEARCH_CACHE_TTL:
+                    logger.debug("[Mem0] 缓存命中，跳过 embedding 请求")
+                    return results
+            # 清理过期缓存，防止无限增长
+            if len(self._mem0_search_cache) > 32:
+                expired = [k for k, (t, _) in self._mem0_search_cache.items()
+                           if now - t >= _MEM0_SEARCH_CACHE_TTL]
+                for k in expired:
+                    self._mem0_search_cache.pop(k, None)
+
+        t0 = time.monotonic()
         try:
             raw = self._mem0_client.search(
                 q,
@@ -256,6 +280,7 @@ class MemoryManager:
         except Exception as exc:
             logger.warning("Mem0 search 失败: %s", exc)
             return []
+        logger.debug("[Mem0] embedding+search 耗时 %.0fms", (time.monotonic() - t0) * 1000)
 
         items: List[Any] = []
         if isinstance(raw, dict):
@@ -279,7 +304,12 @@ class MemoryManager:
             if text and str(text).strip():
                 lines.append(str(text).strip())
         # 防御性截断：即使 Mem0 端忽略 top_k 也不会超注入上限
-        return lines[: self._mem0_top_k]
+        results = lines[: self._mem0_top_k]
+
+        # 写入缓存
+        with self._mem0_cache_lock:
+            self._mem0_search_cache[q] = (time.monotonic(), results)
+        return results
 
     def _recent_user_text(self) -> str:
         with self._lock:
