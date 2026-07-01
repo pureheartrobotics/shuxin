@@ -2318,6 +2318,8 @@ class _VoiceWebSocketSession:
 
     async def _start_realtime_asr_if_needed(self) -> None:
         """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
+        if self._agent_init_task is not None:
+            await self._agent_init_task
         if self.device is None:
             self.device = await self.repo.get_device(self.device_id)
         if self.device is None or not is_tencent_realtime_stt(self.device.stt):
