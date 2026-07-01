@@ -1634,6 +1634,16 @@ class _VoiceWebSocketSession:
                 asyncio.create_task(run_mbti_reveal())
             return
 
+        # 拦截未经过成功 hello 鉴权就直接发起对话的连接
+        if message_type in {"listen", "text_turn"} and not self.user_settings:
+            await self._send_json(
+                {
+                    "type": "error",
+                    "message": "WebSocket session is not authenticated. Please select target and connect first.",
+                }
+            )
+            return
+
         if self.factory_acceptance and message_type in {"listen", "text_turn"}:
             await self._send_json({"type": "error", "message": _FACTORY_ACCEPTANCE_DISABLED})
             return
@@ -4326,6 +4336,13 @@ def _web_demo_html(default_device_id: str) -> str:
       log(`已选择 ${{item.user_id}} -> ${{item.device_id}} · Agent=${{item.agent_display_name || item.agent_id || 'shuxin'}}`);
       if (!item.llm_api_key_configured) {{
         log('绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」后再对话');
+      }}
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {{
+        log('正在切换目标设备，自动重新连接中...');
+        ws.close();
+        setTimeout(() => {{
+          connectBtn.click();
+        }}, 150);
       }}
     }};
 
