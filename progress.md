@@ -57,6 +57,7 @@
 | 时间戳 | 错误 | 尝试次数 | 解决方案 |
 |--------|------|---------|---------|
 | 2026-07-01T20:34:00Z | git 无法直接暂存 ignore 的 docs/superpowers 下文件 | 1 | 改用 `git add -f` 强行添加 |
+| 2026-07-01T22:45:00Z | 并发任务中的 get_device() 重新赋值并覆写了 self.device，导致合并后的 LLM api_key 被还原为空并引发 ValueError 报错 | 1 | 改用局部变量 _device 读取设备 metadata，严禁在并发任务中重新给 self.device 赋值覆盖已有状态 |
 
 ## 五问重启检查
 | 问题 | 答案 |

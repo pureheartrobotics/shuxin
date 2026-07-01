@@ -19,6 +19,7 @@
 | 问题 | 解决方案 |
 |------|---------|
 | 无法直接使用 `git add` 暂存 docs/superpowers 路径 | 使用 `git add -f` 强制暂存并成功 Commit。 |
+| 并发任务中的 get_device() 覆盖 self.device 造成 API Key 被清空 | 改用局部变量读取设备配置进行 MBTI 揭晓状态逻辑判断，禁止对实例变量 self.device 重新覆盖赋值，彻底隔离并发竞态影响。 |
 
 ## 资源
 - 说明书路径：[docs/superpowers/specs/2026-07-01-voice-demo-reconnect-auth-gate-design.md](file:///home/peter/huada/project/Interesting/codex_agent/shuxin/docs/superpowers/specs/2026-07-01-voice-demo-reconnect-auth-gate-design.md)
