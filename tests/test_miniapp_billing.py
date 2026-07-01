@@ -59,26 +59,33 @@ class FakePool:
 
 
 def test_deduct_device_minutes_quota_subscription_priority() -> None:
-    conn = FakeConnection(
-        fetchrow_val={
-            "device_id": "test_device",
-            "subscription_plan_id": "sub_premium",
-            "subscription_minutes_limit": 100,
-            "subscription_minutes_used": 10.0,
-            "subscription_expires_at": None,
-            "fuel_minutes_balance": 5.0,
-            "daily_allowance_date": None,
-            "daily_allowance_seconds_used": 0.0,
-            "last_reset_month": "2026-06",
-            "enabled": True,
-        }
-    )
     # Mock transaction context
     class ConnWithTx(FakeConnection):
         def transaction(self):
             return FakeTransaction()
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "device_bindings" in query:
+                return {"user_id": "test_user"}
+            return None
+        async def fetch(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                return [{
+                    "device_id": "test_device",
+                    "subscription_plan_id": "sub_premium",
+                    "subscription_minutes_limit": 100,
+                    "subscription_minutes_used": 10.0,
+                    "subscription_expires_at": None,
+                    "fuel_minutes_balance": 5.0,
+                    "daily_allowance_date": None,
+                    "daily_allowance_seconds_used": 0.0,
+                    "last_reset_month": "2026-06",
+                    "enabled": True,
+                }]
+            return []
     
-    conn_tx = ConnWithTx(fetchrow_val=conn.fetchrow_val)
+    conn_tx = ConnWithTx()
     repo = VoicePostgresRepository(pool=FakePool(conn_tx))
 
     async def run():
@@ -93,25 +100,32 @@ def test_deduct_device_minutes_quota_subscription_priority() -> None:
 
 
 def test_deduct_device_minutes_quota_spillover_to_fuel() -> None:
-    conn = FakeConnection(
-        fetchrow_val={
-            "device_id": "test_device",
-            "subscription_plan_id": "sub_premium",
-            "subscription_minutes_limit": 10,
-            "subscription_minutes_used": 8.0,
-            "subscription_expires_at": None,
-            "fuel_minutes_balance": 5.0,
-            "daily_allowance_date": None,
-            "daily_allowance_seconds_used": 0.0,
-            "last_reset_month": "2026-06",
-            "enabled": True,
-        }
-    )
     class ConnWithTx(FakeConnection):
         def transaction(self):
             return FakeTransaction()
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "device_bindings" in query:
+                return {"user_id": "test_user"}
+            return None
+        async def fetch(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                return [{
+                    "device_id": "test_device",
+                    "subscription_plan_id": "sub_premium",
+                    "subscription_minutes_limit": 10,
+                    "subscription_minutes_used": 8.0,
+                    "subscription_expires_at": None,
+                    "fuel_minutes_balance": 5.0,
+                    "daily_allowance_date": None,
+                    "daily_allowance_seconds_used": 0.0,
+                    "last_reset_month": "2026-06",
+                    "enabled": True,
+                }]
+            return []
 
-    conn_tx = ConnWithTx(fetchrow_val=conn.fetchrow_val)
+    conn_tx = ConnWithTx()
     repo = VoicePostgresRepository(pool=FakePool(conn_tx))
 
     async def run():
@@ -350,4 +364,63 @@ def test_create_miniapp_payment_order_duplicate_purchase() -> None:
     with pytest.raises(PermissionError) as exc_info:
         asyncio.run(run())
     assert "无法重复购买" in str(exc_info.value)
+
+
+def test_create_miniapp_payment_order_downgrade_purchase() -> None:
+    from datetime import timedelta
+    insert_return = {
+        "order_id": "order-mini-2",
+        "out_trade_no": "sxmini-2",
+        "plan_id": "jichuban",
+        "plan_name": "基础版",
+        "amount_fen": 1,
+        "add_yuan": 0.01,
+        "duration_days": 30,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc),
+        "pay_yuan": 0.01,
+        "display_credited": 0.0,
+        "dmx_credited": 0.0,
+        "credit_ratio": 1.0,
+        "device_id": "SX-000119",
+    }
+
+    class DowngradeOrderConn(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "miniapp_subscription_plans" in query:
+                pid = args[0]
+                if pid == "gaojiban":
+                    return {"name": "高级版", "amount_fen": 2, "duration_minutes": 300}
+                elif pid == "jichuban":
+                    return {"name": "基础版", "amount_fen": 1, "duration_minutes": 60}
+            if "INSERT INTO payment_orders" in query:
+                return insert_return
+            if "device_bindings" in query:
+                return {"device_id": "SX-000119"}
+            if "devices" in query:
+                return {
+                    "subscription_plan_id": "gaojiban",
+                    "subscription_expires_at": datetime.now(timezone.utc) + timedelta(days=10)
+                }
+            return None
+
+    conn = DowngradeOrderConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        with patch.object(
+            repo,
+            "_user_id_from_wechat_auth",
+            new=AsyncMock(return_value="wx_user"),
+        ):
+            await repo.create_payment_order(
+                session_token="sess",
+                plan_id="jichuban",
+                device_id="SX-000119",
+            )
+
+    with pytest.raises(PermissionError) as exc_info:
+        asyncio.run(run())
+    assert "无法降级购买" in str(exc_info.value)
 

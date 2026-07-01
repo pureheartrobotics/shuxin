@@ -565,6 +565,7 @@ class VoicePostgresRepository:
         dmx_exhausted = False
         dmx_remain_yuan = None
         used_yuan = None
+        dmx_unlimited = False
 
         if admin_detail and user_id:
             user_row = await self.pool.fetchrow(
@@ -579,6 +580,7 @@ class VoicePostgresRepository:
                         dmx_remain_yuan = balance.get("remain_yuan")
                         used_yuan = balance.get("used_yuan")
                         dmx_exhausted = bool(balance.get("exhausted"))
+                        dmx_unlimited = bool(balance.get("unlimited_quota", False))
                         credit_ratio = await self.get_credit_ratio()
                     except Exception as exc:
                         logger.warning("DMX balance query failed during quota check for device %s: %s", device_id, exc)
@@ -594,7 +596,7 @@ class VoicePostgresRepository:
             "fuel_minutes_left": round(total_fuel_remaining, 2),
             "daily_allowance_left": round(total_allowance_remaining, 2),
             "subscription_expires_at": _dt(max_expires_at) if max_expires_at else None,
-            "unlimited_quota": False,
+            "unlimited_quota": dmx_unlimited,
             "message": QUOTA_EXHAUSTED_MESSAGE if exhausted else "",
         }
         if admin_detail:
@@ -825,8 +827,22 @@ class VoicePostgresRepository:
                         sub_plan_id = dev_quota["subscription_plan_id"]
                         sub_expires_at = dev_quota["subscription_expires_at"]
                         from datetime import datetime, timezone
-                        if sub_plan_id == plan_id and sub_expires_at is not None and sub_expires_at > datetime.now(timezone.utc):
-                            raise PermissionError("您已拥有该月度套餐，在有效期内无法重复购买。")
+                        if sub_plan_id and sub_expires_at is not None and sub_expires_at > datetime.now(timezone.utc):
+                            if sub_plan_id == plan_id:
+                                raise PermissionError("您已拥有该月度套餐，在有效期内无法重复购买。")
+                            
+                            # 查询当前套餐与目标套餐的额度分钟数进行比较
+                            curr_plan = await conn.fetchrow(
+                                "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1",
+                                sub_plan_id
+                            )
+                            target_plan = await conn.fetchrow(
+                                "SELECT duration_minutes FROM miniapp_subscription_plans WHERE plan_id = $1",
+                                plan_id
+                            )
+                            if curr_plan and target_plan:
+                                if target_plan["duration_minutes"] <= curr_plan["duration_minutes"]:
+                                    raise PermissionError("您已拥有更高级别或同级别的月度套餐，在有效期内无法降级购买。")
 
                 order_id = uuid.uuid4().hex
                 out_trade_no = f"sx{uuid.uuid4().hex[:28]}"
