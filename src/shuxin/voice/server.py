@@ -2086,9 +2086,10 @@ class _VoiceWebSocketSession:
 
     async def _maybe_reveal_mbti_on_hello(self) -> None:
         """开箱或补播：sealed 时揭晓+TTS；小程序已揭晓时仅补播自我介绍。"""
-        device = await self.repo.get_device(self.device_id)
-        self.device = device
-        metadata = device.metadata or {}
+        # 注意：只用局部变量 _device 读取元数据，不覆盖 self.device，
+        # 避免把未经 merge_llm_device_config 的裸设备配置覆盖已合并的版本。
+        _device = await self.repo.get_device(self.device_id)
+        metadata = _device.metadata or {}
 
         if needs_mbti_reveal(metadata):
             result = await self.repo.try_reveal_and_lock(self.device_id, "first_hello")
@@ -2111,9 +2112,10 @@ class _VoiceWebSocketSession:
         if not self.device_id:
             return False
         async with vsr.intro_lock(self.device_id):
-            device = await self.repo.get_device(self.device_id)
-            self.device = device
-            metadata = device.metadata or {}
+            # 同样只用局部变量读取元数据，不覆盖 self.device，
+            # 避免把未经 merge_llm_device_config 的裸设备配置覆盖已合并的版本。
+            _device = await self.repo.get_device(self.device_id)
+            metadata = _device.metadata or {}
             if not needs_device_intro(metadata):
                 return False
             mbti = str(metadata.get("mbti") or "").strip().upper()
