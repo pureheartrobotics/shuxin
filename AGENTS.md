@@ -112,9 +112,11 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - **MBTI 盲盒**：出厂 `mbti`+`sealed`；小程序 bind 揭晓→`locked`（响应 `mbti` 卡片；改 `apps/wechat-miniprogram` 源码后须 `scripts/wechat_miniprogram_dev.sh build` 重编译 `dist/*/mp-weixin`，否则微信工具仍是旧包无弹窗）；`sealed` 时 `/api/devices/my` 不返 `mbti`；首次硬件 TTS 播 `mbti_profiles.yaml` 的 `reveal_script`（`你好！绑定成功，我是 XX 型的初心。`；bind 时 WS 在线经 `voice_session_registry` 即时推，否则 hello 补播，`device_intro_played`）。Slot1 `SOUL.md` 不含 MBTI，设备气质由 Slot2 `identity` 承担；日常禁止 MBTI 类型码自我解释（用户主动问除外）。`_ensure_runtime` 须以 `agent is None` 初始化 STT/TTS/Agent（MBTI intro 可先预填 device）。小程序无解绑。详见 [`docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md`](docs/DEVICE_MBTI_BLINDBOX_AND_MEMORY_PLAN.md)、验收 [`docs/VOICE_DEMO_MIN_TEST.md`](docs/VOICE_DEMO_MIN_TEST.md) §9.2。
 - **设备密钥加密**：批量制码/Admin 查看明文须 `.env` 配置 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`（Fernet）并重部署；未配时 Admin 黄条 + 制码 API fail-fast。历史仅 hash 设备须重制码或 `rotate-secret`。
 - **设备级独立流量计费**：已实现独立时长计算，所有额度控制字段均迁移至 `devices` 表承载。扣费接口使用 `deduct_device_minutes_quota(device_id, cost_minutes)`。
-- **防止会话阻塞与延迟优化**：
+- **防止会话阻塞与延迟优化与并发一致性**：
   * 为避免海外遥测连接导致会话初始化卡死超时，必须在 `core/memory.py` 设置 `os.environ["MEM0_TELEMETRY"] = "False"`。
   * 针对 DMX 的远程余额查询已在 `get_token_balance` 实现 3 秒快速超时限制和 5 分钟本地内存缓存，严禁引入会卡死 WebSocket 握手主路径的在线 HTTP 请求。
+  * 长期记忆 (Mem0) 查询在 `_search_mem0` 中实现了基于内存的 LRU 缓存（TTL=300秒，容量32），相同问题的重复检索会直接走缓存，从而将首字延迟 (TTFT) 降低约 1~1.5s 阻碍。
+  * 并发安全：在握手后的并发任务中（如 `_maybe_reveal_mbti_on_hello` 和 `play_pending_device_intro`），严禁将从数据库重新拉取的裸设备配置覆盖到 `self.device`，以防覆写 `_ensure_runtime` 中已 merge 好的 `api_key` 导致 ValueError 错误。
 
 ### 语音计费与宿主测试避坑约束
 

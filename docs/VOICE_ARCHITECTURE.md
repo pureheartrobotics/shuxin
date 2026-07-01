@@ -179,6 +179,8 @@ http://localhost:8765/voice-demo
 
 实现见 `src/shuxin/voice/memory_summary.py`。`record_turn` 后规则更新 topics；满足轮次或断线时 `maybe_merge_rolling_summary` 调用便宜模型合并摘要，并同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json` 供陪伴插件注入。重连**不**从 `conversation_events` 恢复最近原文，仅依赖中期摘要与长期 facts。
 
+**长期记忆（Mem0）查询优化**：为防止每轮对话重复查询远程 OpenAI Embedding API 导致的 ~1s 首字延迟阻碍，在 `core/memory.py` 对 `_search_mem0` 进行了内存 LRU 缓存优化（TTL = 300秒，限制最近 32 个查询），5 分钟内相同内容的再次查询会直接命中缓存，显著优化 TTFT。
+
 环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`。`compress_if_needed` 仍只处理音频附件配额，与对话摘要无关。
 
 CLI 默认 `max_history=30`（全局配置），与语音短期窗口独立。
