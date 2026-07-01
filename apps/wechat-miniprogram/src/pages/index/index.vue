@@ -27,6 +27,9 @@
       <view class="actions secondary-actions">
         <button class="ghost" :disabled="loading" @tap="checkBackendHealth">测试后端连接</button>
       </view>
+      <view class="prov-link-container">
+        <text class="prov-link" @tap="navigateToBleProvisioning">新设备未联网？立即进行蓝牙配网 ➔</text>
+      </view>
       <view v-if="message" class="message" :class="resultKind">{{ message }}</view>
     </view>
 
@@ -71,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { onLoad } from "@dcloudio/uni-app";
+import { onLoad, onShow } from "@dcloudio/uni-app";
 import { ref } from "vue";
 import MbtiRevealModal from "../../components/MbtiRevealModal.vue";
 
@@ -91,6 +94,18 @@ const revealMbti = ref("");
 const revealDisplayName = ref("");
 const revealTagline = ref("");
 const revealIsFirst = ref(true);
+
+onShow(() => {
+  const tempCode = uni.getStorageSync("temp_device_code");
+  if (tempCode) {
+    applyScannedCode(tempCode, "device_code");
+    uni.removeStorageSync("temp_device_code");
+  }
+});
+
+function navigateToBleProvisioning() {
+  uni.navigateTo({ url: "/pages/prov/ble" });
+}
 
 onLoad((query: Record<string, string | undefined>) => {
   ensureLoggedIn();
@@ -702,5 +717,24 @@ button {
 
 .popup-actions {
   display: flex;
+}
+
+.prov-link-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 24rpx;
+  margin-bottom: 8rpx;
+}
+
+.prov-link {
+  color: #2f604f;
+  font-size: 26rpx;
+  font-weight: 500;
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.prov-link:active {
+  opacity: 0.6;
 }
 </style>

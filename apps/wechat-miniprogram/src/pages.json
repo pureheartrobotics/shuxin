@@ -39,6 +39,14 @@
         "navigationBarBackgroundColor": "#f5f1ea",
         "navigationBarTextStyle": "black"
       }
+    },
+    {
+      "path": "pages/prov/ble",
+      "style": {
+        "navigationBarTitleText": "设备蓝牙配网",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
     }
   ],
   "globalStyle": {
