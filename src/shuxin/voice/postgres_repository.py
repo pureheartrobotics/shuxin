@@ -94,6 +94,15 @@ class VoicePostgresRepository:
         self.pool = pool
         self._auth_cache = {}
 
+    def _clear_auth_cache(self, device_id: str | None = None) -> None:
+        """Clear device hello authentication cache to prevent stale configuration."""
+        if not hasattr(self, "_auth_cache"):
+            return
+        if device_id:
+            self._auth_cache.pop(device_id, None)
+        else:
+            self._auth_cache.clear()
+
     async def create_wechat_session(self, *, wx_code: str) -> dict[str, Any]:
         """小程序登录: wx.login code -> openid -> 自定义 session_token。"""
         user_id = validate_user_id(await _openid_from_wx_code(wx_code))
@@ -1803,6 +1812,7 @@ class VoicePostgresRepository:
         mbti = await self._attach_mbti_reveal_on_bind(conn, device_id)
         if mbti:
             result["mbti"] = mbti
+        self._clear_auth_cache(device_id)
         return result
 
     async def _attach_mbti_reveal_on_bind(
@@ -2221,6 +2231,7 @@ class VoicePostgresRepository:
             binding_id,
             {"user_id": selected_user, "device_id": selected_device},
         )
+        self._clear_auth_cache(selected_device)
         return {
             "binding_id": binding_id,
             "user_id": selected_user,
@@ -3210,6 +3221,7 @@ class VoicePostgresRepository:
             device_id,
         )
         await self.audit("upsert_device", "device", device_id, _mask_secrets(payload))
+        self._clear_auth_cache(device_id)
         return {"device_id": device_id}
 
     async def soft_delete_device(self, device_id: str) -> None:
@@ -3219,6 +3231,7 @@ class VoicePostgresRepository:
             selected_id,
         )
         await self.audit("soft_delete_device", "device", selected_id, {})
+        self._clear_auth_cache(selected_id)
 
     async def list_users(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
         search = _search_pattern(q)
@@ -3276,6 +3289,7 @@ class VoicePostgresRepository:
         )
         llm_config = dict(payload.get("llm_config") or {})
         if not llm_config.get("api_key"):
+            llm_config.pop("api_key", None)
             existing_llm = existing_row["llm_config"] if existing_row else None
             llm_config = _merge_dict(_json_obj(existing_llm), llm_config)
         if not llm_config.get("api_key"):
@@ -3341,6 +3355,7 @@ class VoicePostgresRepository:
         )
         if not str(llm_config.get("api_key") or "").strip():
             await self.ensure_user_dmx_llm(user_id)
+        self._clear_auth_cache()
         await self.audit("upsert_user", "user", user_id, _mask_secrets({**payload, "token": "***"}))
         return {"user_id": user_id}
 
@@ -3512,6 +3527,7 @@ class VoicePostgresRepository:
                     device_id=device_id,
                     metadata={},
                 )
+        self._clear_auth_cache(device_id)
         return {"ok": result.endswith("1"), "user_id": user_id, "device_code": device_id}
 
     async def _restore_latest_claim_code(self, conn, device_id: str) -> None:
