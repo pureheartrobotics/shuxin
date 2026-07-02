@@ -523,17 +523,15 @@ class VoicePostgresRepository:
             daily_date = row["daily_allowance_date"]
             daily_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
 
-            # 跨月惰性重置处理
+            # 跨月惰性重置：仅重置月度订阅已用时长，加油包永久保留
             if last_reset != current_month_str:
                 sub_used = 0.0
-                fuel_bal = 0.0
                 last_reset = current_month_str
                 async with self.pool.acquire() as conn:
                     await conn.execute(
                         """
                         UPDATE devices
                         SET subscription_minutes_used = 0.0000,
-                            fuel_minutes_balance = 0.0000,
                             last_reset_month = $2,
                             updated_at = now()
                         WHERE device_id = $1
@@ -4186,16 +4184,14 @@ class VoicePostgresRepository:
                     daily_date = row["daily_allowance_date"]
                     daily_seconds_used = float(row["daily_allowance_seconds_used"] or 0.0)
 
-                    # 跨月惰性重置
+                    # 跨月惰性重置：仅重置月度订阅已用时长，加油包永久保留
                     if last_reset != current_month_str:
                         sub_used = 0.0
-                        fuel_bal = 0.0
                         last_reset = current_month_str
                         await conn.execute(
                             """
                             UPDATE devices
                             SET subscription_minutes_used = 0.0000,
-                                fuel_minutes_balance = 0.0000,
                                 last_reset_month = $2,
                                 updated_at = now()
                             WHERE device_id = $1

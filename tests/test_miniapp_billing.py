@@ -54,6 +54,9 @@ class FakePool:
     async def fetchrow(self, query, *args):
         return await self.conn.fetchrow(query, *args)
 
+    async def fetch(self, query, *args):
+        return await self.conn.fetch(query, *args)
+
     async def execute(self, query, *args):
         return await self.conn.execute(query, *args)
 
@@ -423,4 +426,93 @@ def test_create_miniapp_payment_order_downgrade_purchase() -> None:
     with pytest.raises(PermissionError) as exc_info:
         asyncio.run(run())
     assert "无法降级购买" in str(exc_info.value)
+
+
+def test_cross_month_reset_preserves_fuel_balance_on_query() -> None:
+    """跨月重置 subscription_minutes_used，但不清零 fuel_minutes_balance。"""
+    class CrossMonthConn(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "device_bindings" in query:
+                return {"user_id": "test_user"}
+            if "miniapp_allowance_settings" in query:
+                return {"daily_free_minutes": 1.5, "enabled": True}
+            return None
+
+        async def fetch(self, query, *args):
+            self.executed.append((query, args))
+            if "devices d" in query or ("devices" in query and "device_bindings" in query):
+                return [{
+                    "device_id": "test_device",
+                    "subscription_plan_id": "sub_basic",
+                    "subscription_minutes_limit": 100.0,
+                    "subscription_minutes_used": 50.0,
+                    "subscription_expires_at": datetime(2099, 1, 1, tzinfo=timezone.utc),
+                    "fuel_minutes_balance": 30.0,
+                    "last_reset_month": "2020-01",
+                    "daily_allowance_date": None,
+                    "daily_allowance_seconds_used": 0.0,
+                }]
+            return []
+
+    conn = CrossMonthConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        return await repo.get_device_quota("test_device")
+
+    quota = asyncio.run(run())
+    assert quota["fuel_minutes_left"] == 30.0
+    assert quota["subscription_minutes_left"] == 100.0
+    update_queries = [x for x in conn.executed if "UPDATE devices" in x[0]]
+    assert len(update_queries) == 1
+    sql = update_queries[0][0]
+    assert "subscription_minutes_used = 0.0000" in sql
+    assert "fuel_minutes_balance" not in sql
+
+
+def test_cross_month_reset_preserves_fuel_balance_on_deduct() -> None:
+    """deduct 路径跨月重置同样保留加油包。"""
+    class CrossMonthDeductConn(FakeConnection):
+        def transaction(self):
+            return FakeTransaction()
+
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "device_bindings" in query:
+                return {"user_id": "test_user"}
+            if "miniapp_allowance_settings" in query:
+                return {"daily_free_minutes": 1.5, "enabled": True}
+            return None
+
+        async def fetch(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                return [{
+                    "device_id": "test_device",
+                    "subscription_plan_id": None,
+                    "subscription_minutes_limit": 0.0,
+                    "subscription_minutes_used": 0.0,
+                    "subscription_expires_at": None,
+                    "fuel_minutes_balance": 20.0,
+                    "last_reset_month": "2020-01",
+                    "daily_allowance_date": None,
+                    "daily_allowance_seconds_used": 0.0,
+                }]
+            return []
+
+    conn = CrossMonthDeductConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        await repo.deduct_device_minutes_quota("test_device", 1.0)
+
+    asyncio.run(run())
+    reset_queries = [
+        x for x in conn.executed
+        if "UPDATE devices" in x[0]
+        and "last_reset_month" in x[0]
+        and "fuel_minutes_balance" not in x[0]
+    ]
+    assert len(reset_queries) == 1
 
