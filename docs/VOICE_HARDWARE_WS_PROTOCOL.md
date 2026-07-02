@@ -305,6 +305,14 @@ Agent 完整回复：
 {"type":"error","message":"no audio received"}
 ```
 
+额度用尽（每轮 `listen/stop` 或 `text_turn` 开始前检查；**不下发 TTS 音频**）：
+
+```json
+{"type":"error","error_kind":"quota_exhausted","message":"额度已用尽，请充值"}
+```
+
+固件收到 `error_kind == "quota_exhausted"` 后应播放本地预置提示音（资源键 `QUOTA_EXHAUSTED`，文案「额度已用尽，请充值」），**不要**等待云端 TTS。WebSocket 连接保持，用户充值后可继续对话。
+
 心跳响应：
 
 ```json

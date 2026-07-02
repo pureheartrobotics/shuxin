@@ -1739,6 +1739,7 @@ class _VoiceWebSocketSession:
         pcm = b"".join(self.audio_chunks)
 
         try:
+            await self._assert_quota_for_turn()
             await self._ensure_runtime()
             assert self.audio_store is not None
             assert self.user_settings is not None
@@ -1971,6 +1972,7 @@ class _VoiceWebSocketSession:
         started = time.perf_counter()
         skip_tts = os.environ.get("SHUXIN_VOICE_E2E_SKIP_TTS") == "1"
         try:
+            await self._assert_quota_for_turn()
             await self._ensure_runtime()
             assert self.audio_store is not None
             assert self.user_settings is not None
@@ -2044,6 +2046,7 @@ class _VoiceWebSocketSession:
 
                 billing_svc.record_usage_in_background(
                     user_id=self.user_settings.user_id,
+                    device_id=self.device_id,
                     stt_seconds=stt_seconds,
                     stt_model=stt_model,
                     llm_tokens=llm_tokens,
@@ -2075,6 +2078,15 @@ class _VoiceWebSocketSession:
                 await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
             else:
                 await self._send_json({"type": "error", "message": err_msg})
+
+    async def _assert_quota_for_turn(self) -> None:
+        """每轮对话前检查用户级汇总额度（同一用户名下多设备共用）。"""
+        if not self.device_id:
+            return
+        if hasattr(self.repo, "assert_device_quota_available"):
+            await self.repo.assert_device_quota_available(self.device_id)
+        elif self.user_id and hasattr(self.repo, "assert_user_quota_available"):
+            await self.repo.assert_user_quota_available(self.user_id)
 
     async def _reset_runtime(self) -> None:
         """切换用户或设备时重建运行态，确保配置和记忆目录重新绑定。"""
