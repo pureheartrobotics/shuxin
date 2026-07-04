@@ -42,7 +42,7 @@
 | 联调/QA | [语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md) |
 | 工厂 QA | [出厂工厂验收交接](docs/FACTORY_ACCEPTANCE_HANDOFF.md) |
 | 架构 | [语音闭环与硬件接口架构](docs/VOICE_ARCHITECTURE.md) |
-| 微信小程序 | [小程序开发运行指南](apps/wechat-miniprogram/README.md) |
+| 微信小程序 | [合规与配网](docs/WECHAT_MINIPROGRAM.md) · [开发运行指南](apps/wechat-miniprogram/README.md) |
 | AI 协作者 | [AGENTS.md](AGENTS.md) |
 
 语音 Demo 无硬件测试：[VOICE_DEMO_MIN_TEST.md](docs/VOICE_DEMO_MIN_TEST.md)。硬件 WebSocket 字段详表：[VOICE_HARDWARE_WS_PROTOCOL.md](docs/VOICE_HARDWARE_WS_PROTOCOL.md)。
