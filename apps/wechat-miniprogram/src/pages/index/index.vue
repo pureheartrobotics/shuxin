@@ -46,14 +46,17 @@
       </view>
     </view>
 
-    <MbtiRevealModal
-      :visible="revealVisible"
-      :mbti="revealMbti"
-      :display-name="revealDisplayName"
-      :tagline="revealTagline"
-      :is-first-reveal="revealIsFirst"
-      @confirm="closeRevealModal"
-    />
+    <view v-if="revealVisible" class="reveal-overlay" @tap.stop>
+      <view class="reveal-card" @tap.stop>
+        <view class="reveal-badge">{{ revealIsFirst ? "绑定成功" : "设备已绑定" }}</view>
+        <view class="reveal-title">你的伙伴是 {{ revealMbti }} · {{ revealDisplayName }}</view>
+        <view class="reveal-tagline">{{ revealTagline }}</view>
+        <view v-if="revealIsFirst" class="reveal-hint">设备即将和你打招呼，会说明绑定成功与伙伴类型…</view>
+        <view v-else class="reveal-hint">设备已完成绑定，首次开箱时才会语音自我介绍。</view>
+        <view class="reveal-disclaimer">MBTI 为性格气质参考，非心理测评结果。</view>
+        <button class="primary" @tap="closeRevealModal">知道了</button>
+      </view>
+    </view>
 
     <!-- 紧急公告弹窗 -->
     <view v-if="activePopup" class="announcement-popup-mask">
@@ -76,7 +79,6 @@
 <script setup lang="ts">
 import { onLoad, onShow } from "@dcloudio/uni-app";
 import { ref } from "vue";
-import MbtiRevealModal from "../../components/MbtiRevealModal.vue";
 
 const activeBanner = ref<any>(null);
 const activePopup = ref<any>(null);
@@ -736,5 +738,63 @@ button {
 
 .prov-link:active {
   opacity: 0.6;
+}
+
+.reveal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48rpx;
+  background: rgba(24, 20, 16, 0.58);
+}
+
+.reveal-card {
+  width: 100%;
+  max-width: 620rpx;
+  padding: 44rpx 36rpx 36rpx;
+  border-radius: 28rpx;
+  background: linear-gradient(180deg, #fffdf8 0%, #f7f1e8 100%);
+  box-shadow: 0 28rpx 80rpx rgba(36, 24, 12, 0.22);
+}
+
+.reveal-badge {
+  display: inline-flex;
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  background: rgba(36, 88, 73, 0.12);
+  color: #245849;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.reveal-title {
+  margin-top: 28rpx;
+  color: #24211c;
+  font-size: 40rpx;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.reveal-tagline {
+  margin-top: 18rpx;
+  color: #5f564c;
+  font-size: 28rpx;
+  line-height: 1.65;
+}
+
+.reveal-hint {
+  margin-top: 22rpx;
+  color: #9b6146;
+  font-size: 24rpx;
+}
+
+.reveal-disclaimer {
+  margin-top: 24rpx;
+  color: #9a9288;
+  font-size: 22rpx;
+  line-height: 1.5;
 }
 </style>

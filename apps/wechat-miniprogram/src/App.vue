@@ -1,6 +1,6 @@
 <script>
 export default {
-  onLaunch() {}
+  onLaunch() {},
 };
 </script>
 
