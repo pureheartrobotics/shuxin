@@ -29,6 +29,16 @@
         </view>
         <button class="mini" :disabled="loading" @tap="loadProfile">刷新</button>
       </view>
+      <view class="row legal-row">
+        <view>
+          <view class="label">法律条款</view>
+          <view class="legal-links">
+            <text class="legal-link" @tap="openTerms">用户服务协议</text>
+            <text class="legal-sep">·</text>
+            <text class="legal-link" @tap="openPrivacy">隐私政策</text>
+          </view>
+        </view>
+      </view>
       <view class="row">
         <view>
           <view class="label">意见反馈</view>
@@ -196,6 +206,14 @@ async function loadProfile() {
 
 function navigateToFeedback() {
   uni.navigateTo({ url: "/pages/profile/feedback" });
+}
+
+function openTerms() {
+  uni.navigateTo({ url: "/pages/legal/terms" });
+}
+
+function openPrivacy() {
+  uni.navigateTo({ url: "/pages/legal/privacy" });
 }
 
 async function openPaymentSheet() {
@@ -390,6 +408,26 @@ function openFactoryVerify() {
   color: #9e3b35;
   font-size: 24rpx;
   margin-top: 8rpx;
+}
+
+.legal-row {
+  align-items: flex-start;
+}
+
+.legal-links {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.legal-link {
+  color: #2f604f;
+  font-weight: 600;
+}
+
+.legal-sep {
+  color: #b5aa9d;
+  margin: 0 10rpx;
 }
 
 .mini,
