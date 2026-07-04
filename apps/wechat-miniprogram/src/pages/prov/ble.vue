@@ -1,5 +1,28 @@
 <template>
   <view class="page">
+    <view v-if="showPrivacyGate" class="privacy-overlay" @tap.stop>
+      <view class="privacy-card" @tap.stop>
+        <view class="privacy-title">隐私保护提示</view>
+        <view class="privacy-desc">
+          蓝牙配网需要使用蓝牙连接设备，并可能读取附近 Wi-Fi 列表。请阅读并同意
+          <text class="privacy-link" @tap="onOpenPrivacyContract">{{ privacyContractName }}</text>
+          后继续。
+        </view>
+        <view class="privacy-hint">若随后出现微信系统弹窗，请先勾选隐私协议再点「允许」。</view>
+        <view class="privacy-actions">
+          <button class="ghost" @tap="onPrivacyDisagree">暂不同意</button>
+          <button
+            id="ble-privacy-agree-btn"
+            class="primary"
+            open-type="agreePrivacyAuthorization"
+            @agreeprivacyauthorization="onPrivacyAgreed"
+          >
+            同意并继续
+          </button>
+        </view>
+      </view>
+    </view>
+
     <!-- 头部说明 -->
     <view class="hero">
       <view class="eyebrow">CHUXIN PROVISIONING</view>
@@ -29,15 +52,19 @@
     <view v-if="currentStep === 1" class="panel">
       <view class="panel-header">
         <view class="panel-title">第一步：搜索设备</view>
-        <view class="panel-desc">请确认手机蓝牙已打开。确保设备处于配网模式（指示灯快闪）。</view>
+        <view class="panel-desc">请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 IPH 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。</view>
       </view>
 
       <view class="scan-container">
-        <view v-if="isScanning" class="radar-box">
-          <view class="radar-circle c1"></view>
-          <view class="radar-circle c2"></view>
-          <view class="radar-circle c3"></view>
-          <text class="radar-status">正在搜寻附近的初心设备...</text>
+        <view v-if="isScanning" class="scan-active">
+          <view class="radar-box">
+            <view class="radar-circle c1"></view>
+            <view class="radar-circle c2"></view>
+            <view class="radar-circle c3"></view>
+            <text class="radar-status">正在搜寻 IPH 设备...</text>
+          </view>
+          <text class="scan-summary">已发现 {{ discoveredDevices.length }} 台设备</text>
+          <button class="ghost stop-scan" @tap.stop="stopScan">停止搜索</button>
         </view>
         <view v-else class="radar-box idle" @tap="startScan">
           <button class="primary scan-btn">开始扫描</button>
@@ -46,7 +73,7 @@
         <!-- 蓝牙列表 -->
         <scroll-view scroll-y class="device-list">
           <view v-if="discoveredDevices.length === 0" class="empty-list">
-            {{ isScanning ? '尚未发现设备，请确保设备正常开机并处于配网状态' : '点击上方按钮开始扫描' }}
+            {{ isScanning ? '尚未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式并广播名称' : '点击上方按钮开始扫描' }}
           </view>
           <view
             v-for="device in discoveredDevices"
@@ -68,6 +95,7 @@
       </view>
 
       <view v-if="errorMsg" class="message error">{{ errorMsg }}</view>
+      <view v-if="debugErr" class="message debug">{{ debugErr }}</view>
     </view>
 
     <!-- 第二步：填写 Wi-Fi 信息 -->
@@ -150,13 +178,54 @@
 
 <script setup lang="ts">
 import { onHide, onUnload } from "@dcloudio/uni-app";
-import { ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
+import {
+  closeBleAdapter,
+  ensureBleReady,
+  getBleDebugDetail,
+  mapBleError,
+  markBluetoothDiscoveryStopped,
+  shouldShowPrivacyGateForBleError,
+  startBluetoothDiscovery,
+  stopBluetoothDiscovery,
+} from "../../utils/ble-permissions";
+import {
+  BLE_SCAN_DURATION_MS,
+  extractDeviceCodeFromBleName,
+  getBleAdvertisedName,
+  PROVISION_SERVICE_UUID,
+  shouldIncludeBleDevice,
+  sortDiscoveredDevices,
+} from "../../utils/ble-discovery";
+import {
+  checkBlePrivacyNeeded,
+  mapPrivacyError,
+  loadPrivacyContractName,
+  notifyPrivacyAgreed,
+  notifyPrivacyDenied,
+  openPrivacyContract,
+  PRIVACY_AGREE_BUTTON_ID,
+  PrivacyBackendError,
+  PrivacyDeniedError,
+  PrivacyNeedAgreeError,
+  setPrivacyGateHandler,
+} from "../../utils/privacy";
+
+type BleDeviceItem = {
+  deviceId: string;
+  name: string;
+  rawName: string;
+  RSSI: number;
+};
 
 // 状态管理
 const currentStep = ref(1);
 const isScanning = ref(false);
-const discoveredDevices = ref<any[]>([]);
+const discoveredDevices = ref<BleDeviceItem[]>([]);
 const errorMsg = ref("");
+const debugErr = ref("");
+const showPrivacyGate = ref(false);
+const privacyContractName = ref("《用户隐私保护指引》");
 
 // 目标设备信息
 const targetDeviceId = ref("");
@@ -175,19 +244,32 @@ const provStatus = ref<'pending' | 'success' | 'fail'>('pending');
 const failureReason = ref("");
 
 // 蓝牙通信配置 (可根据固件端进行修改约定)
-const SERVICE_UUID = "0000FFFF-0000-1000-8000-00805F9B34FB";
+const SERVICE_UUID = PROVISION_SERVICE_UUID;
 const CHAR_SESSION_UUID = "0000FFF1-0000-1000-8000-00805F9B34FB"; // 握手与PoP特征值
 const CHAR_CONFIG_UUID = "0000FFF2-0000-1000-8000-00805F9B34FB";  // Wi-Fi配置与状态通知特征值
 
 let timeoutTimer: number | null = null;
+let scanTimeoutTimer: number | null = null;
 
-// 退出或隐藏时清理资源
+onMounted(() => {
+  setPrivacyGateHandler(async () => {
+    privacyContractName.value = await loadPrivacyContractName();
+    showPrivacyGate.value = true;
+  });
+});
+
+onUnmounted(() => {
+  setPrivacyGateHandler(null);
+  clearScanTimeout();
+});
+
+// 退出或隐藏时清理资源（onHide 不关闭 adapter，避免二次进入失败）
 onHide(() => {
-  stopBluetoothOperations();
+  stopBluetoothOperations(false);
 });
 
 onUnload(() => {
-  stopBluetoothOperations();
+  stopBluetoothOperations(true);
 });
 
 function addLog(text: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -196,17 +278,57 @@ function addLog(text: string, type: 'info' | 'success' | 'error' = 'info') {
   logs.value.push({ time: timeStr, text, type });
 }
 
-function stopBluetoothOperations() {
-  if (isScanning.value) {
-    uni.stopBluetoothDevicesDiscovery({
-      success: () => { isScanning.value = false; }
-    });
+function clearScanTimeout() {
+  if (scanTimeoutTimer) {
+    clearTimeout(scanTimeoutTimer);
+    scanTimeoutTimer = null;
   }
+}
+
+function finishScanning() {
+  isScanning.value = false;
+  markBluetoothDiscoveryStopped();
+  void stopBluetoothDiscovery();
+}
+
+function stopScan() {
+  clearScanTimeout();
+  finishScanning();
+  if (discoveredDevices.value.length === 0) {
+    errorMsg.value = "未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式";
+  }
+}
+
+function startScanTimeout() {
+  clearScanTimeout();
+  scanTimeoutTimer = setTimeout(() => {
+    if (!isScanning.value) {
+      return;
+    }
+    finishScanning();
+    if (discoveredDevices.value.length === 0) {
+      errorMsg.value = "未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式并广播名称";
+    }
+  }, BLE_SCAN_DURATION_MS) as unknown as number;
+}
+
+function stopBluetoothOperations(closeAdapter = false) {
+  clearScanTimeout();
+  if (isScanning.value) {
+    finishScanning();
+  } else {
+    markBluetoothDiscoveryStopped();
+    void stopBluetoothDiscovery();
+  }
+  uni.offBluetoothDeviceFound();
   if (connectedDeviceId.value) {
     uni.closeBLEConnection({
       deviceId: connectedDeviceId.value
     });
     connectedDeviceId.value = "";
+  }
+  if (closeAdapter) {
+    closeBleAdapter();
   }
   if (timeoutTimer) {
     clearTimeout(timeoutTimer);
@@ -216,69 +338,137 @@ function stopBluetoothOperations() {
 
 // === 步骤 1: 扫描蓝牙与连接 ===
 
-function startScan() {
+async function showPrivacyGateIfNeeded(): Promise<boolean> {
+  const privacy = await checkBlePrivacyNeeded();
+  if (!privacy.needed) {
+    return false;
+  }
+  privacyContractName.value = privacy.contractName;
+  showPrivacyGate.value = true;
+  return true;
+}
+
+async function continueScanAfterPrivacy(skipPrivacyCheck = false) {
   errorMsg.value = "";
+  debugErr.value = "";
   discoveredDevices.value = [];
   isScanning.value = true;
 
-  // 1. 初始化蓝牙适配器
-  uni.openBluetoothAdapter({
-    success: () => {
-      // 2. 开始搜索
-      uni.startBluetoothDevicesDiscovery({
-        allowDuplicatesKey: false,
-        success: () => {
-          addLog("开始搜索附近蓝牙设备...");
-          listenBluetoothDevices();
-        },
-        fail: (err) => {
-          isScanning.value = false;
-          errorMsg.value = `开启蓝牙搜索失败: ${err.errMsg}`;
-        }
-      });
-    },
-    fail: (err) => {
-      isScanning.value = false;
-      errorMsg.value = "无法初始化蓝牙，请确认手机蓝牙已开启且授权给微信";
+  try {
+    await ensureBleReady({ skipPrivacyCheck });
+    await performDiscovery();
+  } catch (err) {
+    isScanning.value = false;
+    if (err instanceof PrivacyBackendError || err instanceof PrivacyDeniedError) {
+      errorMsg.value = mapPrivacyError(err);
+      return;
     }
-  });
+    if (err instanceof PrivacyNeedAgreeError) {
+      privacyContractName.value = err.privacyContractName;
+      showPrivacyGate.value = true;
+      return;
+    }
+    if (shouldShowPrivacyGateForBleError(err)) {
+      privacyContractName.value = await loadPrivacyContractName();
+      showPrivacyGate.value = true;
+      return;
+    }
+    errorMsg.value = mapPrivacyError(err) || mapBleError(err);
+    const detail = getBleDebugDetail(err);
+    if (detail) {
+      debugErr.value = detail;
+    }
+  }
+}
+
+async function startScan() {
+  isScanning.value = false;
+  errorMsg.value = "";
+  debugErr.value = "";
+
+  if (await showPrivacyGateIfNeeded()) {
+    return;
+  }
+
+  await continueScanAfterPrivacy();
+}
+
+async function performDiscovery() {
+  uni.offBluetoothDeviceFound();
+  await startBluetoothDiscovery();
+  addLog("开始搜索附近蓝牙设备...");
+  listenBluetoothDevices();
+  startScanTimeout();
+}
+
+function onPrivacyAgreed() {
+  notifyPrivacyAgreed(PRIVACY_AGREE_BUTTON_ID);
+  showPrivacyGate.value = false;
+  void continueScanAfterPrivacy(true);
+}
+
+function onPrivacyDisagree() {
+  notifyPrivacyDenied();
+  showPrivacyGate.value = false;
+  isScanning.value = false;
+  errorMsg.value = mapPrivacyError(new PrivacyDeniedError());
+}
+
+async function onOpenPrivacyContract() {
+  try {
+    await openPrivacyContract();
+  } catch {
+    uni.showToast({ title: "无法打开隐私指引", icon: "none" });
+  }
 }
 
 function listenBluetoothDevices() {
   uni.onBluetoothDeviceFound((res) => {
     res.devices.forEach((device) => {
-      const name = device.name || device.localName || "";
-      // 过滤前缀以 ShuXin- 开头的设备
-      if (name.startsWith("ShuXin-")) {
-        if (!discoveredDevices.value.some((x) => x.deviceId === device.deviceId)) {
-          discoveredDevices.value.push(device);
-        }
+      if (!shouldIncludeBleDevice(device)) {
+        return;
       }
+
+      const rawName = getBleAdvertisedName(device);
+      const existing = discoveredDevices.value.find((x) => x.deviceId === device.deviceId);
+      if (existing) {
+        existing.RSSI = device.RSSI ?? existing.RSSI;
+        existing.name = rawName;
+        existing.rawName = rawName;
+      } else {
+        discoveredDevices.value.push({
+          deviceId: device.deviceId,
+          name: rawName,
+          rawName,
+          RSSI: device.RSSI ?? -100,
+        });
+      }
+      discoveredDevices.value = sortDiscoveredDevices(discoveredDevices.value);
+      debugErr.value = `已发现 ${discoveredDevices.value.length} 台 IPH 开头设备`;
     });
   });
 }
 
-function connectDevice(device: any) {
+function connectDevice(device: BleDeviceItem) {
   if (targetDeviceId.value) return; // 正在连接中
   targetDeviceId.value = device.deviceId;
   errorMsg.value = "";
+  clearScanTimeout();
 
-  // 停止搜索
-  uni.stopBluetoothDevicesDiscovery({
-    success: () => { isScanning.value = false; }
-  });
+  finishScanning();
 
-  addLog(`尝试建立蓝牙连接: ${device.name}`);
+  const displayName = device.name;
+  addLog(`尝试建立蓝牙连接: ${displayName}`);
   uni.createBLEConnection({
     deviceId: device.deviceId,
     timeout: 10000,
     success: () => {
       connectedDeviceId.value = device.deviceId;
-      connectedDeviceName.value = device.name;
+      connectedDeviceName.value = device.rawName || displayName;
       addLog(`蓝牙连接成功！进行底层安全通道校验...`, 'success');
       
       // 进行底层安全校验 (PoP: shuxin)
-      performPoPVerification(device.deviceId, device.name);
+      performPoPVerification(device.deviceId, connectedDeviceName.value);
     },
     fail: (err) => {
       targetDeviceId.value = "";
@@ -321,7 +511,7 @@ function performPoPVerification(deviceId: string, deviceName: string) {
             },
             fail: (err) => {
               addLog(`安全参数校验失败: ${err.errMsg}`, 'error');
-              errorMsg.value = "设备安全通道握手失败，请重新尝试。";
+              errorMsg.value = "设备安全通道握手失败，可能不是初心设备，请重新选择。";
               targetDeviceId.value = "";
               uni.closeBLEConnection({ deviceId });
               connectedDeviceId.value = "";
@@ -352,13 +542,17 @@ function togglePasswordVisible() {
 }
 
 function backToStep1() {
-  stopBluetoothOperations();
+  stopBluetoothOperations(true);
   currentStep.value = 1;
   errorMsg.value = "";
+  debugErr.value = "";
   targetDeviceId.value = "";
   connectedDeviceName.value = "";
   wifiSsid.value = "";
   wifiPassword.value = "";
+  sendingConfig.value = false;
+  provStatus.value = "pending";
+  failureReason.value = "";
 }
 
 function scanLocalWifi() {
@@ -485,25 +679,24 @@ function handleDeviceStatusUpdate(code: number) {
       provStatus.value = 'success';
       if (timeoutTimer) clearTimeout(timeoutTimer);
       
-      // 提取设备码
-      // 例如蓝牙名是 "ShuXin-000013" -> 对应 device_code "SX-000013"
-      let deviceCode = "";
-      if (connectedDeviceName.value.startsWith("ShuXin-")) {
-        const rawCode = connectedDeviceName.value.replace("ShuXin-", "");
-        deviceCode = `SX-${rawCode}`;
-      }
+      const deviceCode = extractDeviceCodeFromBleName(connectedDeviceName.value);
       
       // 写入本地缓存，供绑定页 onShow 获取
       if (deviceCode) {
         uni.setStorageSync("temp_device_code", deviceCode);
         addLog(`成功检测到设备码: ${deviceCode}，正在返回绑定页...`, 'success');
+      } else {
+        addLog("配网成功，未能从蓝牙名解析设备码，请返回绑定页手动输入。", 'success');
       }
 
       // 延迟 2 秒返回绑定页
       setTimeout(() => {
-        stopBluetoothOperations();
+        stopBluetoothOperations(true);
         uni.switchTab({
-          url: "/pages/index/index"
+          url: "/pages/index/index",
+          fail: () => {
+            uni.reLaunch({ url: "/pages/index/index" });
+          },
         });
       }, 2000);
       break;
@@ -544,10 +737,18 @@ function handleDeviceStatusUpdate(code: number) {
 }
 
 function retryProvisioning() {
-  stopBluetoothOperations();
+  stopBluetoothOperations(true);
   sendingConfig.value = false;
-  currentStep.value = 2;
+  currentStep.value = 1;
   errorMsg.value = "";
+  debugErr.value = "";
+  targetDeviceId.value = "";
+  connectedDeviceName.value = "";
+  connectedDeviceId.value = "";
+  discoveredDevices.value = [];
+  provStatus.value = "pending";
+  failureReason.value = "";
+  isScanning.value = false;
 }
 </script>
 
@@ -685,6 +886,27 @@ function retryProvisioning() {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.scan-active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.scan-summary {
+  font-size: 24rpx;
+  color: #6f665b;
+  margin-bottom: 16rpx;
+}
+
+.stop-scan {
+  width: 200rpx;
+  height: 68rpx;
+  line-height: 68rpx;
+  font-size: 24rpx;
+  margin-bottom: 8rpx;
 }
 
 .radar-box {
@@ -878,6 +1100,15 @@ button {
   border: 1rpx solid rgba(158, 59, 53, 0.15);
 }
 
+.message.debug {
+  background: #ece7df;
+  color: #5a544e;
+  border: 1rpx solid rgba(90, 84, 78, 0.12);
+  font-size: 20rpx;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  word-break: break-all;
+}
+
 /* 状态控制台 */
 .console-box {
   background: #1c1815;
@@ -989,5 +1220,64 @@ button {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.privacy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(36, 33, 28, 0.45);
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+.privacy-card {
+  width: 100%;
+  max-width: 620rpx;
+  background: #fffaf3;
+  border-radius: 24rpx;
+  padding: 40rpx 36rpx 32rpx;
+  border: 1rpx solid rgba(128, 94, 69, 0.16);
+}
+
+.privacy-title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #24211c;
+  margin-bottom: 20rpx;
+}
+
+.privacy-desc {
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: #6f665b;
+  margin-bottom: 16rpx;
+}
+
+.privacy-hint {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #9b6146;
+  margin-bottom: 28rpx;
+}
+
+.privacy-link {
+  color: #2f604f;
+  text-decoration: underline;
+}
+
+.privacy-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.privacy-actions button {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  font-size: 26rpx;
 }
 </style>

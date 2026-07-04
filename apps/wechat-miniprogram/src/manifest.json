@@ -9,6 +9,12 @@
     "setting": {
       "urlCheck": false
     },
-    "usingComponents": true
+    "usingComponents": true,
+    "__usePrivacyCheck__": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于搜索附近的蓝牙设备和 Wi-Fi 网络"
+      }
+    }
   }
 }

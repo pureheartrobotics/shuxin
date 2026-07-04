@@ -30,7 +30,7 @@ clean_dev_output() {
 check_page_outputs() {
   local out_dir="$1"
   local missing=0
-  for page in pages/index/index pages/profile/profile pages/login/login; do
+  for page in pages/index/index pages/profile/profile pages/login/login pages/prov/ble; do
     for ext in wxml js json wxss; do
       if [ ! -f "$out_dir/$page.$ext" ]; then
         echo "Build output is missing $page.$ext in $out_dir"
@@ -39,6 +39,16 @@ check_page_outputs() {
     done
   done
   if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  if grep -q 'usingComponents' "$out_dir/pages/index/index.json" 2>/dev/null \
+    && grep -q 'MbtiRevealModal\|PrivacyGate' "$out_dir/pages/index/index.json" 2>/dev/null; then
+    echo "pages/index/index.json still references external components; WSL DevTools may fail to load the page."
+    exit 1
+  fi
+  if [ -f "$out_dir/pages/prov/ble.json" ] \
+    && grep -q 'PrivacyGate' "$out_dir/pages/prov/ble.json" 2>/dev/null; then
+    echo "pages/prov/ble.json still references PrivacyGate; restart dev server after a clean rebuild."
     exit 1
   fi
 }
