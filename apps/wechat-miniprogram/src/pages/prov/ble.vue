@@ -205,6 +205,7 @@ import {
 import {
   EspIdfProvisionClient,
   mapWifiStatusToMessage,
+  PROVISION_POP,
   type WifiProvisionStatus,
 } from "./esp-idf-prov";
 import {
@@ -466,14 +467,15 @@ function connectDevice(device: BleDeviceItem) {
   finishScanning();
 
   const displayName = device.name;
-  const pop = device.rawName || displayName;
+  const advertisedName = device.rawName || displayName;
+  const pop = PROVISION_POP;
   addLog(`尝试建立蓝牙连接: ${displayName}`);
   uni.createBLEConnection({
     deviceId: device.deviceId,
     timeout: 10000,
     success: () => {
       connectedDeviceId.value = device.deviceId;
-      connectedDeviceName.value = pop;
+      connectedDeviceName.value = advertisedName;
       addLog(`蓝牙连接成功，建立 ESP-IDF Security1 会话（PoP=${pop}）...`, "success");
       void (async () => {
         try {

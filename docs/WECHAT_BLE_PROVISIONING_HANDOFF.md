@@ -25,7 +25,7 @@
 
 ```text
 扫描 SX 设备 → 用户点击 SX-000003 → BLE 连接
-→ Security1 握手（PoP = SX-000003）→ 用户填 Wi-Fi
+→ Security1 握手（PoP = shuxin）→ 用户填 Wi-Fi
 → 加密下发 SSID/密码 → 设备联网 → 绑定页预填 SX-000003
 ```
 
@@ -34,11 +34,11 @@ sequenceDiagram
   participant App as 微信小程序
   participant Dev as ESP32固件
 
-  Note over Dev: 广播名 = device_code = PoP
+  Note over Dev: 广播名 = device_code；PoP 固定为 shuxin
   App->>Dev: 扫描，仅显示 sx 前缀设备
   App->>Dev: createBLEConnection
   App->>Dev: prov-session Security1 握手
-  Note over App,Dev: PoP 为所选设备广播名
+  Note over App,Dev: PoP 固定为 shuxin
   App->>User: 填写 Wi-Fi
   App->>Dev: prov-config SetConfig/ApplyConfig
   loop 轮询
@@ -65,20 +65,20 @@ sequenceDiagram
 
 小程序过滤：`name.toLowerCase().startsWith("sx")`。
 
-### 3.2 PoP = 设备码（与广播名一致）
+### 3.2 PoP 固定为 `shuxin`
 
 | 项 | 要求 |
 |----|------|
 | 安全方案 | `WIFI_PROV_SECURITY_1` |
-| PoP 字符串 | **与广播名 / device_code 完全相同** |
-| 示例 | 广播 `SX-000003` → PoP 也为 `SX-000003` |
+| PoP 字符串 | **固定为 `shuxin`** |
+| 示例 | 广播 `SX-000003` → PoP 仍为 `shuxin` |
 
-用户点击列表中的设备后，小程序**自动**以该广播名作为 PoP 参与 Security1 握手，**无需用户手输**。
+用户点击列表中的设备后，小程序自动使用固定 `shuxin` 参与 Security1 握手，无需用户手输。
 
 固件烧录时须保证：
 
 ```text
-device_code == BLE 广播名 == PoP 字符串
+device_code == BLE 广播名；PoP == "shuxin"
 ```
 
 ### 3.3 保留 ESP-IDF 标准配网栈
@@ -87,7 +87,7 @@ device_code == BLE 广播名 == PoP 字符串
 - `wifi_prov_scheme_ble`
 - Wi-Fi 凭据校验、保存、超时与 BLE 资源释放逻辑**无需为小程序重写**
 
-仅需在业务层把广播名与 PoP 设为 `SHUXIN_DEVICE_CODE`，并更新屏幕/语音提示（勿再引导用户搜索 `PROV_` 设备）。
+业务层将广播名设为 `SHUXIN_DEVICE_CODE`、PoP 固定为 `shuxin`，并更新屏幕/语音提示（勿再引导用户搜索 `PROV_` 设备）。
 
 ---
 
@@ -105,8 +105,8 @@ device_code == BLE 广播名 == PoP 字符串
 |-------------|---------|------|
 | `prov-session` | `ff51` | Security1 会话握手 |
 | `prov-config` | `ff52` | Wi-Fi 配置与状态 |
-| `prov-scan` | `ff53` | （可选）扫描 AP |
-| `proto-ver` | `ff54` | 协议版本 |
+| `prov-scan` | `ff50` | （可选）扫描 AP |
+| `proto-ver` | `ff53` | 协议版本 |
 
 特征值 UUID 推导规则与 ESP-IDF `esp_prov` 工具一致：在 Service UUID 基础上替换第 12–15 位十六进制。
 
@@ -165,9 +165,9 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 ### 固件侧
 
 - [ ] 配网模式广播名 = `SX-xxxxxx`（= device_code）
-- [ ] PoP 烧录值 = 同一 `device_code` 字符串
+- [ ] Security1 PoP = 固定字符串 `shuxin`
 - [ ] `wifi_prov_mgr` + `WIFI_PROV_SECURITY_1` 正常工作
-- [ ] 乐鑫 **ESP BLE Provisioning** App 可用相同 PoP（= device_code）配网成功
+- [ ] 乐鑫 **ESP BLE Provisioning** App 可用 PoP `shuxin` 配网成功
 - [ ] 屏幕/语音不再提示搜索 `PROV_` 设备
 
 ### 小程序侧
@@ -190,7 +190,7 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | 现象 | 可能原因 |
 |------|----------|
 | 扫描列表为空 | 广播名非 `sx` 前缀或未进配网模式 |
-| Security1 / PoP 失败 | 固件 PoP ≠ 广播名；或选错设备 |
+| Security1 / PoP 失败 | 固件与小程序使用的固定 PoP 不一致 |
 | SetConfig 失败 | 会话未建立；Service UUID 不一致 |
 | 一直 Connecting | 信号弱、5GHz SSID、路由器拒绝 |
 | 密码错误 | `ConnectionFailed` + `AuthError` |
@@ -204,7 +204,7 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | 握手 | 向 `FFF1` 写明文 `shuxin` | `prov-session` Security1 |
 | Wi-Fi | 向 `FFF2` 写 JSON | `prov-config` 加密 Protobuf |
 | 状态 | `FFF2` 单字节 Notify | `GetStatus` Protobuf |
-| PoP | 固定 `shuxin` | **= 设备广播名（device_code）** |
+| PoP | 固定 `shuxin` | 固定 `shuxin`，通过 Security1 使用 |
 | 广播名 | `SX` 前缀 | 不变 |
 
 ---

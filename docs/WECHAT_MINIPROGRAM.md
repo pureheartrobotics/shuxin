@@ -67,7 +67,7 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 | 规则 | 说明 |
 |------|------|
 | 扫描过滤 | `BLE_NAME_PREFIXES = ["sx"]`（大小写不敏感） |
-| PoP | 用户点选设备的广播名（= device_code），自动用于 Security1 |
+| PoP | 固定字符串 `shuxin`，自动用于 Security1 |
 | 预填 | 配网成功后广播名原样写入绑定页 |
 | 协议 | `prov-session` 握手 + `prov-config` 下发 Wi-Fi（Protobuf，非 JSON） |
 
@@ -95,7 +95,7 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
 2. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
 3. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
-4. 点击设备后 ESP-IDF Security1 握手（PoP = 广播名）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码  
+4. 点击设备后 ESP-IDF Security1 握手（PoP = `shuxin`）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码
 
 ---
 
