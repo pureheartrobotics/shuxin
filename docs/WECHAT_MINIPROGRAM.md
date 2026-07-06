@@ -11,9 +11,13 @@
 改源码后必须重新编译，微信开发者工具导入**产物目录**，不是源码：
 
 ```bash
-bash scripts/wechat_miniprogram_dev.sh build   # 生产包 → dist/build/mp-weixin
+bash scripts/wechat_miniprogram_dev.sh build   # 生产包 → dist/build，并同步到 dist/dev
 bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-weixin
 ```
+
+微信开发者工具导入 **`apps/wechat-miniprogram`**（非源码外的 `dist/` 子目录）；`miniprogramRoot` 指向 `dist/dev/mp-weixin`。执行 `build` 后脚本会把最新产物同步到 `dev`，避免「已 build 但工具仍加载旧包」导致白屏。
+
+**mp-weixin 限制**：勿使用 ES `import()` 延迟加载（会编译成 `await "path"`，Android 真机报 `e is not a constructor`）。ESP-IDF 客户端须放在 [`pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/)（页面同级，勿放 `utils/`），在 [`ble.vue`](../apps/wechat-miniprogram/src/pages/prov/ble.vue) 顶层 `import from "./esp-idf-prov"`。`build` 后须在 DevTools **清缓存 → 重新编译 → 重新真机预览**。
 
 ---
 
@@ -54,22 +58,20 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 
 ---
 
-## 4. BLE 扫描过滤
+## 4. BLE 扫描与 ESP-IDF 配网
 
-**工具**：`utils/ble-discovery.ts`  
-**页面**：`pages/prov/ble.vue`
+**扫描过滤**：[`utils/ble-discovery.ts`](../apps/wechat-miniprogram/src/utils/ble-discovery.ts) — 仅 `sx` 前缀、广播名即设备码。
+
+**配网协议**：[`pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/) — ESP-IDF `wifi_prov_scheme_ble` + Security1。
 
 | 规则 | 说明 |
 |------|------|
-| 无广播名丢弃 | 无 `name`/`localName` 的设备不入列表（对齐微信官方示例） |
-| 前缀过滤 | `BLE_NAME_PREFIXES = ["sx"]`（不区分大小写，匹配 `SX-000131` 等） |
-| 广播名 = 设备码 | 配网成功后原样预填绑定页，不做格式转换 |
-| 扫描时长 | 12s 自动停止 +「停止搜索」按钮 |
-| 计数 | 列表长度 `discoveredDevices.length`，非回调次数 |
+| 扫描过滤 | `BLE_NAME_PREFIXES = ["sx"]`（大小写不敏感） |
+| PoP | 用户点选设备的广播名（= device_code），自动用于 Security1 |
+| 预填 | 配网成功后广播名原样写入绑定页 |
+| 协议 | `prov-session` 握手 + `prov-config` 下发 Wi-Fi（Protobuf，非 JSON） |
 
 **硬件对接详表**：[`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](WECHAT_BLE_PROVISIONING_HANDOFF.md)
-
-Service UUID 常量：`PROVISION_SERVICE_UUID = 0000FFFF-0000-1000-8000-00805F9B34FB`
 
 ---
 
@@ -93,7 +95,7 @@ Service UUID 常量：`PROVISION_SERVICE_UUID = 0000FFFF-0000-1000-8000-00805F9B
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
 2. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
 3. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
-4. 连接 → 填 Wi-Fi → 配网成功；绑定页预填广播名（= 设备码）  
+4. 点击设备后 ESP-IDF Security1 握手（PoP = 广播名）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码  
 
 ---
 
@@ -104,8 +106,9 @@ apps/wechat-miniprogram/src/
 ├── pages/login/login.vue       # 登录 + 协议勾选
 ├── pages/legal/                # 协议正文
 ├── pages/prov/ble.vue          # 蓝牙配网 UI + 扫描
+│   └── esp-idf-prov/           # ESP-IDF protocomm 配网客户端（页面同级）
 ├── utils/policy.ts             # 应用层协议同意
 ├── utils/privacy.ts            # 微信隐私 API
-├── utils/ble-discovery.ts      # 扫描过滤 + 设备名解析
+├── utils/ble-discovery.ts      # 扫描过滤（sx 前缀）
 └── utils/ble-permissions.ts    # 蓝牙/定位权限 + discovery 生命周期
 ```

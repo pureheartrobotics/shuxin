@@ -38,6 +38,12 @@ check_page_outputs() {
       fi
     done
   done
+  for prov_file in security1.js provision-client.js ble-transport.js; do
+    if [ ! -f "$out_dir/pages/prov/esp-idf-prov/$prov_file" ]; then
+      echo "Build output is missing pages/prov/esp-idf-prov/$prov_file in $out_dir"
+      missing=1
+    fi
+  done
   if [ "$missing" -ne 0 ]; then
     exit 1
   fi
@@ -53,11 +59,20 @@ check_page_outputs() {
   fi
 }
 
+sync_build_to_dev() {
+  local build_dir="$APP_DIR/dist/build/mp-weixin"
+  local dev_dir="$APP_DIR/dist/dev/mp-weixin"
+  rm -rf "$dev_dir"
+  mkdir -p "$(dirname "$dev_dir")"
+  cp -a "$build_dir" "$dev_dir"
+  echo "Synced build → dist/dev/mp-weixin (matches project.config miniprogramRoot)"
+}
+
 print_build_hints() {
   local local_mode="$1"
   echo ""
   echo "Build OK. API baked: $API_BASE"
-  echo "Open in WeChat DevTools: $APP_DIR/dist/build/mp-weixin"
+  echo "Open in WeChat DevTools: $APP_DIR (miniprogramRoot → dist/dev/mp-weixin)"
   if [ "$local_mode" = "1" ]; then
     echo "DevTools: 详情 → 本地设置 → 勾选「不校验合法域名…」"
     echo "支付 notify 仍走 trycloudflare（SHUXIN_WXPAY_NOTIFY_URL）；tunnel 变更只需 redeploy，无需重编小程序"
@@ -100,6 +115,8 @@ if [ "$MODE" = "build" ]; then
     check_no_stale_localhost "$APP_DIR/dist/build/mp-weixin"
   fi
   check_page_outputs "$APP_DIR/dist/build/mp-weixin"
+  sync_build_to_dev
+  check_page_outputs "$APP_DIR/dist/dev/mp-weixin"
   print_build_hints "$LOCAL_BUILD"
 else
   echo "Open in WeChat DevTools: $APP_DIR/dist/dev/mp-weixin"

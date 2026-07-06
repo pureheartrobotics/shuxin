@@ -39,7 +39,8 @@ export WECHAT_MINIPROGRAM_APPID="your-appid"
 ../../scripts/wechat_miniprogram_dev.sh
 ```
 
-- **编译产物路径**：`apps/wechat-miniprogram/dist/dev/mp-weixin`
+- **编译产物路径**：`apps/wechat-miniprogram/dist/dev/mp-weixin`（由 `project.config.json` 的 `miniprogramRoot` 指向）
+- **导入微信开发者工具**：选择 **`apps/wechat-miniprogram`** 目录（含 `project.config.json`），不要只导入 `dist/` 子目录
 - **后台地址绑定**：脚本默认会将小程序的后端 API 地址设为 `http://localhost:8765`。如果要手动指定后端地址，可设置环境变量 `SHUXIN_API_BASE`，例如：
   ```bash
   SHUXIN_API_BASE=https://your-domain.com ../../scripts/wechat_miniprogram_dev.sh
@@ -48,9 +49,8 @@ export WECHAT_MINIPROGRAM_APPID="your-appid"
 ### 3. 导入微信开发者工具
 
 1. 打开**微信开发者工具**，选择导入项目。
-2. **非常重要**：**导入的目录必须是编译产物目录，不能是源码目录！**
-   - 开发调试时，导入目录选择：`apps/wechat-miniprogram/dist/dev/mp-weixin`
-3. 填写您的 AppID（需与步骤 2 中设置 of AppID 一致，或者使用测试号）。
+2. **导入目录**：`apps/wechat-miniprogram`（工程根目录；`miniprogramRoot` 自动指向 `dist/dev/mp-weixin`）
+3. 填写您的 AppID（需与步骤 2 中设置的 AppID 一致，或者使用测试号）。
 4. 导入成功后，在微信开发者工具中进行如下设置：
    - 点击右上角 **详情** -> **本地设置** -> 勾选 **「不校验合法域名、web-view（业务域名）、TLS版本以及HTTPS证书」**。
 
@@ -61,12 +61,12 @@ export WECHAT_MINIPROGRAM_APPID="your-appid"
 如果需要打包生成用于发布的生产版本，请运行生产构建脚本：
 
 ```bash
-# 生产构建
-../../scripts/wechat_miniprogram_build.sh
+# 生产构建（产物写入 dist/build，并自动同步到 dist/dev 供 DevTools 使用）
+bash scripts/wechat_miniprogram_dev.sh build
 ```
 
 - **构建产物路径**：`apps/wechat-miniprogram/dist/build/mp-weixin`
-- 微信开发者工具中，将项目目录切换为该路径即可进行预览或上传审核。
+- **`build` 后会自动同步到 `dist/dev/mp-weixin`**，与 `project.config.json` 的 `miniprogramRoot` 一致；改源码后须重新 build 并在工具内点「编译」
 
 ---
 
@@ -109,8 +109,8 @@ SHUXIN_WECHAT_MOCK=1
    - Android：同时打开**定位**开关，并在微信中允许「位置信息」
    - 设备进入配网模式（指示灯快闪）
 4. 首次扫描会先弹出**隐私保护提示**，点击「同意并继续」后再搜索蓝牙
-5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 SX 开头的设备**（不区分大小写）→ 连接 → 填写 2.4GHz Wi-Fi → 发送配置
-6. 配网成功后返回绑定页；广播名（= 设备码）自动预填，否则手动输入
+5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 SX 开头的设备** → 点击设备（PoP 自动取广播名）→ 填写 2.4GHz Wi-Fi → 发送配置
+6. 配网成功后返回绑定页；广播名（= 设备码）自动预填
 
 **微信小程序后台**（代码 + 后台双侧缺一不可）：
 

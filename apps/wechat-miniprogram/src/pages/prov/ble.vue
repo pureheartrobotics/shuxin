@@ -66,8 +66,14 @@
           <text class="scan-summary">已发现 {{ discoveredDevices.length }} 台设备</text>
           <button class="ghost stop-scan" @tap.stop="stopScan">停止搜索</button>
         </view>
-        <view v-else class="radar-box idle" @tap="startScan">
-          <button class="primary scan-btn">开始扫描</button>
+        <view v-else class="scan-idle" @tap="startScan">
+          <view class="radar-box idle">
+            <view class="radar-circle c1 idle-ring"></view>
+            <view class="radar-circle c2 idle-ring"></view>
+            <view class="radar-circle c3 idle-ring"></view>
+            <button class="primary scan-btn">开始扫描</button>
+          </view>
+          <text class="scan-hint">点击开始搜索附近的 SX 设备</text>
         </view>
 
         <!-- 蓝牙列表 -->
@@ -193,10 +199,14 @@ import {
   BLE_SCAN_DURATION_MS,
   extractDeviceCodeFromBleName,
   getBleAdvertisedName,
-  PROVISION_SERVICE_UUID,
   shouldIncludeBleDevice,
   sortDiscoveredDevices,
 } from "../../utils/ble-discovery";
+import {
+  EspIdfProvisionClient,
+  mapWifiStatusToMessage,
+  type WifiProvisionStatus,
+} from "./esp-idf-prov";
 import {
   checkBlePrivacyNeeded,
   mapPrivacyError,
@@ -243,10 +253,8 @@ const logs = ref<{ time: string; text: string; type: 'info' | 'success' | 'error
 const provStatus = ref<'pending' | 'success' | 'fail'>('pending');
 const failureReason = ref("");
 
-// 蓝牙通信配置 (可根据固件端进行修改约定)
-const SERVICE_UUID = PROVISION_SERVICE_UUID;
-const CHAR_SESSION_UUID = "0000FFF1-0000-1000-8000-00805F9B34FB"; // 握手与PoP特征值
-const CHAR_CONFIG_UUID = "0000FFF2-0000-1000-8000-00805F9B34FB";  // Wi-Fi配置与状态通知特征值
+// ESP-IDF protocomm 配网客户端（页面同级 import；mp-weixin 禁止 import() 延迟加载）
+let provisionClient: EspIdfProvisionClient | null = null;
 
 let timeoutTimer: number | null = null;
 let scanTimeoutTimer: number | null = null;
@@ -334,6 +342,7 @@ function stopBluetoothOperations(closeAdapter = false) {
     clearTimeout(timeoutTimer);
     timeoutTimer = null;
   }
+  provisionClient = null;
 }
 
 // === 步骤 1: 扫描蓝牙与连接 ===
@@ -450,88 +459,46 @@ function listenBluetoothDevices() {
 }
 
 function connectDevice(device: BleDeviceItem) {
-  if (targetDeviceId.value) return; // 正在连接中
+  if (targetDeviceId.value) return;
   targetDeviceId.value = device.deviceId;
   errorMsg.value = "";
   clearScanTimeout();
-
   finishScanning();
 
   const displayName = device.name;
+  const pop = device.rawName || displayName;
   addLog(`尝试建立蓝牙连接: ${displayName}`);
   uni.createBLEConnection({
     deviceId: device.deviceId,
     timeout: 10000,
     success: () => {
       connectedDeviceId.value = device.deviceId;
-      connectedDeviceName.value = device.rawName || displayName;
-      addLog(`蓝牙连接成功！进行底层安全通道校验...`, 'success');
-      
-      // 进行底层安全校验 (PoP: shuxin)
-      performPoPVerification(device.deviceId, connectedDeviceName.value);
+      connectedDeviceName.value = pop;
+      addLog(`蓝牙连接成功，建立 ESP-IDF Security1 会话（PoP=${pop}）...`, "success");
+      void (async () => {
+        try {
+          provisionClient = new EspIdfProvisionClient(device.deviceId, pop);
+          await provisionClient.establishSession();
+          addLog("安全会话建立成功", "success");
+          currentStep.value = 2;
+          targetDeviceId.value = "";
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          addLog(`安全会话建立失败: ${message}`, "error");
+          errorMsg.value = message || "设备安全通道握手失败，请确认选择了正确的初心设备。";
+          targetDeviceId.value = "";
+          provisionClient = null;
+          uni.closeBLEConnection({ deviceId: device.deviceId });
+          connectedDeviceId.value = "";
+          connectedDeviceName.value = "";
+        }
+      })();
     },
     fail: (err) => {
       targetDeviceId.value = "";
       errorMsg.value = `蓝牙连接失败: ${err.errMsg}`;
-      addLog(`蓝牙连接失败: ${err.errMsg}`, 'error');
-    }
-  });
-}
-
-// 静默安全通道握手校验
-function performPoPVerification(deviceId: string, deviceName: string) {
-  // 1. 寻找服务
-  uni.getBLEDeviceServices({
-    deviceId,
-    success: (res) => {
-      // 2. 寻找特征值
-      uni.getBLEDeviceCharacteristics({
-        deviceId,
-        serviceId: SERVICE_UUID,
-        success: (charRes) => {
-          addLog("发现特征值服务，写入安全密钥...");
-          // 3. 后台发送 PoP 安全参数 "shuxin"
-          const popStr = "shuxin";
-          const buffer = new ArrayBuffer(popStr.length);
-          const dataView = new DataView(buffer);
-          for (let i = 0; i < popStr.length; i++) {
-            dataView.setUint8(i, popStr.charCodeAt(i));
-          }
-
-          uni.writeBLECharacteristicValue({
-            deviceId,
-            serviceId: SERVICE_UUID,
-            characteristicId: CHAR_SESSION_UUID,
-            value: buffer,
-            success: () => {
-              addLog("安全密钥验证通过！", 'success');
-              // 进入第二步：填写 Wi-Fi
-              currentStep.value = 2;
-              targetDeviceId.value = "";
-            },
-            fail: (err) => {
-              addLog(`安全参数校验失败: ${err.errMsg}`, 'error');
-              errorMsg.value = "设备安全通道握手失败，可能不是初心设备，请重新选择。";
-              targetDeviceId.value = "";
-              uni.closeBLEConnection({ deviceId });
-              connectedDeviceId.value = "";
-            }
-          });
-        },
-        fail: (err) => {
-          errorMsg.value = `获取特征值失败: ${err.errMsg}`;
-          targetDeviceId.value = "";
-          uni.closeBLEConnection({ deviceId });
-          connectedDeviceId.value = "";
-        }
-      });
+      addLog(`蓝牙连接失败: ${err.errMsg}`, "error");
     },
-    fail: (err) => {
-      errorMsg.value = `获取蓝牙服务失败: ${err.errMsg}`;
-      targetDeviceId.value = "";
-      uni.closeBLEConnection({ deviceId });
-      connectedDeviceId.value = "";
-    }
   });
 }
 
@@ -591,70 +558,70 @@ function scanLocalWifi() {
 }
 
 function sendWifiCredentials() {
-  if (!wifiSsid.value) return;
+  if (!wifiSsid.value || !provisionClient) return;
   sendingConfig.value = true;
   errorMsg.value = "";
 
   logs.value = [];
   currentStep.value = 3;
-  provStatus.value = 'pending';
+  provStatus.value = "pending";
   addLog(`开始配置设备 Wi-Fi，网络名: ${wifiSsid.value}`);
+  startTimeoutTimer();
 
-  // 1. 订阅连接状态 Notify
-  uni.notifyBLECharacteristicValueChange({
-    deviceId: connectedDeviceId.value,
-    serviceId: SERVICE_UUID,
-    characteristicId: CHAR_CONFIG_UUID,
-    state: true,
-    success: () => {
-      addLog("成功监听设备连接反馈特征值");
-      
-      // 监听通知回调
-      uni.onBLECharacteristicValueChange((res) => {
-        if (res.characteristicId === CHAR_CONFIG_UUID) {
-          const dataView = new DataView(res.value);
-          const statusCode = dataView.getUint8(0);
-          handleDeviceStatusUpdate(statusCode);
-        }
-      });
+  provisionClient
+    .provisionWifi(wifiSsid.value, wifiPassword.value, (status: WifiProvisionStatus) => {
+      handleEspWifiStatus(status);
+    })
+    .then(() => {
+      finishProvisionSuccess();
+    })
+    .catch((err: Error) => {
+      addLog(`配网失败: ${err.message}`, "error");
+      provStatus.value = "fail";
+      failureReason.value = err.message || "设备网络连接失败，请确认无线网络可正常使用。";
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      sendingConfig.value = false;
+    });
+}
 
-      // 2. 发送 Wi-Fi payload
-      // 协议数据载荷约定：SSID 和 Password 拼接成 JSON 写入特征值 (或 Protobuf)
-      const payload = JSON.stringify({
-        ssid: wifiSsid.value,
-        password: wifiPassword.value
-      });
+function handleEspWifiStatus(status: WifiProvisionStatus) {
+  const message = mapWifiStatusToMessage(status);
+  if (status === "connecting") {
+    addLog(message);
+    return;
+  }
+  if (status === "connected") {
+    addLog(message, "success");
+    return;
+  }
+  if (status === "failed_auth" || status === "failed_not_found" || status === "failed") {
+    addLog(message, "error");
+  }
+}
 
-      const buffer = new ArrayBuffer(payload.length);
-      const dataView = new DataView(buffer);
-      for (let i = 0; i < payload.length; i++) {
-        dataView.setUint8(i, payload.charCodeAt(i));
-      }
+function finishProvisionSuccess() {
+  addLog("设备联网成功！获取 IP 地址成功。", "success");
+  provStatus.value = "success";
+  sendingConfig.value = false;
+  if (timeoutTimer) clearTimeout(timeoutTimer);
 
-      addLog("正在写入 Wi-Fi 账号和密码数据...");
-      uni.writeBLECharacteristicValue({
-        deviceId: connectedDeviceId.value,
-        serviceId: SERVICE_UUID,
-        characteristicId: CHAR_CONFIG_UUID,
-        value: buffer,
-        success: () => {
-          addLog("数据写入成功！设备开始连接 Wi-Fi...", 'success');
-          // 启动 60 秒超时定时器
-          startTimeoutTimer();
-        },
-        fail: (err) => {
-          addLog(`向特征值写入 Wi-Fi 配置失败: ${err.errMsg}`, 'error');
-          provStatus.value = 'fail';
-          failureReason.value = "发送数据失败，请确认设备未断开。";
-        }
-      });
-    },
-    fail: (err) => {
-      addLog(`订阅特征值状态通知失败: ${err.errMsg}`, 'error');
-      provStatus.value = 'fail';
-      failureReason.value = "监听设备连接反馈服务失败。";
-    }
-  });
+  const deviceCode = extractDeviceCodeFromBleName(connectedDeviceName.value);
+  if (deviceCode) {
+    uni.setStorageSync("temp_device_code", deviceCode);
+    addLog(`成功检测到设备码: ${deviceCode}，正在返回绑定页...`, "success");
+  } else {
+    addLog("配网成功，未能从蓝牙名解析设备码，请返回绑定页手动输入。", "success");
+  }
+
+  setTimeout(() => {
+    stopBluetoothOperations(true);
+    uni.switchTab({
+      url: "/pages/index/index",
+      fail: () => {
+        uni.reLaunch({ url: "/pages/index/index" });
+      },
+    });
+  }, 2000);
 }
 
 // === 步骤 3: 状态反馈与跳转处理 ===
@@ -662,78 +629,14 @@ function sendWifiCredentials() {
 function startTimeoutTimer() {
   if (timeoutTimer) clearTimeout(timeoutTimer);
   timeoutTimer = setTimeout(() => {
-    if (provStatus.value === 'pending') {
-      addLog("设备响应超时，60秒内未完成联网配置", 'error');
-      provStatus.value = 'fail';
+    if (provStatus.value === "pending") {
+      addLog("设备响应超时，60秒内未完成联网配置", "error");
+      provStatus.value = "fail";
       failureReason.value = "配网超时，请确认 Wi-Fi 密码正确并重试。";
+      sendingConfig.value = false;
       stopBluetoothOperations();
     }
-  }, 60000);
-}
-
-function handleDeviceStatusUpdate(code: number) {
-  // 根据设计规范定义的状态码进行响应
-  switch (code) {
-    case 0: // Success
-      addLog("设备联网成功！获取 IP 地址成功。", 'success');
-      provStatus.value = 'success';
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      
-      const deviceCode = extractDeviceCodeFromBleName(connectedDeviceName.value);
-      
-      // 写入本地缓存，供绑定页 onShow 获取
-      if (deviceCode) {
-        uni.setStorageSync("temp_device_code", deviceCode);
-        addLog(`成功检测到设备码: ${deviceCode}，正在返回绑定页...`, 'success');
-      } else {
-        addLog("配网成功，未能从蓝牙名解析设备码，请返回绑定页手动输入。", 'success');
-      }
-
-      // 延迟 2 秒返回绑定页
-      setTimeout(() => {
-        stopBluetoothOperations(true);
-        uni.switchTab({
-          url: "/pages/index/index",
-          fail: () => {
-            uni.reLaunch({ url: "/pages/index/index" });
-          },
-        });
-      }, 2000);
-      break;
-
-    case 1: // Connecting
-      addLog("设备正在关联 Wi-Fi 路由器，请稍候...");
-      break;
-
-    case 2: // Auth Fail
-      addLog("设备连接失败：Wi-Fi 密码校验错误", 'error');
-      provStatus.value = 'fail';
-      failureReason.value = "密码错误。请检查 Wi-Fi 密码是否正确输入。";
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      break;
-
-    case 3: // AP Not Found
-      addLog("设备连接失败：未找到指定的 Wi-Fi", 'error');
-      provStatus.value = 'fail';
-      failureReason.value = "找不到 Wi-Fi。请检查 Wi-Fi 名称拼写是否正确，或靠近路由器。";
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      break;
-
-    case 4: // DHCP Fail
-      addLog("设备连接失败：IP 获取 (DHCP) 超时", 'error');
-      provStatus.value = 'fail';
-      failureReason.value = "路由器分配 IP 地址失败，请检查路由器配置。";
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      break;
-
-    case 5: // Unknown
-    default:
-      addLog(`设备连接失败：未知网络错误 (错误码: ${code})`, 'error');
-      provStatus.value = 'fail';
-      failureReason.value = "设备网络连接失败，请确认无线网络可正常使用。";
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      break;
-  }
+  }, 60000) as unknown as number;
 }
 
 function retryProvisioning() {
@@ -863,7 +766,7 @@ function retryProvisioning() {
 }
 
 .panel-header {
-  margin-bottom: 32rpx;
+  margin-bottom: 24rpx;
   border-bottom: 1rpx solid rgba(128, 94, 69, 0.1);
   padding-bottom: 20rpx;
 }
@@ -886,6 +789,21 @@ function retryProvisioning() {
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding: 24rpx 0 8rpx;
+}
+
+.scan-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.scan-hint {
+  font-size: 24rpx;
+  color: #82786d;
+  margin-top: 16rpx;
+  margin-bottom: 8rpx;
 }
 
 .scan-active {
@@ -911,13 +829,13 @@ function retryProvisioning() {
 
 .radar-box {
   position: relative;
-  width: 240rpx;
-  height: 240rpx;
+  width: 280rpx;
+  min-height: 280rpx;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  margin: 40rpx 0;
+  margin: 32rpx 0 24rpx;
 }
 
 .radar-circle {
@@ -929,7 +847,12 @@ function retryProvisioning() {
 
 .c1 { width: 100rpx; height: 100rpx; animation-delay: 0s; }
 .c2 { width: 180rpx; height: 180rpx; animation-delay: 0.6s; }
-.c3 { width: 240rpx; height: 240rpx; animation-delay: 1.2s; }
+.c3 { width: 260rpx; height: 260rpx; animation-delay: 1.2s; }
+
+.idle-ring {
+  border-color: rgba(47, 96, 79, 0.15);
+  animation: none;
+}
 
 .radar-status {
   font-size: 24rpx;
@@ -945,6 +868,8 @@ function retryProvisioning() {
 }
 
 .scan-btn {
+  position: relative;
+  z-index: 6;
   width: 200rpx;
   height: 80rpx;
   line-height: 80rpx;
