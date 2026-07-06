@@ -52,7 +52,7 @@
     <view v-if="currentStep === 1" class="panel">
       <view class="panel-header">
         <view class="panel-title">第一步：搜索设备</view>
-        <view class="panel-desc">请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 IPH 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。</view>
+        <view class="panel-desc">请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 SX 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。</view>
       </view>
 
       <view class="scan-container">
@@ -61,7 +61,7 @@
             <view class="radar-circle c1"></view>
             <view class="radar-circle c2"></view>
             <view class="radar-circle c3"></view>
-            <text class="radar-status">正在搜寻 IPH 设备...</text>
+            <text class="radar-status">正在搜寻 SX 设备...</text>
           </view>
           <text class="scan-summary">已发现 {{ discoveredDevices.length }} 台设备</text>
           <button class="ghost stop-scan" @tap.stop="stopScan">停止搜索</button>
@@ -73,7 +73,7 @@
         <!-- 蓝牙列表 -->
         <scroll-view scroll-y class="device-list">
           <view v-if="discoveredDevices.length === 0" class="empty-list">
-            {{ isScanning ? '尚未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式并广播名称' : '点击上方按钮开始扫描' }}
+            {{ isScanning ? '尚未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称' : '点击上方按钮开始扫描' }}
           </view>
           <view
             v-for="device in discoveredDevices"
@@ -295,7 +295,7 @@ function stopScan() {
   clearScanTimeout();
   finishScanning();
   if (discoveredDevices.value.length === 0) {
-    errorMsg.value = "未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式";
+    errorMsg.value = "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式";
   }
 }
 
@@ -307,7 +307,7 @@ function startScanTimeout() {
     }
     finishScanning();
     if (discoveredDevices.value.length === 0) {
-      errorMsg.value = "未发现 IPH 开头的蓝牙设备，请确认设备已进入配网模式并广播名称";
+      errorMsg.value = "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称";
     }
   }, BLE_SCAN_DURATION_MS) as unknown as number;
 }
@@ -444,7 +444,7 @@ function listenBluetoothDevices() {
         });
       }
       discoveredDevices.value = sortDiscoveredDevices(discoveredDevices.value);
-      debugErr.value = `已发现 ${discoveredDevices.value.length} 台 IPH 开头设备`;
+      debugErr.value = `已发现 ${discoveredDevices.value.length} 台 SX 设备`;
     });
   });
 }

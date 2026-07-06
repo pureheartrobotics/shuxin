@@ -5,8 +5,8 @@ export const PROVISION_SERVICE_UUID = "0000FFFF-0000-1000-8000-00805F9B34FB";
 /** 单次扫描最长持续时间（毫秒） */
 export const BLE_SCAN_DURATION_MS = 12000;
 
-/** 测试阶段仅展示广播名以这些前缀开头的设备（小写比较） */
-export const BLE_NAME_PREFIXES = ["iph"];
+/** 配网广播名前缀（小写比较，大小写不敏感） */
+export const BLE_NAME_PREFIXES = ["sx"];
 
 type BleAdvertisedDevice = {
   name?: string;
@@ -25,7 +25,7 @@ function matchesAllowedPrefix(name: string): boolean {
   return BLE_NAME_PREFIXES.some((prefix) => lower.startsWith(prefix));
 }
 
-/** 有名且广播名以允许前缀开头（当前测试：iph，不区分大小写） */
+/** 有名且广播名以 SX 开头（不区分大小写） */
 export function shouldIncludeBleDevice(device: BleAdvertisedDevice): boolean {
   const name = getBleAdvertisedName(device);
   if (!name) {
@@ -36,25 +36,20 @@ export function shouldIncludeBleDevice(device: BleAdvertisedDevice): boolean {
 
 export function isChuxinDeviceName(name: string): boolean {
   const trimmed = name.trim();
-  return (
-    trimmed.startsWith("SX-") ||
-    trimmed.startsWith("ShuXin-") ||
-    trimmed.includes("初心") ||
-    trimmed.includes("稚子心")
-  );
+  if (!trimmed) {
+    return false;
+  }
+  const lower = trimmed.toLowerCase();
+  return lower.startsWith("sx") || trimmed.includes("初心") || trimmed.includes("稚子心");
 }
 
+/** 广播名即设备码：通过过滤则原样返回，不做格式转换 */
 export function extractDeviceCodeFromBleName(name: string): string {
-  if (!name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed || !shouldIncludeBleDevice({ name: trimmed })) {
     return "";
   }
-  if (name.startsWith("SX-")) {
-    return name;
-  }
-  if (name.startsWith("ShuXin-")) {
-    return `SX-${name.slice("ShuXin-".length)}`;
-  }
-  return "";
+  return trimmed;
 }
 
 export function sortDiscoveredDevices<T extends { name: string; RSSI: number }>(devices: T[]): T[] {
