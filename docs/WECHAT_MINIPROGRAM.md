@@ -62,10 +62,12 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 | 规则 | 说明 |
 |------|------|
 | 无广播名丢弃 | 无 `name`/`localName` 的设备不入列表（对齐微信官方示例） |
-| 前缀过滤 | 测试：`BLE_NAME_PREFIXES = ["iph"]`（不区分大小写） |
-| 量产 | 改为 `["sx-", "shuxin-"]`，固件配网模式广播 **`SX-{device_code}`** |
+| 前缀过滤 | `BLE_NAME_PREFIXES = ["sx"]`（不区分大小写，匹配 `SX-000131` 等） |
+| 广播名 = 设备码 | 配网成功后原样预填绑定页，不做格式转换 |
 | 扫描时长 | 12s 自动停止 +「停止搜索」按钮 |
 | 计数 | 列表长度 `discoveredDevices.length`，非回调次数 |
+
+**硬件对接详表**：[`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](WECHAT_BLE_PROVISIONING_HANDOFF.md)
 
 Service UUID 常量：`PROVISION_SERVICE_UUID = 0000FFFF-0000-1000-8000-00805F9B34FB`
 
@@ -90,8 +92,8 @@ Service UUID 常量：`PROVISION_SERVICE_UUID = 0000FFFF-0000-1000-8000-00805F9B
 
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
 2. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
-3. 列表仅出现广播名以 `iph`（测试）或 `SX-`（量产）开头的设备  
-4. 连接 → 填 Wi-Fi → 配网成功；若广播名含 `SX-*` 可自动预填设备码  
+3. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
+4. 连接 → 填 Wi-Fi → 配网成功；绑定页预填广播名（= 设备码）  
 
 ---
 

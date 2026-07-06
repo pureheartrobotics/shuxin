@@ -74,7 +74,7 @@ export WECHAT_MINIPROGRAM_APPID="your-appid"
 
 登录隐私、BLE 授权、扫描过滤、微信后台「用户隐私保护指引」文案、固件广播名约定见项目根文档：
 
-**[`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md)**
+**[`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md)** · 硬件对接：**[`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](../../docs/WECHAT_BLE_PROVISIONING_HANDOFF.md)**
 
 ---
 
@@ -109,8 +109,8 @@ SHUXIN_WECHAT_MOCK=1
    - Android：同时打开**定位**开关，并在微信中允许「位置信息」
    - 设备进入配网模式（指示灯快闪）
 4. 首次扫描会先弹出**隐私保护提示**，点击「同意并继续」后再搜索蓝牙
-5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 IPH 开头的设备**（不区分大小写，测试用；量产可改 `ble-discovery.ts` 中前缀为 `sx-`）→ 连接 → 填写 2.4GHz Wi-Fi → 发送配置
-6. 配网成功后返回绑定页；若蓝牙名可解析为 `SX-*` 则自动预填设备码，否则手动输入
+5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 SX 开头的设备**（不区分大小写）→ 连接 → 填写 2.4GHz Wi-Fi → 发送配置
+6. 配网成功后返回绑定页；广播名（= 设备码）自动预填，否则手动输入
 
 **微信小程序后台**（代码 + 后台双侧缺一不可）：
 
