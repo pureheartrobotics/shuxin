@@ -1,5 +1,5 @@
 import {
-  DEFAULT_ENDPOINT_SUFFIX,
+  DEFAULT_ENDPOINT_SHORT_UUID,
   DEFAULT_PROV_SERVICE_UUID,
   PROV_REQUEST_TIMEOUT_MS,
   USER_DESCRIPTION_DESCRIPTOR_UUID,
@@ -9,17 +9,12 @@ import {
   utf8Decode,
   uint8ArrayToArrayBuffer,
 } from "./protobuf-wire";
+import { bluetoothUuidMatches, deriveEndpointCharacteristicUuid } from "./bluetooth-uuid";
 
-function normalizeUuid(uuid: string): string {
-  return String(uuid || "").toLowerCase().replace(/-/g, "");
-}
+const SERVICE_DISCOVERY_RETRY_MS = [500, 1000, 1500];
 
-export function deriveCharacteristicUuid(serviceUuid: string, shortHex: string): string {
-  const normalized = serviceUuid.toLowerCase();
-  const prefix = normalized.slice(0, 4);
-  const mask = parseInt(normalized.slice(4, 8), 16);
-  const merged = (parseInt(shortHex, 16) & mask).toString(16).padStart(4, "0");
-  return `${prefix}${merged}${normalized.slice(8)}`;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 type UniBleHandler = (res: UniNamespace.OnBLECharacteristicValueChangeCallbackResult) => void;
@@ -86,10 +81,13 @@ export class BleTransport {
   private readonly deviceId: string;
   private serviceUuid: string;
   private readonly endpoints: Record<string, string> = {};
+  private readonly properties: Record<string, UniNamespace.BLECharacteristicProperties> = {};
+  private readonly log: (msg: string) => void;
 
-  constructor(deviceId: string, serviceUuid = DEFAULT_PROV_SERVICE_UUID) {
+  constructor(deviceId: string, serviceUuid = DEFAULT_PROV_SERVICE_UUID, log?: (msg: string) => void) {
     this.deviceId = deviceId;
     this.serviceUuid = serviceUuid.toLowerCase();
+    this.log = log ?? (() => {});
   }
 
   getServiceUuid(): string {
@@ -97,49 +95,69 @@ export class BleTransport {
   }
 
   async discoverEndpoints(): Promise<void> {
-    const services = await getServices(this.deviceId);
-    const target = (services.services || []).find(
-      (service) => normalizeUuid(service.uuid) === normalizeUuid(this.serviceUuid),
-    );
-    if (!target) {
-      throw new Error("未找到 ESP-IDF 配网 BLE 服务");
-    }
-    this.serviceUuid = target.uuid;
+    let target: UniNamespace.BluetoothService | undefined;
+    let discoveredUuids: string[] = [];
 
-    const characteristics = await getCharacteristics(this.deviceId, this.serviceUuid);
-    for (const characteristic of characteristics.characteristics || []) {
-      try {
-        const descriptors = await getDescriptors(this.deviceId, this.serviceUuid, characteristic.uuid);
-        const userDescriptor = (descriptors.descriptors || []).find(
-          (item) => normalizeUuid(item.uuid) === normalizeUuid(USER_DESCRIPTION_DESCRIPTOR_UUID),
-        );
-        if (!userDescriptor) {
-          continue;
-        }
-        const value = await readDescriptor(
-          this.deviceId,
-          this.serviceUuid,
-          characteristic.uuid,
-          userDescriptor.uuid,
-        );
-        const endpointName = utf8Decode(arrayBufferToUint8Array(value)).replace(/\0/g, "").trim();
-        if (endpointName) {
-          this.endpoints[endpointName] = characteristic.uuid;
-        }
-      } catch {
-        // 部分平台读描述符失败时走 fallback
+    for (let attempt = 0; attempt <= SERVICE_DISCOVERY_RETRY_MS.length; attempt += 1) {
+      if (attempt > 0) {
+        await sleep(SERVICE_DISCOVERY_RETRY_MS[attempt - 1]);
+      }
+      const services = await getServices(this.deviceId);
+      const list = services.services || [];
+      discoveredUuids = list.map((service) => service.uuid);
+      target = list.find((service) => bluetoothUuidMatches(service.uuid, this.serviceUuid));
+      if (target) {
+        break;
       }
     }
 
-    for (const [name, suffix] of Object.entries(DEFAULT_ENDPOINT_SUFFIX)) {
+    if (!target) {
+      const summary = discoveredUuids.length > 0 ? discoveredUuids.join(", ") : "无";
+      throw new Error(`未找到 ESP-IDF 配网 BLE 服务（已发现: ${summary}）`);
+    }
+    this.serviceUuid = target.uuid;
+    this.log(`✓ 找到配网服务: ${this.serviceUuid}`);
+
+    const characteristics = await getCharacteristics(this.deviceId, this.serviceUuid);
+    const charList = (characteristics.characteristics || []).map(c => c.uuid);
+    this.log(`特征值列表(${charList.length}): ${charList.join(' | ')}`);
+
+    // 建立「推导 UUID → 微信原始 UUID」映射表
+    const wechatUuidMap: Record<string, string> = {};
+    for (const characteristic of characteristics.characteristics || []) {
+      const props = characteristic.properties || {};
+      this.log(`特征[${characteristic.uuid.slice(4, 8)}] 属性: R=${props.read}, W=${props.write}, N=${props.notify}, I=${props.indicate}`);
+
+      // 建立映射：把所有可能的 endpoint 推导 UUID 与微信原始 UUID 对应起来
+      for (const shortUuid of Object.values(DEFAULT_ENDPOINT_SHORT_UUID)) {
+        const derived = deriveEndpointCharacteristicUuid(this.serviceUuid, shortUuid);
+        if (bluetoothUuidMatches(characteristic.uuid, derived)) {
+          const rawUuid = characteristic.uuid;
+          wechatUuidMap[derived.toLowerCase()] = rawUuid;
+          this.properties[rawUuid.toLowerCase()] = props;
+        }
+      }
+    }
+
+    // fallback：优先用微信原始 UUID，取不到才用推导值（兜底）
+    for (const [name, shortUuid] of Object.entries(DEFAULT_ENDPOINT_SHORT_UUID)) {
       if (!this.endpoints[name]) {
-        this.endpoints[name] = deriveCharacteristicUuid(this.serviceUuid, suffix);
+        const derived = deriveEndpointCharacteristicUuid(this.serviceUuid, shortUuid);
+        const resolved = wechatUuidMap[derived.toLowerCase()] ?? derived;
+        this.endpoints[name] = resolved;
+        this.log(`endpoint[${name}] fallback → ${resolved}${wechatUuidMap[derived.toLowerCase()] ? ' (微信原始)' : ' (推导，未在特征值中找到匹配)'}`);
+      } else {
+        this.log(`endpoint[${name}] 描述符 → ${this.endpoints[name]}`);
       }
     }
 
     if (!this.endpoints["prov-session"] || !this.endpoints["prov-config"]) {
       throw new Error("未找到 prov-session / prov-config 端点");
     }
+
+    // 发现特征值后延时 500ms，避开手机蓝牙栈的 Busy/GattError 竞争状态
+    this.log("等待蓝牙栈稳定 (500ms)...");
+    await sleep(500);
   }
 
   async sendRecv(endpointName: string, payload: Uint8Array): Promise<Uint8Array> {
@@ -147,6 +165,9 @@ export class BleTransport {
     if (!characteristicId) {
       throw new Error(`未知 endpoint: ${endpointName}`);
     }
+    const props = this.properties[characteristicId.toLowerCase()] || {};
+    const supportsNotify = Boolean(props.notify || props.indicate);
+    this.log(`sendRecv(${endpointName}) → 支持通知: ${supportsNotify}`);
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -155,7 +176,7 @@ export class BleTransport {
       };
 
       const handler: UniBleHandler = (res) => {
-        if (normalizeUuid(res.characteristicId) !== normalizeUuid(characteristicId)) {
+        if (!bluetoothUuidMatches(res.characteristicId, characteristicId)) {
           return;
         }
         if (settled) {
@@ -177,38 +198,64 @@ export class BleTransport {
       }, PROV_REQUEST_TIMEOUT_MS);
 
       uni.onBLECharacteristicValueChange(handler);
-      uni.notifyBLECharacteristicValueChange({
-        deviceId: this.deviceId,
-        serviceId: this.serviceUuid,
-        characteristicId,
-        state: true,
-        success: () => {
-          uni.writeBLECharacteristicValue({
-            deviceId: this.deviceId,
-            serviceId: this.serviceUuid,
-            characteristicId,
-            value: uint8ArrayToArrayBuffer(payload),
-            fail: (err) => {
-              if (settled) {
-                return;
-              }
-              settled = true;
-              clearTimeout(timer);
-              cleanup(handler);
-              reject(new Error(err.errMsg || "BLE 写入失败"));
-            },
-          });
-        },
-        fail: (err) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          clearTimeout(timer);
-          cleanup(handler);
-          reject(new Error(err.errMsg || "BLE 订阅失败"));
-        },
-      });
+
+      const performWrite = () => {
+        uni.writeBLECharacteristicValue({
+          deviceId: this.deviceId,
+          serviceId: this.serviceUuid,
+          characteristicId,
+          value: uint8ArrayToArrayBuffer(payload),
+          success: () => {
+            if (!supportsNotify) {
+              // 如果不支持 Notify/Indicate，我们写入成功后主动发起 Read，响应同样在 onBLECharacteristicValueChange 接收
+              uni.readBLECharacteristicValue({
+                deviceId: this.deviceId,
+                serviceId: this.serviceUuid,
+                characteristicId,
+                fail: (err) => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timer);
+                  cleanup(handler);
+                  reject(new Error(`读取特征值响应失败: ${err.errMsg}`));
+                }
+              });
+            }
+          },
+          fail: (err) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            clearTimeout(timer);
+            cleanup(handler);
+            reject(new Error(err.errMsg || "BLE 写入失败"));
+          },
+        });
+      };
+
+      if (supportsNotify) {
+        uni.notifyBLECharacteristicValueChange({
+          deviceId: this.deviceId,
+          serviceId: this.serviceUuid,
+          characteristicId,
+          state: true,
+          success: () => {
+            performWrite();
+          },
+          fail: (err) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            clearTimeout(timer);
+            cleanup(handler);
+            reject(new Error(err.errMsg || "BLE 订阅失败"));
+          },
+        });
+      } else {
+        performWrite();
+      }
     });
   }
 }

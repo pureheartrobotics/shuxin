@@ -25,7 +25,7 @@
 
 ```text
 扫描 SX 设备 → 用户点击 SX-000003 → BLE 连接
-→ Security1 握手（PoP = shuxin）→ 用户填 Wi-Fi
+→ Security1 握手（PoP = SX-000003）→ 用户填 Wi-Fi
 → 加密下发 SSID/密码 → 设备联网 → 绑定页预填 SX-000003
 ```
 
@@ -34,11 +34,11 @@ sequenceDiagram
   participant App as 微信小程序
   participant Dev as ESP32固件
 
-  Note over Dev: 广播名 = device_code；PoP 固定为 shuxin
+  Note over Dev: 广播名 = device_code = PoP
   App->>Dev: 扫描，仅显示 sx 前缀设备
   App->>Dev: createBLEConnection
   App->>Dev: prov-session Security1 握手
-  Note over App,Dev: PoP 固定为 shuxin
+  Note over App,Dev: PoP 为所选设备广播名
   App->>User: 填写 Wi-Fi
   App->>Dev: prov-config SetConfig/ApplyConfig
   loop 轮询
@@ -65,21 +65,17 @@ sequenceDiagram
 
 小程序过滤：`name.toLowerCase().startsWith("sx")`。
 
-### 3.2 PoP 固定为 `shuxin`
+### 3.2 PoP（当前量产固件）
 
 | 项 | 要求 |
 |----|------|
 | 安全方案 | `WIFI_PROV_SECURITY_1` |
-| PoP 字符串 | **固定为 `shuxin`** |
-| 示例 | 广播 `SX-000003` → PoP 仍为 `shuxin` |
+| **当前固件 PoP** | 固定字符串 **`shuxin`**（见 `ble_wifi_provisioner.cc` 中 `kProofOfPossession`） |
+| BLE 广播名 | 仍为 `device_code`（如 `SX-000003`），用于扫描识别与绑定预填 |
 
-用户点击列表中的设备后，小程序自动使用固定 `shuxin` 参与 Security1 握手，无需用户手输。
+小程序点击设备后使用 **PoP=`shuxin`** 参与 Security1 握手；**广播名仅用于列表展示与配网成功后绑定页预填**，不作为 PoP。
 
-固件烧录时须保证：
-
-```text
-device_code == BLE 广播名；PoP == "shuxin"
-```
+> 若未来固件改为 `PoP == device_code`，须同步修改小程序 [`constants.ts`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/constants.ts) 中 `PROVISION_POP` 的取值逻辑。
 
 ### 3.3 保留 ESP-IDF 标准配网栈
 
@@ -87,28 +83,34 @@ device_code == BLE 广播名；PoP == "shuxin"
 - `wifi_prov_scheme_ble`
 - Wi-Fi 凭据校验、保存、超时与 BLE 资源释放逻辑**无需为小程序重写**
 
-业务层将广播名设为 `SHUXIN_DEVICE_CODE`、PoP 固定为 `shuxin`，并更新屏幕/语音提示（勿再引导用户搜索 `PROV_` 设备）。
+仅需在业务层把广播名与 PoP 设为 `SHUXIN_DEVICE_CODE`，并更新屏幕/语音提示（勿再引导用户搜索 `PROV_` 设备）。
 
 ---
 
 ## 4. GATT 与 protocomm 端点
 
-默认 Service UUID（与 ESP-IDF 默认一致）：
+默认 Service UUID（**ESP-IDF v5.x** `wifi_prov_scheme_ble` 内置值，与量产固件一致）：
 
 ```text
-0000FFFF-0000-1000-8000-00805F9B34FB
+1775244D-6B43-439B-877C-060F2D9BED07
 ```
 
-若固件调用 `wifi_prov_scheme_ble_set_service_uuid()` 使用自定义 128-bit UUID，须与小程序侧同步（当前默认按 `FFFF` 实现）。
+旧版 ESP-IDF v4 文档中的 `0000FFFF-0000-1000-8000-00805F9B34FB` 仅适用于显式 `wifi_prov_scheme_ble_set_service_uuid(FFFF)` 的固件。若固件使用其他自定义 128-bit UUID，须与小程序 [`constants.ts`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/constants.ts) 同步。
 
 | Endpoint 名 | 短 UUID | 用途 |
 |-------------|---------|------|
 | `prov-session` | `ff51` | Security1 会话握手 |
 | `prov-config` | `ff52` | Wi-Fi 配置与状态 |
-| `prov-scan` | `ff50` | （可选）扫描 AP |
-| `proto-ver` | `ff53` | 协议版本 |
+| `prov-scan` | `ff53` | （可选）扫描 AP |
+| `proto-ver` | `ff54` | 协议版本 |
 
-特征值 UUID 推导规则与 ESP-IDF `esp_prov` 工具一致：在 Service UUID 基础上替换第 12–15 位十六进制。
+特征值 UUID 推导规则与 ESP-IDF `esp_prov` 工具一致：在 Service UUID 基础上**替换末尾 4 个十六进制字符**（小端 byte[0..1]）：
+
+```
+Service UUID:       1775244D-6B43-439B-877C-060F2D9BED07
+prov-session(ff51): 1775244D-6B43-439B-877C-060F2D9BFF51
+prov-config (ff52): 1775244D-6B43-439B-877C-060F2D9BFF52
+```
 
 小程序通过 GATT **User Description** 描述符（`0x2901`）读取 endpoint 名称；读失败时按上表 fallback。
 
@@ -165,9 +167,9 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 ### 固件侧
 
 - [ ] 配网模式广播名 = `SX-xxxxxx`（= device_code）
-- [ ] Security1 PoP = 固定字符串 `shuxin`
+- [ ] PoP 与固件一致（当前为固定 `shuxin`）
 - [ ] `wifi_prov_mgr` + `WIFI_PROV_SECURITY_1` 正常工作
-- [ ] 乐鑫 **ESP BLE Provisioning** App 可用 PoP `shuxin` 配网成功
+- [ ] 乐鑫 **ESP BLE Provisioning** App 使用 PoP **`shuxin`** 可配网成功
 - [ ] 屏幕/语音不再提示搜索 `PROV_` 设备
 
 ### 小程序侧
@@ -190,7 +192,8 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | 现象 | 可能原因 |
 |------|----------|
 | 扫描列表为空 | 广播名非 `sx` 前缀或未进配网模式 |
-| Security1 / PoP 失败 | 固件与小程序使用的固定 PoP 不一致 |
+| 未找到 ESP-IDF 配网 BLE 服务 | 小程序仍按旧 `FFFF` 查找；或 GATT 尚未就绪。若日志「已发现」含 `1775244D-...` 须升级小程序 |
+| Security1 / PoP 失败 | 小程序误用广播名作 PoP；当前固件 PoP 须为 `shuxin` |
 | SetConfig 失败 | 会话未建立；Service UUID 不一致 |
 | 一直 Connecting | 信号弱、5GHz SSID、路由器拒绝 |
 | 密码错误 | `ConnectionFailed` + `AuthError` |
@@ -204,7 +207,7 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | 握手 | 向 `FFF1` 写明文 `shuxin` | `prov-session` Security1 |
 | Wi-Fi | 向 `FFF2` 写 JSON | `prov-config` 加密 Protobuf |
 | 状态 | `FFF2` 单字节 Notify | `GetStatus` Protobuf |
-| PoP | 固定 `shuxin` | 固定 `shuxin`，通过 Security1 使用 |
+| PoP | 固定 `shuxin`（当前固件） | Security1 XOR `SHA256(PoP)` |
 | 广播名 | `SX` 前缀 | 不变 |
 
 ---

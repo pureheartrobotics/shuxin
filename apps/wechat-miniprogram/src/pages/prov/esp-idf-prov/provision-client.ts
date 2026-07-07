@@ -41,8 +41,8 @@ export class EspIdfProvisionClient {
   private readonly security: Security1Session;
   private sessionReady = false;
 
-  constructor(deviceId: string, pop: string, serviceUuid = DEFAULT_PROV_SERVICE_UUID) {
-    this.transport = new BleTransport(deviceId, serviceUuid);
+  constructor(deviceId: string, pop: string, serviceUuid = DEFAULT_PROV_SERVICE_UUID, log?: (msg: string) => void) {
+    this.transport = new BleTransport(deviceId, serviceUuid, log);
     this.security = new Security1Session(pop);
   }
 

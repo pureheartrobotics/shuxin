@@ -51,8 +51,8 @@
     <!-- 第一步：搜索并连接设备 -->
     <view v-if="currentStep === 1" class="panel">
       <view class="panel-header">
-        <view class="panel-title">第一步：搜索设备</view>
-        <view class="panel-desc">请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 SX 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。</view>
+        <view class="panel-title">第一步：搜索设备1</view>
+        <view class="panel-desc">{{ scanPanelDesc }}</view>
       </view>
 
       <view class="scan-container">
@@ -61,7 +61,7 @@
             <view class="radar-circle c1"></view>
             <view class="radar-circle c2"></view>
             <view class="radar-circle c3"></view>
-            <text class="radar-status">正在搜寻 SX 设备...</text>
+            <text class="radar-status">{{ scanActiveHint }}</text>
           </view>
           <text class="scan-summary">已发现 {{ discoveredDevices.length }} 台设备</text>
           <button class="ghost stop-scan" @tap.stop="stopScan">停止搜索</button>
@@ -73,13 +73,13 @@
             <view class="radar-circle c3 idle-ring"></view>
             <button class="primary scan-btn">开始扫描</button>
           </view>
-          <text class="scan-hint">点击开始搜索附近的 SX 设备</text>
+          <text class="scan-hint">{{ scanIdleHint }}</text>
         </view>
 
         <!-- 蓝牙列表 -->
         <scroll-view scroll-y class="device-list">
           <view v-if="discoveredDevices.length === 0" class="empty-list">
-            {{ isScanning ? '尚未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称' : '点击上方按钮开始扫描' }}
+            {{ isScanning ? scanEmptyListHint : '点击上方按钮开始扫描' }}
           </view>
           <view
             v-for="device in discoveredDevices"
@@ -196,18 +196,20 @@ import {
   stopBluetoothDiscovery,
 } from "../../utils/ble-permissions";
 import {
+  BLE_FILTER_SX_PREFIX_ONLY,
   BLE_SCAN_DURATION_MS,
   extractDeviceCodeFromBleName,
   getBleAdvertisedName,
+  getBleDeviceListName,
   shouldIncludeBleDevice,
   sortDiscoveredDevices,
 } from "../../utils/ble-discovery";
 import {
   EspIdfProvisionClient,
   mapWifiStatusToMessage,
-  PROVISION_POP,
   type WifiProvisionStatus,
 } from "./esp-idf-prov";
+import { PROVISION_POP } from "./esp-idf-prov/constants";
 import {
   checkBlePrivacyNeeded,
   mapPrivacyError,
@@ -228,6 +230,30 @@ type BleDeviceItem = {
   rawName: string;
   RSSI: number;
 };
+
+const scanPanelDesc = BLE_FILTER_SX_PREFIX_ONLY
+  ? "请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 SX 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。"
+  : "【调试模式】显示附近所有蓝牙设备（不限 SX 前缀），便于排查连接问题。请选择目标设备后连接。真机测试请用预览或真机调试。";
+
+const scanActiveHint = BLE_FILTER_SX_PREFIX_ONLY ? "正在搜寻 SX 设备..." : "正在搜寻附近蓝牙设备...";
+
+const scanIdleHint = BLE_FILTER_SX_PREFIX_ONLY
+  ? "点击开始搜索附近的 SX 设备"
+  : "点击开始搜索附近所有蓝牙设备（调试模式）";
+
+const scanEmptyListHint = BLE_FILTER_SX_PREFIX_ONLY
+  ? "尚未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称"
+  : "尚未发现蓝牙设备，请确认手机蓝牙已打开";
+
+const scanNoDeviceError = BLE_FILTER_SX_PREFIX_ONLY
+  ? "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式"
+  : "未发现蓝牙设备，请确认手机蓝牙已打开";
+
+const scanNoDeviceTimeoutError = BLE_FILTER_SX_PREFIX_ONLY
+  ? "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称"
+  : "未发现蓝牙设备，请确认手机蓝牙已打开";
+
+const scanFoundDebugLabel = BLE_FILTER_SX_PREFIX_ONLY ? "台 SX 设备" : "台蓝牙设备（调试）";
 
 // 状态管理
 const currentStep = ref(1);
@@ -304,7 +330,7 @@ function stopScan() {
   clearScanTimeout();
   finishScanning();
   if (discoveredDevices.value.length === 0) {
-    errorMsg.value = "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式";
+    errorMsg.value = scanNoDeviceError;
   }
 }
 
@@ -316,7 +342,7 @@ function startScanTimeout() {
     }
     finishScanning();
     if (discoveredDevices.value.length === 0) {
-      errorMsg.value = "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称";
+      errorMsg.value = scanNoDeviceTimeoutError;
     }
   }, BLE_SCAN_DURATION_MS) as unknown as number;
 }
@@ -435,51 +461,87 @@ async function onOpenPrivacyContract() {
 function listenBluetoothDevices() {
   uni.onBluetoothDeviceFound((res) => {
     res.devices.forEach((device) => {
-      if (!shouldIncludeBleDevice(device)) {
+      // 检查设备广播的 Service UUID 中是否包含我们的配网服务
+      const serviceUuids = (device.advertisServiceUUIDs || []).map((u) =>
+        u.toLowerCase().replace(/-/g, ""),
+      );
+      const targetServiceUuid = "1775244D-6B43-439B-877C-060F2D9BED07"
+        .toLowerCase()
+        .replace(/-/g, "");
+      const hasProvService = serviceUuids.includes(targetServiceUuid);
+
+      // 如果既不符合普通的过滤条件，也没有广播我们的配网服务，则丢弃
+      if (!shouldIncludeBleDevice(device) && !hasProvService) {
         return;
       }
 
       const rawName = getBleAdvertisedName(device);
+      let listName = getBleDeviceListName(device);
+
+      // 如果设备确定是我们的配网设备，但因为各种原因没有广播名字，自动重命名以方便连接
+      if (!rawName && hasProvService) {
+        const id = String(device.deviceId || "").trim();
+        const suffix = id.length > 8 ? id.slice(-8) : id;
+        listName = `初心设备 (无广播名 · ${suffix})`;
+      }
+
       const existing = discoveredDevices.value.find((x) => x.deviceId === device.deviceId);
       if (existing) {
         existing.RSSI = device.RSSI ?? existing.RSSI;
-        existing.name = rawName;
+        existing.name = listName;
         existing.rawName = rawName;
       } else {
         discoveredDevices.value.push({
           deviceId: device.deviceId,
-          name: rawName,
+          name: listName,
           rawName,
           RSSI: device.RSSI ?? -100,
         });
       }
       discoveredDevices.value = sortDiscoveredDevices(discoveredDevices.value);
-      debugErr.value = `已发现 ${discoveredDevices.value.length} 台 SX 设备`;
+      debugErr.value = `已发现 ${discoveredDevices.value.length} ${scanFoundDebugLabel}`;
     });
   });
 }
 
-function connectDevice(device: BleDeviceItem) {
+async function connectDevice(device: BleDeviceItem) {
   if (targetDeviceId.value) return;
   targetDeviceId.value = device.deviceId;
   errorMsg.value = "";
+  debugErr.value = "开始连接...";
+
+  // await 停止扫描，再等 200ms 让 Android BLE 栈稳定
+  // 不 await 直接连接会导致 Android 上 createBLEConnection:fail connect timeout
   clearScanTimeout();
-  finishScanning();
+  await stopBluetoothDiscovery();
+  markBluetoothDiscoveryStopped();
+  isScanning.value = false;
+  await new Promise<void>((r) => setTimeout(r, 200));
 
   const displayName = device.name;
-  const advertisedName = device.rawName || displayName;
-  const pop = PROVISION_POP;
+  const deviceCode = device.rawName || displayName;
   addLog(`尝试建立蓝牙连接: ${displayName}`);
   uni.createBLEConnection({
     deviceId: device.deviceId,
     timeout: 10000,
     success: () => {
       connectedDeviceId.value = device.deviceId;
-      connectedDeviceName.value = advertisedName;
-      addLog(`蓝牙连接成功，建立 ESP-IDF Security1 会话（PoP=${pop}）...`, "success");
+      connectedDeviceName.value = deviceCode;
+      addLog(
+        `蓝牙连接成功，建立 ESP-IDF Security1 会话（设备=${deviceCode}，PoP=${PROVISION_POP}）...`,
+        "success",
+      );
       void (async () => {
         try {
-          provisionClient = new EspIdfProvisionClient(device.deviceId, pop);
+          provisionClient = new EspIdfProvisionClient(
+            device.deviceId,
+            PROVISION_POP,
+            undefined,
+            (msg) => {
+              addLog(msg, "info");
+              debugErr.value += "\n" + msg;
+            }
+          );
           await provisionClient.establishSession();
           addLog("安全会话建立成功", "success");
           currentStep.value = 2;
