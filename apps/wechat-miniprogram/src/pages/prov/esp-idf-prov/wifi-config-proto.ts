@@ -60,7 +60,8 @@ export function parseSetConfigResponse(decrypted: Uint8Array): number {
     throw new Error("缺少 SetConfig 响应体");
   }
   const status = getVarintField(decodeFields(resp), 1);
-  return status ?? -1;
+  // 在 proto3 中，默认值 0 (Success) 不会被序列化，因此 status 如果未找到，应视作 0 (Success)
+  return status ?? 0;
 }
 
 export function parseApplyConfigResponse(decrypted: Uint8Array): number {
@@ -74,7 +75,8 @@ export function parseApplyConfigResponse(decrypted: Uint8Array): number {
     throw new Error("缺少 ApplyConfig 响应体");
   }
   const status = getVarintField(decodeFields(resp), 1);
-  return status ?? -1;
+  // 同理，默认值 0 (Success) 不会被序列化，未找到时应视作 0 (Success)
+  return status ?? 0;
 }
 
 export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStatus {
@@ -88,7 +90,8 @@ export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStat
     throw new Error("缺少 GetStatus 响应体");
   }
   const respFields = decodeFields(resp);
-  const staState = getVarintField(respFields, 2);
+  // 在 proto3 中，WifiStationState 的 Connected (0) 不会被序列化，未找到时视作 0 (connected)
+  const staState = getVarintField(respFields, 2) ?? 0;
   if (staState === 0) {
     return "connected";
   }
@@ -99,7 +102,8 @@ export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStat
     return "disconnected";
   }
   if (staState === 3) {
-    const failReason = getVarintField(respFields, 10);
+    // WifiConnectFailedReason 的 AuthError (0) 不会被序列化，未找到时视作 0 (failed_auth)
+    const failReason = getVarintField(respFields, 10) ?? 0;
     if (failReason === 0) {
       return "failed_auth";
     }
