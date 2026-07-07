@@ -1,12 +1,21 @@
 # 微信小程序蓝牙配网 — 硬件对接说明（ESP-IDF 标准协议）
 
-**版本**：2026-07-06  
+**版本**：2026-07-07  
 **受众**：固件 / 硬件工程师  
 **小程序实现**：[`apps/wechat-miniprogram/src/pages/prov/ble.vue`](../apps/wechat-miniprogram/src/pages/prov/ble.vue)  
 **协议客户端**：[`apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/)  
 **扫描过滤**：[`apps/wechat-miniprogram/src/utils/ble-discovery.ts`](../apps/wechat-miniprogram/src/utils/ble-discovery.ts)
 
 ---
+
+> [!NOTE]
+> **2026-07-07 视觉与交互体验优化更新**：
+> * **暖调陪伴品牌色**：页面整体重构为 Warm Companion Theme 配色（温暖乳白底色、墨绿和陶土橙高亮）。
+> * **拟物盘片按钮**：未扫描状态下，中心按钮重构为 160px 直径的拟物圆盘并附双重虚线星轨环线，带有点击缩放回弹微互动。
+> * **呼吸雷达与图形信号**：扫描中采用微型搜索框与渐变脉冲波纹；列表采用卡片结构，信号文字重构为三段式信号条（`📶 极佳` 等颜色标签）。
+> * **Wi-Fi 历史记忆**：自动通过本地缓存（`uni.getStorageSync`）保存与自动填充最近一次成功的 Wi-Fi 名称和密码，无需用户重复输入。
+> * **可折叠技术日志**：第三步的网络配置日志默认折叠隐藏，开发者或硬件工程师可点击页面底部的「开发者调试日志」手动展开看特征值日志。
+> * **安全红线**：蓝牙底层的 Protocomm/Security1 物理连接和会话逻辑完全保持不变，以防干扰现有已修复的功能 Bug。
 
 ## 1. 协议说明
 

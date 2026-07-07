@@ -99,7 +99,9 @@ def test_wechat_dev_script_does_not_write_secrets_to_source() -> None:
     assert "detect_wsl_api_base" not in script
     assert "\npnpm install" not in script
     assert "src/pages/index/index.vue" not in script
-    assert "src/manifest.json" not in script
+    assert "manifest.example.json" in script
+    assert "generate_miniprogram_configs" in script
+    assert "patch_project_appid" in script
 
 
 def test_wechat_dev_script_cleans_and_validates_page_outputs() -> None:

@@ -138,6 +138,6 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 - 改 `apps/wechat-miniprogram` 源码后须 `bash scripts/wechat_miniprogram_dev.sh build`，微信工具导入 `dist/build/mp-weixin`（非源码目录）。
 - 登录页须用户主动勾选协议（`utils/policy.ts`），**禁止**默认勾选；协议页 `pages/legal/*`。
 - BLE 隐私走 `utils/privacy.ts`（`getPrivacySetting` + `agreePrivacyAuthorization`）；**禁止**与 `requirePrivacyAuthorize` 叠用；蓝牙**不得**写入 `requiredPrivateInfos`。
-- BLE 配网走 ESP-IDF `wifi_prov_scheme_ble` + Security1（`pages/prov/esp-idf-prov/`）；PoP = 用户所选设备广播名；**禁止**自定义 FFFF/FFF1/FFF2 JSON 协议。
+- BLE 配网走 ESP-IDF `wifi_prov_scheme_ble` + Security1（`pages/prov/esp-idf-prov/`）；v5 默认 Service UUID `1775244D-6B43-439B-877C-060F2D9BED07`；当前量产固件 PoP 固定 `shuxin`；**禁止**自定义 FFFF/FFF1/FFF2 JSON 协议。
 - BLE 扫描过滤在 `utils/ble-discovery.ts`：丢弃无广播名设备；前缀 `sx`；固件对接见 [`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](docs/WECHAT_BLE_PROVISIONING_HANDOFF.md)。
 - 合规、后台指引文案、真机验收：[`docs/WECHAT_MINIPROGRAM.md`](docs/WECHAT_MINIPROGRAM.md)；编译联调：[`apps/wechat-miniprogram/README.md`](apps/wechat-miniprogram/README.md)。

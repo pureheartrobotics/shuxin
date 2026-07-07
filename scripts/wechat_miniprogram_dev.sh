@@ -3,10 +3,45 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/wechat-miniprogram"
-APPID="${WECHAT_MINIPROGRAM_APPID:-touristappid}"
 MODE="${1:-dev}"
 DEFAULT_API_BASE="https://shuxinzzx.com.cn"
+DEFAULT_APPID="wxda3acb8842b5c9f4"
 # DEFAULT_API_BASE="http://localhost:8765"
+
+read_env_var() {
+  local key="$1"
+  local env_file="$ROOT_DIR/.env"
+  if [ ! -f "$env_file" ]; then
+    return 1
+  fi
+  local line
+  line="$(grep -E "^${key}=" "$env_file" | tail -n 1 || true)"
+  if [ -z "$line" ]; then
+    return 1
+  fi
+  echo "${line#*=}" | sed 's/^["'\'']//;s/["'\'']$//'
+}
+
+resolve_appid() {
+  if [ -n "${WECHAT_MINIPROGRAM_APPID:-}" ]; then
+    echo "$WECHAT_MINIPROGRAM_APPID"
+    return
+  fi
+  local from_env
+  from_env="$(read_env_var WECHAT_MINIPROGRAM_APPID || true)"
+  if [ -n "$from_env" ]; then
+    echo "$from_env"
+    return
+  fi
+  from_env="$(read_env_var SHUXIN_WECHAT_APPID || true)"
+  if [ -n "$from_env" ]; then
+    echo "$from_env"
+    return
+  fi
+  echo "$DEFAULT_APPID"
+}
+
+APPID="$(resolve_appid)"
 
 check_api_base() {
   if ! curl -fsS "$API_BASE/health" >/dev/null; then
@@ -59,6 +94,47 @@ check_page_outputs() {
   fi
 }
 
+patch_project_appid() {
+  local dir="$1"
+  local appid="$2"
+  local cfg="$dir/project.config.json"
+  if [ ! -f "$cfg" ]; then
+    return 0
+  fi
+  python3 - "$cfg" "$appid" <<'PY'
+import json
+import sys
+
+path, appid = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+data["appid"] = appid
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
+}
+
+generate_miniprogram_configs() {
+  sed "s/__WECHAT_MINIPROGRAM_APPID__/$APPID/g" \
+    "$APP_DIR/project.config.example.json" > "$APP_DIR/project.config.json"
+  sed "s/__WECHAT_MINIPROGRAM_APPID__/$APPID/g" \
+    "$APP_DIR/src/manifest.example.json" > "$APP_DIR/src/manifest.json"
+}
+
+patch_dist_appids() {
+  local patched=0
+  for out_dir in "$APP_DIR/dist/build/mp-weixin" "$APP_DIR/dist/dev/mp-weixin"; do
+    if [ -f "$out_dir/project.config.json" ]; then
+      patch_project_appid "$out_dir" "$APPID"
+      patched=1
+    fi
+  done
+  if [ "$patched" -eq 1 ]; then
+    echo "AppID patched in dist/build/mp-weixin and/or dist/dev/mp-weixin"
+  fi
+}
+
 sync_build_to_dev() {
   local build_dir="$APP_DIR/dist/build/mp-weixin"
   local dev_dir="$APP_DIR/dist/dev/mp-weixin"
@@ -72,12 +148,14 @@ print_build_hints() {
   local local_mode="$1"
   echo ""
   echo "Build OK. API baked: $API_BASE"
-  echo "Open in WeChat DevTools: $APP_DIR (miniprogramRoot → dist/dev/mp-weixin)"
+  echo "AppID: $APPID (root + dist/*/mp-weixin/project.config.json)"
+  echo "Import in WeChat DevTools: $APP_DIR or $APP_DIR/dist/dev/mp-weixin"
   if [ "$local_mode" = "1" ]; then
     echo "DevTools: 详情 → 本地设置 → 勾选「不校验合法域名…」"
     echo "支付 notify 仍走 trycloudflare（SHUXIN_WXPAY_NOTIFY_URL）；tunnel 变更只需 redeploy，无需重编小程序"
   else
     echo "WeChat DevTools: 改 API 地址后须重新 build 并在工具内点「编译」"
+    echo "若仍显示旧 AppID，删除工具内旧项目后重新导入"
   fi
 }
 
@@ -92,8 +170,7 @@ fi
 
 cd "$APP_DIR"
 
-sed "s/__WECHAT_MINIPROGRAM_APPID__/$APPID/g" \
-  project.config.example.json > project.config.json
+generate_miniprogram_configs
 
 if [ ! -d node_modules ]; then
   echo "node_modules is missing. Run pnpm install manually before starting dev mode."
@@ -111,11 +188,13 @@ echo "API: $API_BASE"
 check_api_base
 if [ "$MODE" = "build" ]; then
   VITE_SHUXIN_API_BASE="$API_BASE" pnpm build:mp-weixin
+  patch_project_appid "$APP_DIR/dist/build/mp-weixin" "$APPID"
   if [ "$LOCAL_BUILD" != "1" ]; then
     check_no_stale_localhost "$APP_DIR/dist/build/mp-weixin"
   fi
   check_page_outputs "$APP_DIR/dist/build/mp-weixin"
   sync_build_to_dev
+  patch_project_appid "$APP_DIR/dist/dev/mp-weixin" "$APPID"
   check_page_outputs "$APP_DIR/dist/dev/mp-weixin"
   print_build_hints "$LOCAL_BUILD"
 else

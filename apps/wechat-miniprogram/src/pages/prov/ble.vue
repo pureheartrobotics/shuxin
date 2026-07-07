@@ -51,35 +51,45 @@
     <!-- 第一步：搜索并连接设备 -->
     <view v-if="currentStep === 1" class="panel">
       <view class="panel-header">
-        <view class="panel-title">第一步：搜索设备1</view>
+        <view class="panel-title">第一步：搜索设备</view>
         <view class="panel-desc">{{ scanPanelDesc }}</view>
       </view>
 
       <view class="scan-container">
+        <!-- 扫描中状态 -->
         <view v-if="isScanning" class="scan-active">
           <view class="radar-box">
             <view class="radar-circle c1"></view>
             <view class="radar-circle c2"></view>
             <view class="radar-circle c3"></view>
+            <view class="breathing-glow-inner">
+              <text class="radar-search-icon">🔍</text>
+            </view>
             <text class="radar-status">{{ scanActiveHint }}</text>
           </view>
           <text class="scan-summary">已发现 {{ discoveredDevices.length }} 台设备</text>
           <button class="ghost stop-scan" @tap.stop="stopScan">停止搜索</button>
         </view>
+
+        <!-- 未扫描状态（拟物盘片风格） -->
         <view v-else class="scan-idle" @tap="startScan">
           <view class="radar-box idle">
-            <view class="radar-circle c1 idle-ring"></view>
-            <view class="radar-circle c2 idle-ring"></view>
-            <view class="radar-circle c3 idle-ring"></view>
-            <button class="primary scan-btn">开始扫描</button>
+            <!-- 虚线环圈轨道 -->
+            <view class="radar-orbit o1"></view>
+            <view class="radar-orbit o2"></view>
+            <!-- 绿色实体大盘片 -->
+            <view class="scan-plate-btn">
+              <text class="plate-icon">📡</text>
+              <text class="plate-text">开始搜索</text>
+            </view>
           </view>
           <text class="scan-hint">{{ scanIdleHint }}</text>
         </view>
 
-        <!-- 蓝牙列表 -->
+        <!-- 蓝牙列表 (优化卡片式结构) -->
         <scroll-view scroll-y class="device-list">
           <view v-if="discoveredDevices.length === 0" class="empty-list">
-            {{ isScanning ? scanEmptyListHint : '点击上方按钮开始扫描' }}
+            {{ isScanning ? scanEmptyListHint : '点击上方按钮开始搜索' }}
           </view>
           <view
             v-for="device in discoveredDevices"
@@ -89,8 +99,15 @@
             @tap="connectDevice(device)"
           >
             <view class="device-info">
-              <text class="device-name">{{ device.name }}</text>
-              <text class="device-rssi">信号强度: {{ device.RSSI }} dBm</text>
+              <view class="device-name-row">
+                <text class="device-name">{{ device.name }}</text>
+                <text v-if="device.rawName.toLowerCase().startsWith('sx')" class="device-tag my-chuxin">我的初心</text>
+                <text v-else-if="!device.rawName" class="device-tag test-device">测试机</text>
+              </view>
+              <view class="device-rssi-row">
+                <text class="device-signal-bar" :style="{ color: getSignalColor(device.RSSI) }">📶 {{ getSignalText(device.RSSI) }}</text>
+                <text class="device-rssi-value">({{ device.RSSI }} dBm)</text>
+              </view>
             </view>
             <view class="device-action">
               <text v-if="targetDeviceId === device.deviceId" class="action-text connecting">连接中...</text>
@@ -101,14 +118,22 @@
       </view>
 
       <view v-if="errorMsg" class="message error">{{ errorMsg }}</view>
-      <view v-if="debugErr" class="message debug">{{ debugErr }}</view>
+
+      <!-- 折叠调试日志 -->
+      <view class="dev-log-section">
+        <view class="dev-log-header" @tap="showConsoleLogs = !showConsoleLogs">
+          <text class="dev-log-title">🛠️ 开发者调试日志</text>
+          <text class="dev-log-arrow">{{ showConsoleLogs ? '收起 ▴' : '展开 ▾' }}</text>
+        </view>
+        <view v-if="showConsoleLogs && debugErr" class="message debug">{{ debugErr }}</view>
+      </view>
     </view>
 
     <!-- 第二步：填写 Wi-Fi 信息 -->
     <view v-if="currentStep === 2" class="panel">
       <view class="panel-header">
         <view class="panel-title">第二步：配置 Wi-Fi</view>
-        <view class="panel-desc">设备：{{ connectedDeviceName }} 已连接。请输入设备将要连接的无线网络信息。</view>
+        <view class="panel-desc">设备：<text class="connected-highlight">{{ connectedDeviceName }}</text> 已连接。请输入设备将要连接的无线网络信息。</view>
       </view>
 
       <view class="form-group">
@@ -149,14 +174,21 @@
         <view class="panel-desc">正在将网络凭证发送给设备，并等待设备联网结果。</view>
       </view>
 
-      <view class="console-box">
-        <view class="console-title">连接状态追踪</view>
-        <scroll-view scroll-y class="console-log">
-          <view v-for="(log, index) in logs" :key="index" class="log-line" :class="log.type">
-            <text class="log-time">[{{ log.time }}]</text>
-            <text class="log-text">{{ log.text }}</text>
-          </view>
-        </scroll-view>
+      <!-- 折叠调试日志 -->
+      <view class="dev-log-section" style="margin-bottom: 20rpx;">
+        <view class="dev-log-header" @tap="showConsoleLogs = !showConsoleLogs">
+          <text class="dev-log-title">🛠️ 开发者调试日志</text>
+          <text class="dev-log-arrow">{{ showConsoleLogs ? '收起 ▴' : '展开 ▾' }}</text>
+        </view>
+        <view v-if="showConsoleLogs" class="console-box">
+          <view class="console-title">连接状态追踪</view>
+          <scroll-view scroll-y class="console-log">
+            <view v-for="(log, index) in logs" :key="index" class="log-line" :class="log.type">
+              <text class="log-time">[{{ log.time }}]</text>
+              <text class="log-text">{{ log.text }}</text>
+            </view>
+          </scroll-view>
+        </view>
       </view>
 
       <!-- 成功/失败状态面板 -->
@@ -232,28 +264,28 @@ type BleDeviceItem = {
 };
 
 const scanPanelDesc = BLE_FILTER_SX_PREFIX_ONLY
-  ? "请确认手机蓝牙已打开，设备处于配网模式（指示灯快闪）。列表仅显示蓝牙广播名以 SX 开头的设备（不区分大小写），请选择你的初心设备后连接。真机测试请用预览或真机调试。"
-  : "【调试模式】显示附近所有蓝牙设备（不限 SX 前缀），便于排查连接问题。请选择目标设备后连接。真机测试请用预览或真机调试。";
+  ? "请先打开手机蓝牙。确认设备指示灯正在快闪（表示等待连接），点击下方「开始搜索」，在列表中选择你的初心设备并点击连接。"
+  : "【调试模式】会显示附近所有蓝牙设备，方便技术人员排查问题。请选择目标设备后点击连接。";
 
-const scanActiveHint = BLE_FILTER_SX_PREFIX_ONLY ? "正在搜寻 SX 设备..." : "正在搜寻附近蓝牙设备...";
+const scanActiveHint = BLE_FILTER_SX_PREFIX_ONLY ? "正在搜索附近的初心设备..." : "正在搜索附近蓝牙设备...";
 
 const scanIdleHint = BLE_FILTER_SX_PREFIX_ONLY
-  ? "点击开始搜索附近的 SX 设备"
+  ? "点击开始搜索附近的初心设备"
   : "点击开始搜索附近所有蓝牙设备（调试模式）";
 
 const scanEmptyListHint = BLE_FILTER_SX_PREFIX_ONLY
-  ? "尚未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称"
-  : "尚未发现蓝牙设备，请确认手机蓝牙已打开";
+  ? "还没有找到初心设备，请确认设备指示灯正在快闪"
+  : "还没有找到蓝牙设备，请确认手机蓝牙已打开";
 
 const scanNoDeviceError = BLE_FILTER_SX_PREFIX_ONLY
-  ? "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式"
-  : "未发现蓝牙设备，请确认手机蓝牙已打开";
+  ? "没有找到初心设备，请确认设备指示灯正在快闪"
+  : "没有找到蓝牙设备，请确认手机蓝牙已打开";
 
 const scanNoDeviceTimeoutError = BLE_FILTER_SX_PREFIX_ONLY
-  ? "未发现 SX 开头的蓝牙设备，请确认设备已进入配网模式并广播名称"
-  : "未发现蓝牙设备，请确认手机蓝牙已打开";
+  ? "搜索超时，没有找到初心设备。请确认设备指示灯正在快闪后重试"
+  : "搜索超时，没有找到蓝牙设备。请确认手机蓝牙已打开后重试";
 
-const scanFoundDebugLabel = BLE_FILTER_SX_PREFIX_ONLY ? "台 SX 设备" : "台蓝牙设备（调试）";
+const scanFoundDebugLabel = BLE_FILTER_SX_PREFIX_ONLY ? "台初心设备" : "台蓝牙设备（调试）";
 
 // 状态管理
 const currentStep = ref(1);
@@ -279,6 +311,19 @@ const sendingConfig = ref(false);
 const logs = ref<{ time: string; text: string; type: 'info' | 'success' | 'error' }[]>([]);
 const provStatus = ref<'pending' | 'success' | 'fail'>('pending');
 const failureReason = ref("");
+const showConsoleLogs = ref(false);
+
+function getSignalText(rssi: number): string {
+  if (rssi >= -60) return "极佳";
+  if (rssi >= -75) return "一般";
+  return "较弱";
+}
+
+function getSignalColor(rssi: number): string {
+  if (rssi >= -60) return "#2f604f";
+  if (rssi >= -75) return "#d97706";
+  return "#82786d";
+}
 
 // ESP-IDF protocomm 配网客户端（页面同级 import；mp-weixin 禁止 import() 延迟加载）
 let provisionClient: EspIdfProvisionClient | null = null;
@@ -287,6 +332,16 @@ let timeoutTimer: number | null = null;
 let scanTimeoutTimer: number | null = null;
 
 onMounted(() => {
+  // 读取历史 Wi-Fi 并自动回填
+  const lastSsid = uni.getStorageSync("last_wifi_ssid");
+  const lastPassword = uni.getStorageSync("last_wifi_password");
+  if (lastSsid) {
+    wifiSsid.value = lastSsid;
+  }
+  if (lastPassword) {
+    wifiPassword.value = lastPassword;
+  }
+
   setPrivacyGateHandler(async () => {
     privacyContractName.value = await loadPrivacyContractName();
     showPrivacyGate.value = true;
@@ -626,6 +681,10 @@ function sendWifiCredentials() {
   sendingConfig.value = true;
   errorMsg.value = "";
 
+  // 记忆用户历史 Wi-Fi
+  uni.setStorageSync("last_wifi_ssid", wifiSsid.value);
+  uni.setStorageSync("last_wifi_password", wifiPassword.value);
+
   logs.value = [];
   currentStep.value = 3;
   provStatus.value = "pending";
@@ -854,6 +913,7 @@ function retryProvisioning() {
   flex-direction: column;
   align-items: center;
   padding: 24rpx 0 8rpx;
+  width: 100%;
 }
 
 .scan-idle {
@@ -866,8 +926,10 @@ function retryProvisioning() {
 .scan-hint {
   font-size: 24rpx;
   color: #82786d;
-  margin-top: 16rpx;
+  margin-top: 24rpx;
   margin-bottom: 8rpx;
+  text-align: center;
+  line-height: 1.5;
 }
 
 .scan-active {
@@ -880,28 +942,28 @@ function retryProvisioning() {
 .scan-summary {
   font-size: 24rpx;
   color: #6f665b;
-  margin-bottom: 16rpx;
+  margin-bottom: 20rpx;
 }
 
 .stop-scan {
-  width: 200rpx;
-  height: 68rpx;
-  line-height: 68rpx;
+  width: 220rpx;
+  height: 72rpx;
+  line-height: 72rpx;
   font-size: 24rpx;
   margin-bottom: 8rpx;
 }
 
 .radar-box {
   position: relative;
-  width: 280rpx;
-  min-height: 280rpx;
+  width: 380rpx;
+  min-height: 380rpx;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  margin: 32rpx 0 24rpx;
+  margin: 20rpx 0;
 }
 
+/* 扫描中动画圈 */
 .radar-circle {
   position: absolute;
   border: 2rpx solid rgba(47, 96, 79, 0.3);
@@ -909,85 +971,170 @@ function retryProvisioning() {
   animation: radar-pulse 2s infinite linear;
 }
 
-.c1 { width: 100rpx; height: 100rpx; animation-delay: 0s; }
-.c2 { width: 180rpx; height: 180rpx; animation-delay: 0.6s; }
-.c3 { width: 260rpx; height: 260rpx; animation-delay: 1.2s; }
+.c1 { width: 180rpx; height: 180rpx; animation-delay: 0s; }
+.c2 { width: 280rpx; height: 280rpx; animation-delay: 0.6s; }
+.c3 { width: 380rpx; height: 380rpx; animation-delay: 1.2s; }
 
-.idle-ring {
-  border-color: rgba(47, 96, 79, 0.15);
-  animation: none;
+.breathing-glow-inner {
+  position: absolute;
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: rgba(47, 96, 79, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: breathing 3s infinite ease-in-out;
+  z-index: 5;
+}
+
+.radar-search-icon {
+  font-size: 52rpx;
 }
 
 .radar-status {
+  position: absolute;
+  bottom: 0;
   font-size: 24rpx;
   color: #2f604f;
   font-weight: 500;
   text-align: center;
   z-index: 5;
-  margin-top: 16rpx;
 }
 
-.radar-box.idle {
-  animation: none;
+/* 虚线环圈轨道 */
+.radar-orbit {
+  position: absolute;
+  border: 2rpx dashed rgba(47, 96, 79, 0.15);
+  border-radius: 50%;
 }
 
-.scan-btn {
-  position: relative;
-  z-index: 6;
-  width: 200rpx;
-  height: 80rpx;
-  line-height: 80rpx;
-  font-size: 26rpx;
+.radar-orbit.o1 {
+  width: 300rpx;
+  height: 300rpx;
+}
+
+.radar-orbit.o2 {
+  width: 370rpx;
+  height: 370rpx;
+}
+
+/* 绿色实体大盘片 */
+.scan-plate-btn {
+  width: 230rpx;
+  height: 230rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #38705d, #2f604f);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12rpx 32rpx rgba(47, 96, 79, 0.35);
+  color: #ffffff;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  z-index: 10;
+}
+
+.scan-plate-btn:active {
+  transform: scale(0.95);
+  box-shadow: 0 4rpx 12rpx rgba(47, 96, 79, 0.2);
+}
+
+.plate-icon {
+  font-size: 56rpx;
+  margin-bottom: 6rpx;
+}
+
+.plate-text {
+  font-size: 24rpx;
+  font-weight: bold;
+  letter-spacing: 2rpx;
 }
 
 /* 列表样式 */
 .device-list {
   width: 100%;
-  max-height: 380rpx;
+  max-height: 480rpx;
   margin-top: 30rpx;
-  border-top: 1rpx solid rgba(128, 94, 69, 0.1);
-  padding-top: 10rpx;
+  border-top: 1rpx solid rgba(128, 94, 69, 0.08);
+  padding-top: 16rpx;
 }
 
 .empty-list {
   text-align: center;
   font-size: 24rpx;
   color: #82786d;
-  padding: 40rpx 0;
+  padding: 48rpx 0;
 }
 
+/* 设备卡片式结构 */
 .device-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24rpx 16rpx;
-  border-bottom: 1rpx solid rgba(128, 94, 69, 0.08);
-  border-radius: 12rpx;
-  margin-bottom: 10rpx;
-  background: transparent;
-  transition: background-color 0.2s ease;
+  padding: 28rpx 24rpx;
+  border: 1rpx solid rgba(128, 94, 69, 0.1);
+  border-radius: 20rpx;
+  margin-bottom: 16rpx;
+  background: #ffffff;
+  box-shadow: 0 4rpx 12rpx rgba(128, 94, 69, 0.03);
+  transition: all 0.2s ease;
 }
 
 .device-item:active {
-  background: rgba(47, 96, 79, 0.06);
+  background: rgba(47, 96, 79, 0.04);
+  transform: translateY(1rpx);
 }
 
 .device-item.connecting {
-  background: rgba(47, 96, 79, 0.08);
+  background: rgba(47, 96, 79, 0.06);
+  border-color: rgba(47, 96, 79, 0.2);
+}
+
+.device-name-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
 }
 
 .device-name {
   font-size: 28rpx;
   font-weight: bold;
   color: #24211c;
-  display: block;
 }
 
-.device-rssi {
+.device-tag {
+  font-size: 18rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  font-weight: bold;
+}
+
+.device-tag.my-chuxin {
+  background: #2f604f;
+  color: #ffffff;
+}
+
+.device-tag.test-device {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.device-rssi-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-top: 8rpx;
+}
+
+.device-signal-bar {
+  font-size: 22rpx;
+  font-weight: bold;
+}
+
+.device-rssi-value {
   font-size: 20rpx;
   color: #82786d;
-  margin-top: 6rpx;
-  display: block;
 }
 
 .action-text {
@@ -998,6 +1145,38 @@ function retryProvisioning() {
 
 .action-text.connecting {
   color: #9b6146;
+}
+
+/* 开发者调试日志 */
+.dev-log-section {
+  margin-top: 30rpx;
+  border-top: 1rpx solid rgba(128, 94, 69, 0.06);
+  padding-top: 15rpx;
+  width: 100%;
+}
+
+.dev-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12rpx 8rpx;
+  background: transparent;
+}
+
+.dev-log-title {
+  font-size: 22rpx;
+  color: #82786d;
+  font-weight: bold;
+}
+
+.dev-log-arrow {
+  font-size: 20rpx;
+  color: #82786d;
+}
+
+.connected-highlight {
+  color: #2f604f;
+  font-weight: bold;
 }
 
 /* 表单组件 */
@@ -1202,8 +1381,14 @@ button {
 
 /* 关键帧动画 */
 @keyframes radar-pulse {
-  0% { transform: scale(0.6); opacity: 1; }
+  0% { transform: scale(0.4); opacity: 1; }
   100% { transform: scale(1.1); opacity: 0; }
+}
+
+@keyframes breathing {
+  0% { transform: scale(0.94); opacity: 0.8; }
+  50% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(0.94); opacity: 0.8; }
 }
 
 @keyframes spin {

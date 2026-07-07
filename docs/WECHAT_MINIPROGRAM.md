@@ -15,7 +15,7 @@ bash scripts/wechat_miniprogram_dev.sh build   # 生产包 → dist/build，并�
 bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-weixin
 ```
 
-微信开发者工具导入 **`apps/wechat-miniprogram`**（非源码外的 `dist/` 子目录）；`miniprogramRoot` 指向 `dist/dev/mp-weixin`。执行 `build` 后脚本会把最新产物同步到 `dev`，避免「已 build 但工具仍加载旧包」导致白屏。
+微信开发者工具可导入 **`apps/wechat-miniprogram`**、**`dist/dev/mp-weixin`** 或 **`dist/build/mp-weixin`**。`build` 脚本从 `src/manifest.example.json` 生成 `manifest.json`，并 patch 根目录与产物内 `project.config.json` 的 AppID（默认读根目录 `.env` 的 `SHUXIN_WECHAT_APPID`）。执行 `build` 后脚本会把最新产物同步到 `dev`，避免「已 build 但工具仍加载旧包」导致白屏。
 
 **mp-weixin 限制**：勿使用 ES `import()` 延迟加载（会编译成 `await "path"`，Android 真机报 `e is not a constructor`）。ESP-IDF 客户端须放在 [`pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/)（页面同级，勿放 `utils/`），在 [`ble.vue`](../apps/wechat-miniprogram/src/pages/prov/ble.vue) 顶层 `import from "./esp-idf-prov"`。`build` 后须在 DevTools **清缓存 → 重新编译 → 重新真机预览**。
 
@@ -62,12 +62,12 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 
 **扫描过滤**：[`utils/ble-discovery.ts`](../apps/wechat-miniprogram/src/utils/ble-discovery.ts) — 仅 `sx` 前缀、广播名即设备码。
 
-**配网协议**：[`pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/) — ESP-IDF `wifi_prov_scheme_ble` + Security1。
+**配网协议**：[`pages/prov/esp-idf-prov/`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/) — ESP-IDF `wifi_prov_scheme_ble` + Security1（v5 默认 Service UUID `1775244D-...`）。
 
 | 规则 | 说明 |
 |------|------|
 | 扫描过滤 | `BLE_NAME_PREFIXES = ["sx"]`（大小写不敏感） |
-| PoP | 固定字符串 `shuxin`，自动用于 Security1 |
+| PoP | 固定 `shuxin`（与当前量产固件一致）；广播名仅用于扫描与绑定预填 |
 | 预填 | 配网成功后广播名原样写入绑定页 |
 | 协议 | `prov-session` 握手 + `prov-config` 下发 Wi-Fi（Protobuf，非 JSON） |
 
@@ -95,7 +95,7 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
 2. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
 3. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
-4. 点击设备后 ESP-IDF Security1 握手（PoP = `shuxin`）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码
+4. 点击设备后 ESP-IDF Security1 握手（PoP=`shuxin`）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码  
 
 ---
 

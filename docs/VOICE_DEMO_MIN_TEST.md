@@ -1079,6 +1079,8 @@ docker run --rm -v "$(pwd)":/app -w /app -e PYTHONPATH=/app/src \
 
 ## 19. DMX 额度与测试模式验收
 
+小程序分钟制额度门控（用户级共用池、`quota_exhausted`、Docker 全量验收步骤）见 **[`VOICE_QUOTA_GATE_TEST.md`](VOICE_QUOTA_GATE_TEST.md)**。
+
 ### 19.1 环境变量
 
 `.env` 至少配置：

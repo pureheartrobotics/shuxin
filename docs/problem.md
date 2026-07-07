@@ -15,5 +15,8 @@
 7.mbti的可能会出现是enfj这种需要修改   完成（SOUL 与设备 MBTI 分层；日常禁止类型码自我解释）
 8.推理模型思维链泄漏到 agent/reply   完成（llm.py 过滤 reasoning_content 与 think 标签）
 
+9. agent 设备之间可以进行通话 
+10.llm操作系统
+11.移动机器人 拍照 啥的  
 
 目前的想法 干掉 apple 腾讯 大疆  在硬件上面 不需要去走他们   我们纯语音交流  看看想法  做出来

@@ -1,11 +1,11 @@
 {
   "name": "初心",
-  "appid": "wxda3acb8842b5c9f4",
+  "appid": "__WECHAT_MINIPROGRAM_APPID__",
   "description": "初心陪伴机器人设备绑定端",
   "versionName": "0.1.0",
   "versionCode": "1",
   "mp-weixin": {
-    "appid": "wxda3acb8842b5c9f4",
+    "appid": "__WECHAT_MINIPROGRAM_APPID__",
     "setting": {
       "urlCheck": false
     },

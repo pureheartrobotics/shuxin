@@ -32,16 +32,16 @@ pnpm install
 运行以下命令（如果在 WSL 环境下，脚本会自动获取宿主机 IP 地址进行 API 绑定）：
 
 ```bash
-# 设置您的微信小程序 AppID（或直接运行，默认使用游客模式 touristappid）
-export WECHAT_MINIPROGRAM_APPID="your-appid"
+# AppID 解析顺序：WECHAT_MINIPROGRAM_APPID 环境变量 → 根目录 .env 的 SHUXIN_WECHAT_APPID → 默认 wxda3acb8842b5c9f4
+# 可选覆盖：export WECHAT_MINIPROGRAM_APPID="your-appid"
 
 # 启动开发编译监听
 ../../scripts/wechat_miniprogram_dev.sh
 ```
 
-- **编译产物路径**：`apps/wechat-miniprogram/dist/dev/mp-weixin`（由 `project.config.json` 的 `miniprogramRoot` 指向）
-- **导入微信开发者工具**：选择 **`apps/wechat-miniprogram`** 目录（含 `project.config.json`），不要只导入 `dist/` 子目录
-- **后台地址绑定**：脚本默认会将小程序的后端 API 地址设为 `http://localhost:8765`。如果要手动指定后端地址，可设置环境变量 `SHUXIN_API_BASE`，例如：
+- **编译产物路径**：`apps/wechat-miniprogram/dist/dev/mp-weixin`
+- **导入微信开发者工具**：可导入 **`apps/wechat-miniprogram`**（含 `project.config.json`），也可直接导入 **`dist/dev/mp-weixin`** 或 **`dist/build/mp-weixin`**；脚本会从 `manifest.example.json` 生成 `manifest.json`，并在 build 后 patch 产物内 `project.config.json` 的 AppID
+- **后台地址绑定**：脚本默认 API 为 `https://shuxinzzx.com.cn`。覆盖示例：
   ```bash
   SHUXIN_API_BASE=https://your-domain.com ../../scripts/wechat_miniprogram_dev.sh
   ```
@@ -49,8 +49,8 @@ export WECHAT_MINIPROGRAM_APPID="your-appid"
 ### 3. 导入微信开发者工具
 
 1. 打开**微信开发者工具**，选择导入项目。
-2. **导入目录**：`apps/wechat-miniprogram`（工程根目录；`miniprogramRoot` 自动指向 `dist/dev/mp-weixin`）
-3. 填写您的 AppID（需与步骤 2 中设置的 AppID 一致，或者使用测试号）。
+2. **导入目录**：`apps/wechat-miniprogram`、`dist/dev/mp-weixin` 或 `dist/build/mp-weixin` 均可（须先执行下方 build/dev 脚本，AppID 由脚本注入，勿手动填 `touristappid`）。
+3. 若项目详情仍显示旧 AppID：删除工具内旧项目后重新导入。
 4. 导入成功后，在微信开发者工具中进行如下设置：
    - 点击右上角 **详情** -> **本地设置** -> 勾选 **「不校验合法域名、web-view（业务域名）、TLS版本以及HTTPS证书」**。
 
@@ -109,7 +109,7 @@ SHUXIN_WECHAT_MOCK=1
    - Android：同时打开**定位**开关，并在微信中允许「位置信息」
    - 设备进入配网模式（指示灯快闪）
 4. 首次扫描会先弹出**隐私保护提示**，点击「同意并继续」后再搜索蓝牙
-5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 SX 开头的设备** → 点击设备（Security1 PoP 固定为 `shuxin`）→ 填写 2.4GHz Wi-Fi → 发送配置
+5. 绑定页 →「新设备未联网？立即进行蓝牙配网」→ 开始扫描 → 列表**仅显示广播名以 SX 开头的设备** → 点击设备（PoP 自动取广播名）→ 填写 2.4GHz Wi-Fi → 发送配置
 6. 配网成功后返回绑定页；广播名（= 设备码）自动预填
 
 **微信小程序后台**（代码 + 后台双侧缺一不可）：
