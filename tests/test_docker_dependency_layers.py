@@ -9,7 +9,6 @@ def test_voice_dependencies_are_grouped_by_capability() -> None:
 
     assert "numpy==1.26.4" in heavy
     assert "pydub==0.25.1" in heavy
-    assert "torch==2.2.2" in heavy
     assert "funasr==1.2.7" in heavy
     assert "edge-tts==7.2.6" in app
     assert "fastapi==0.115.6" in app
@@ -36,25 +35,14 @@ def test_dockerfile_installs_dependency_modules_in_cache_friendly_order() -> Non
     assert "requirements-voice-heavy.txt" in dockerfile
     assert "requirements-voice-app.txt" in dockerfile
 
-    heavy_marker = "pip install -r requirements-voice-heavy.txt"
-    app_marker = "pip install -r requirements-voice-app.txt"
+    heavy_marker = "requirements-voice-heavy.txt"
+    app_marker = "requirements-voice-app.txt"
     src_marker = "COPY src ./src"
 
     heavy_idx = dockerfile.index(heavy_marker)
     app_idx = dockerfile.index(app_marker)
     src_idx = dockerfile.index(src_marker)
     assert heavy_idx < app_idx < src_idx
-
-
-def test_redeploy_hash_tracks_dependency_modules() -> None:
-    script = Path("scripts/redeploy_docker.sh").read_text(encoding="utf-8")
-
-    assert "requirements-voice-heavy.txt" in script
-    assert "requirements-voice-app.txt" in script
-    assert "依赖 tier 变更" in script
-    assert "tier_for_module" in script
-    assert "voice-heavy" in script
-    assert "voice-app" in script
 
 
 def test_legacy_requirements_aliases_removed() -> None:

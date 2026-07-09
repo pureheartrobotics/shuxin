@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 
 class FakeConnection:
     def __init__(self, fetchrow_val=None, fetch_vals=None):
@@ -289,7 +289,7 @@ def test_fulfill_miniapp_payment_order_preserves_add_yuan() -> None:
 
     async def run():
         with patch(
-            "shuxin.voice.postgres_repository.top_up_token_by_api_key",
+            "shuxin.voice.persistence.postgres_repository.top_up_token_by_api_key",
             new=AsyncMock(return_value={"ok": True}),
         ) as top_up:
             result = await repo.fulfill_payment_order(
@@ -515,4 +515,45 @@ def test_cross_month_reset_preserves_fuel_balance_on_deduct() -> None:
         and "fuel_minutes_balance" not in x[0]
     ]
     assert len(reset_queries) == 1
+
+
+def test_admin_update_allowance_settings():
+    class FakeConn:
+        def __init__(self):
+            self.executed = []
+
+        async def execute(self, query, *args):
+            self.executed.append((query, args))
+            return "INSERT 0 1"
+
+    class FakePool:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def acquire(self):
+            class Context:
+                async def __aenter__(self):
+                    return conn
+                async def __aexit__(self, exc_type, exc, tb):
+                    pass
+            return Context()
+
+    conn = FakeConn()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        res = await repo.admin_update_allowance_settings(
+            daily_free_minutes=3.0,
+            enabled=True,
+            gift_subscription_plan_id="plan-1",
+            gift_duration_months=3,
+        )
+        assert res == {"success": True}
+
+    asyncio.run(run())
+    assert len(conn.executed) == 1
+    query, args = conn.executed[0]
+    assert "INSERT INTO miniapp_allowance_settings" in query
+    assert args == (3.0, True, "plan-1", 3)
+
 

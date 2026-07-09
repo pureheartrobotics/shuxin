@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from shuxin.voice.payment_config import DISPLAY_BALANCE_METADATA_KEY
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.config.payment_config import DISPLAY_BALANCE_METADATA_KEY
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 
 
 class RepoFakePool:
@@ -98,7 +98,7 @@ def test_fulfill_payment_order_credits_display_and_dmx() -> None:
 
     async def run():
         with patch(
-            "shuxin.voice.postgres_repository.top_up_token_by_api_key",
+            "shuxin.voice.persistence.billing_repo.top_up_token_by_api_key",
             new=AsyncMock(return_value={"ok": True}),
         ) as top_up:
             result = await repo.fulfill_payment_order(
@@ -129,11 +129,11 @@ def test_new_user_display_balance_matches_dmx_gift() -> None:
     repo = VoicePostgresRepository(pool=pool)
 
     async def run():
-        with patch("shuxin.voice.postgres_repository.dmx_admin_configured", return_value=True), patch(
-            "shuxin.voice.postgres_repository.create_user_token",
+        with patch("shuxin.voice.persistence.postgres_repository.dmx_admin_configured", return_value=True), patch(
+            "shuxin.voice.persistence.postgres_repository.create_user_token",
             new=AsyncMock(return_value="sk-new"),
         ), patch(
-            "shuxin.voice.postgres_repository.merge_platform_llm_defaults",
+            "shuxin.voice.persistence.postgres_repository.merge_platform_llm_defaults",
             side_effect=lambda cfg: cfg,
         ):
             await repo.ensure_user_dmx_llm("wx_new")
@@ -154,6 +154,10 @@ class QuotaFakePool:
 
     async def fetchrow(self, *_args, **_kwargs):
         return self.fetchrow_value
+
+    async def fetch(self, *_args, **_kwargs):
+        # Return a list of self.fetchrow_value if it's not None/empty
+        return [self.fetchrow_value] if self.fetchrow_value else []
 
     async def execute(self, query, *args):
         self.executed.append((query, args))
@@ -176,15 +180,27 @@ class _QuotaFakeAcquire:
 def test_lazy_backfill_display_from_dmx() -> None:
     pool = QuotaFakePool(
         fetchrow={
+            "device_id": "dev_123",
+            "user_id": "wx_old",
             "llm_config": {"api_key": "sk-test"},
             "metadata": {},
+            "daily_free_minutes": 10.0,
+            "enabled": True,
+            "subscription_minutes_limit": 100.0,
+            "subscription_minutes_used": 10.0,
+            "subscription_expires_at": None,
+            "fuel_minutes_balance": 40.0,
+            "last_reset_month": "2026-06",
+            "daily_allowance_date": None,
+            "daily_allowance_seconds_used": 0.0,
+            "value": '{"ratio": 0.95}',
         },
     )
     repo = VoicePostgresRepository(pool=pool)
 
     async def run():
         with patch(
-            "shuxin.voice.postgres_repository.get_token_balance",
+            "shuxin.voice.persistence.billing_repo.get_token_balance",
             new=AsyncMock(return_value={"remain_yuan": 50.0, "used_yuan": 0, "exhausted": False}),
         ), patch.object(repo, "get_credit_ratio", new=AsyncMock(return_value=0.95)):
             return await repo.get_user_quota_by_user_id("wx_old", admin_detail=True)
@@ -198,16 +214,27 @@ def test_lazy_backfill_display_from_dmx() -> None:
 def test_admin_top_up_dual_ledger() -> None:
     pool = QuotaFakePool(
         fetchrow={
+            "device_id": "dev_123",
             "llm_config": {"api_key": "sk-test"},
             "quota_note": "",
             "metadata": {DISPLAY_BALANCE_METADATA_KEY: 10.0},
+            "daily_free_minutes": 10.0,
+            "enabled": True,
+            "subscription_minutes_limit": 100.0,
+            "subscription_minutes_used": 10.0,
+            "subscription_expires_at": None,
+            "fuel_minutes_balance": 20.0,
+            "last_reset_month": "2026-06",
+            "daily_allowance_date": None,
+            "daily_allowance_seconds_used": 0.0,
+            "value": '{"ratio": 0.95}',
         },
     )
     repo = VoicePostgresRepository(pool=pool)
 
     async def run():
         with patch.object(repo, "get_credit_ratio", new=AsyncMock(return_value=0.95)), patch(
-            "shuxin.voice.postgres_repository.top_up_token_by_api_key",
+            "shuxin.voice.persistence.billing_repo.top_up_token_by_api_key",
             new=AsyncMock(return_value={"ok": True}),
         ) as top_up, patch.object(
             repo,

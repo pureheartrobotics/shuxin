@@ -6,7 +6,14 @@ import re
 
 from fastapi.testclient import TestClient
 
-from shuxin.voice.server import _admin_html, create_app
+from shuxin.voice.server import create_app
+
+def _admin_html(authenticated: bool = False) -> str:
+    from pathlib import Path
+    static_file = Path(__file__).resolve().parent.parent / "src" / "shuxin" / "voice" / "static" / "admin.html"
+    content = static_file.read_text(encoding="utf-8")
+    return content.replace("{{AUTHENTICATED}}", "true" if authenticated else "false")
+
 
 TAB_PANELS = ["devices", "users", "agents", "bindings", "adapters", "billing"]
 TAB_BUTTONS = [
