@@ -10,8 +10,8 @@ from typing import Any
 
 import yaml
 
-from shuxin.voice.agents import AgentRecord, DEFAULT_AGENT_ID
-from shuxin.voice.config import ProviderConfig, _expand_env
+from shuxin.voice.persistence.agents import AgentRecord, DEFAULT_AGENT_ID
+from shuxin.voice.config.config import ProviderConfig, _expand_env
 
 TTS_PROFILES_CONFIG_ENV = "VOICE_TTS_PROFILES_CONFIG"
 DEFAULT_TTS_PROFILES_PATH = Path("data/tts_profiles.yaml")

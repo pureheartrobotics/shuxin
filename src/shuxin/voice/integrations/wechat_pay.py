@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("shuxin.voice.wechat_pay")
+logger = logging.getLogger("shuxin.voice.integrations.wechat_pay")
 
 
 def uses_wechat_pay_public_key() -> bool:

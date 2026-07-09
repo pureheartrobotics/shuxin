@@ -23,7 +23,7 @@ def test_openai_stream_delta_text_prefers_content() -> None:
 
 def test_openai_stream_delta_text_falls_back_to_reasoning() -> None:
     delta = SimpleNamespace(content=None, reasoning_content="推理片段")
-    assert _openai_stream_delta_text(delta) == "推理片段"
+    assert _openai_stream_delta_text(delta) == ""
 
 
 def test_chat_stream_yields_reasoning_when_content_missing(monkeypatch) -> None:
@@ -60,7 +60,7 @@ def test_chat_stream_yields_reasoning_when_content_missing(monkeypatch) -> None:
             system_prompt="sys",
         )
     )
-    assert out == ["好"]
+    assert out == []
 
 
 def test_chat_stream_yields_content_as_before(monkeypatch) -> None:

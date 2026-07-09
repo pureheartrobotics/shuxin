@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shuxin.voice.config import default_device_tts_config, default_tencent_stt_config
+from shuxin.voice.config.config import default_device_tts_config, default_tencent_stt_config
 
 
 def test_default_tencent_stt_config_shape(monkeypatch) -> None:

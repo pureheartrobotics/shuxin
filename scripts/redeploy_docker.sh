@@ -130,7 +130,7 @@ if [[ -n "$CONTAINER_ID" ]]; then
     warn "容器内未检测到 ffmpeg（检查 Dockerfile apt 层是否已 build）"
   fi
 
-  if ! docker exec "$CONTAINER_ID" python -c "from shuxin.voice.opus_codec import opus_available; assert opus_available()"; then
+  if ! docker exec "$CONTAINER_ID" python -c "from shuxin.voice.audio.opus_codec import opus_available; assert opus_available()"; then
     warn "容器内 opuslib_next 不可用（检查 requirements-voice-app.txt）"
   fi
 fi

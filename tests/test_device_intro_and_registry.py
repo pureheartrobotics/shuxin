@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from shuxin.voice.mbti_reveal import build_device_intro_text
+from shuxin.voice.config.mbti_reveal import build_device_intro_text
 from shuxin.voice.server import create_app
-from shuxin.voice import voice_session_registry as vsr
+from shuxin.voice.api import voice_session_registry as vsr
 
 
 def test_build_device_intro_text_with_bind_prefix() -> None:

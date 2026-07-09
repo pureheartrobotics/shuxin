@@ -5,10 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from shuxin.voice.agents import AgentRecord
-from shuxin.voice.config import DeviceConfig, LLMDeviceConfig, ProviderConfig
-from shuxin.voice.server import _VoiceWebSocketSession
-from shuxin.voice.users import UserSettings
+from shuxin.voice.persistence.agents import AgentRecord
+from shuxin.voice.config.config import DeviceConfig, LLMDeviceConfig, ProviderConfig
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession
+from shuxin.voice.persistence.users import UserSettings
 
 
 def _make_session() -> _VoiceWebSocketSession:
@@ -61,9 +61,9 @@ def test_ensure_runtime_inits_agent_when_device_prefetched() -> None:
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args)
 
-    with patch("shuxin.voice.server.create_tts_provider_from_agent", return_value=fake_tts):
-        with patch("shuxin.voice.server.VoiceService.apply_device_mbti"):
-            with patch("shuxin.voice.server.asyncio.to_thread", new=fake_to_thread, create=True):
+    with patch("shuxin.voice.api.ws_session.create_tts_provider_from_agent", return_value=fake_tts):
+        with patch("shuxin.voice.api.ws_session.VoiceService.apply_device_mbti"):
+            with patch("shuxin.voice.api.ws_session.asyncio.to_thread", new=fake_to_thread, create=True):
                 asyncio.run(session._ensure_runtime())
 
     assert session.agent is mock_agent
@@ -107,9 +107,9 @@ def test_play_pending_device_intro_leaves_agent_ready_for_chat() -> None:
         return fn(*args)
 
     async def run() -> None:
-        with patch("shuxin.voice.server.create_tts_provider_from_agent", return_value=MagicMock()):
-            with patch("shuxin.voice.server.VoiceService.apply_device_mbti"):
-                with patch("shuxin.voice.server.asyncio.to_thread", new=fake_to_thread, create=True):
+        with patch("shuxin.voice.api.ws_session.create_tts_provider_from_agent", return_value=MagicMock()):
+            with patch("shuxin.voice.api.ws_session.VoiceService.apply_device_mbti"):
+                with patch("shuxin.voice.api.ws_session.asyncio.to_thread", new=fake_to_thread, create=True):
                     with patch.object(session, "_play_proactive_tts", new_callable=AsyncMock):
                         played = await session.play_pending_device_intro(bind_success_prefix=True)
         assert played is True

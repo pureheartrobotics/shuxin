@@ -4,7 +4,7 @@ from cryptography.fernet import Fernet
 
 import pytest
 
-from shuxin.voice.device_secret_crypto import (
+from shuxin.voice.persistence.device_secret_crypto import (
     decrypt_device_secret,
     device_secret_encryption_configured,
     encrypt_device_secret,

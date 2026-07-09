@@ -1,0 +1,1642 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChuXin 管理后台</title>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --text: #1d1d1f;
+      --text-secondary: #6e6e73;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --destructive: #ff3b30;
+      --separator: rgba(0, 0, 0, .08);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 2px 16px rgba(0, 0, 0, .06);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+    header {
+      height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+      border-bottom: 1px solid var(--separator); background: rgba(255, 255, 255, .72);
+      backdrop-filter: saturate(180%) blur(20px); position: sticky; top: 0; z-index: 100;
+    }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px 20px 48px; }
+    h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.02em; }
+    h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; letter-spacing: -.01em; }
+    input, textarea, select {
+      width: 100%; border: 1px solid var(--separator); border-radius: var(--radius-sm);
+      padding: 8px 11px; font: inherit; background: var(--surface); color: var(--text);
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 113, 227, .15);
+    }
+    textarea { min-height: 130px; font-family: var(--mono); font-size: 13px; }
+    button {
+      height: 32px; border: 0; border-radius: 980px; padding: 0 14px; font-size: 13px; font-weight: 500;
+      color: #fff; background: var(--accent); cursor: pointer; transition: background .15s ease, opacity .15s ease;
+    }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    button.secondary { color: var(--text); background: rgba(0, 0, 0, .06); }
+    button.secondary:hover { background: rgba(0, 0, 0, .1); }
+    button.ghost { height: 28px; padding: 0 10px; font-size: 12px; color: var(--accent); background: transparent; }
+    button.ghost:hover { background: rgba(0, 113, 227, .08); }
+    button.danger { background: var(--destructive); }
+    button.btn-destructive {
+      height: auto; padding: 6px 12px; color: var(--destructive); background: transparent; border-radius: var(--radius-sm);
+    }
+    button.btn-destructive:hover { background: rgba(255, 59, 48, .08); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; align-items: start; }
+    .stack { display: grid; gap: 16px; }
+    .panel {
+      background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius);
+      padding: 18px 20px; box-shadow: var(--shadow);
+    }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar input { min-width: 200px; flex: 1; }
+    .toolbar select { width: 86px; flex: 0 0 auto; }
+    .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; }
+    .page-size { width: 86px; }
+    .form-row { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; align-items: end; }
+    .form-row.compact { grid-template-columns: repeat(5, minmax(130px, 1fr)); }
+    .table { display: grid; gap: 6px; overflow-x: auto; }
+    .table-row { display: grid; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }
+    .table-row > * { min-width: 0; }
+    .table-row.users { grid-template-columns: minmax(180px, 0.75fr) minmax(140px, 0.55fr) 70px 72px 90px 120px minmax(180px, 1fr) minmax(260px, 1fr); min-width: 1092px; }
+    .table-row.bindings { grid-template-columns: minmax(200px, 1fr) 150px 170px 90px 70px 100px; min-width: 760px; }
+    .table-head { color: var(--text-secondary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+    .login { max-width: 400px; margin: 72px auto 0; }
+    .list { display: grid; gap: 8px; }
+    .item { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--separator); }
+    .item.selectable { padding: 12px 14px; border: 1px solid var(--separator); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+    .item.selectable:hover { border-color: rgba(0, 113, 227, .35); }
+    .item.selected { border-color: var(--accent); background: rgba(0, 113, 227, .04); }
+    .item.muted { opacity: .55; pointer-events: none; }
+    .meta { color: var(--text-secondary); font-size: 12px; margin-top: 3px; }
+    .meta-line { color: var(--text-secondary); font-size: 13px; margin-bottom: 4px; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+    .badge {
+      display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
+      font-size: 11px; font-weight: 500; color: var(--accent); background: rgba(0, 113, 227, .1);
+    }
+    .badge.warn { color: #bf4800; background: rgba(191, 72, 0, .1); }
+    .callout.warn {
+      background: rgba(191, 72, 0, .08); border: 1px solid rgba(191, 72, 0, .22);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px; color: #bf4800;
+    }
+    .badge.off { color: var(--text-secondary); background: rgba(0, 0, 0, .06); }
+    .badge.badge-click { cursor: pointer; }
+    .badge.badge-click:hover { filter: brightness(.96); }
+    .cell-clip { min-width: 0; overflow: hidden; cursor: pointer; border-radius: 6px; padding: 2px 0; }
+    .cell-clip strong {
+      display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--mono); font-size: 13px; font-weight: 600;
+    }
+    .cell-clip:hover strong { color: var(--accent); }
+    .cell-clip.cell-secret {
+      padding: 8px 10px; border: 1px dashed var(--separator); border-radius: var(--radius-sm); background: rgba(0, 0, 0, .02);
+    }
+    .cell-clip.cell-secret:hover { border-color: var(--accent); background: rgba(0, 113, 227, .04); }
+    .device-cards { display: grid; gap: 12px; }
+    .device-card {
+      background: var(--surface); border: 1px solid var(--separator); border-radius: var(--radius);
+      padding: 16px 18px; box-shadow: var(--shadow);
+    }
+    .device-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+    .device-card-id { flex: 1; min-width: 0; }
+    .device-card-body { display: grid; gap: 14px; }
+    .device-card-section { display: grid; gap: 6px; }
+    .field-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .05em; }
+    .readonly-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .claim-code {
+      font-family: var(--mono); font-size: 13px; padding: 6px 10px; border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, .04); color: var(--text);
+    }
+    .device-card-mbti { display: flex; gap: 8px; align-items: center; }
+    .device-card-mbti select { flex: 1; }
+    .device-card-note textarea { min-height: 56px; resize: vertical; font-family: var(--font); font-size: 14px; }
+    .device-card-footer { display: flex; justify-content: flex-end; align-items: center; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--separator); }
+    .llm-form { display: grid; gap: 12px; }
+    .llm-form label { display: grid; gap: 4px; }
+    .llm-form input { width: 100%; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .35); align-items: center; justify-content: center; padding: 24px; }
+    .modal-backdrop.open { display: flex; animation: modalFade .18s ease; }
+    .modal-panel {
+      width: min(520px, 100%); max-height: min(80vh, 640px); overflow: auto; background: var(--surface);
+      border: 1px solid var(--separator); border-radius: var(--radius); padding: 20px 22px; box-shadow: 0 24px 64px rgba(0, 0, 0, .18);
+    }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .modal-header h3 { margin: 0; font-size: 17px; font-weight: 600; }
+    .modal-body-text {
+      font-family: var(--mono); font-size: 13px; word-break: break-all; white-space: pre-wrap;
+      background: rgba(0, 0, 0, .03); border: 1px solid var(--separator); border-radius: var(--radius-sm); padding: 12px;
+    }
+    .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .modal-close { height: 32px; }
+    @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
+    .tabs {
+      display: inline-flex; gap: 2px; margin-bottom: 20px; padding: 3px;
+      background: rgba(0, 0, 0, .06); border-radius: 980px;
+    }
+    .tabs button {
+      height: 32px; padding: 0 16px; color: var(--text-secondary); background: transparent; border-radius: 980px;
+    }
+    .tabs button:hover { color: var(--text); background: rgba(255, 255, 255, .5); }
+    .tabs button.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
+    .bind-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px) minmax(0, 1fr); gap: 14px; align-items: start; }
+    .bind-action { display: grid; gap: 10px; }
+    .bind-summary { min-height: 120px; padding: 12px; border: 1px dashed var(--separator); border-radius: var(--radius-sm); background: rgba(0, 0, 0, .02); }
+    .hint { color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+    pre { white-space: pre-wrap; margin: 0; font-size: 13px; }
+    .header-link { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 500; }
+    .header-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <header><h1>ChuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" class="header-link">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
+  <main>
+    <section id="login" class="panel login">
+      <h2>管理员登录</h2>
+      <div class="toolbar"><input id="adminToken" type="password" placeholder="SHUXIN_ADMIN_TOKEN" /><button onclick="login()">登录</button></div>
+      <pre id="loginMsg"></pre>
+    </section>
+    <section id="admin" style="display:none">
+      <div class="tabs">
+        <button id="tabDevices" class="active" onclick="showTab('devices')">设备</button>
+        <button id="tabUsers" onclick="showTab('users')">用户</button>
+        <button id="tabAgents" onclick="showTab('agents')">Agent</button>
+        <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
+        <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
+        <button id="tabBilling" onclick="showTab('billing')">消费账单</button>
+      </div>
+      <div id="devices" class="stack">
+        <div class="panel">
+          <h2>批量制码</h2>
+          <div id="batchEncryptionBanner" class="callout warn" style="display:none">
+            未配置设备密钥加密（<code>SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY</code>）。批量制码将无法入库可查看密钥。
+            请在 <code>.env</code> 生成 Fernet 密钥后重部署 Docker，再重新制码。
+          </div>
+          <div class="form-row">
+            <label><span class="hint">设备前缀</span><input id="batchDevicePrefix" value="SX" onchange="refreshBatchStart()" /></label>
+            <label><span class="hint">起始编号</span><input id="batchStart" type="number" value="1" min="1" /></label>
+            <label><span class="hint">外壳码前缀</span><input id="batchLabelPrefix" value="CLM" /></label>
+            <label><span class="hint">批次</span><input id="batchLabelBatch" value="A001" /></label>
+            <label><span class="hint">数量</span><input id="batchQuantity" type="number" value="3" min="1" max="500" /></label>
+            <button onclick="provisionBatch()">生成并入库</button>
+          </div>
+          <div class="toolbar" style="margin-top:12px"><button class="secondary" onclick="downloadBatchCsv()">下载本批 CSV</button><span id="batchNextHint" class="hint">批量结果会显示明文；入库后也可在设备列表「查看」密钥（需配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY）。</span></div>
+          <div id="batchResult" class="table"></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>设备状态与配置</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <button class="secondary" onclick="applyTencentSttDefaults()">全部应用腾讯 STT</button>
+              <button class="secondary" onclick="applyVolcTtsDefaults()">全部应用火山 TTS</button>
+              <input id="devicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
+              <select id="devicesLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
+              <button class="secondary" onclick="resetList('devices')">查找</button>
+            </div>
+          </div>
+          <p class="hint" style="margin:0 0 12px">外壳码印在设备外壳上，仅展示不可修改。解绑后认领码自动恢复可扫码。</p>
+          <div id="deviceList" class="device-cards"></div>
+          <div id="devicesPager" class="pager"></div>
+        </div>
+      </div>
+      <div id="users" class="stack" style="display:none">
+        <div class="panel">
+          <h2>新增用户与模型配置</h2>
+          <div class="form-row compact">
+            <label><span class="hint">用户 ID</span><input id="newUserId" value="demo-user" /></label>
+            <label><span class="hint">模型</span><input id="newModel" placeholder="deepseek-chat" /></label>
+            <label><span class="hint">Base URL</span><input id="newBaseUrl" placeholder="https://www.dmxapi.cn" /></label>
+            <label><span class="hint">API Key</span><input id="newApiKey" type="password" placeholder="只保存，不回显" /></label>
+          </div>
+          <div class="toolbar" style="margin-top:12px"><button onclick="createUser()">保存用户</button></div>
+        </div>
+        <div class="panel">
+          
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>用户与额度</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <input id="usersSearch" placeholder="查找用户 / 模型 / Base URL" />
+              <select id="usersLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
+              <button class="secondary" onclick="resetList('users')">查找</button>
+            </div>
+          </div>
+          <div id="userList" class="table"></div>
+          <div id="usersPager" class="pager"></div>
+        </div>
+      </div>
+      <div id="agents" class="stack" style="display:none">
+        <div class="panel">
+          <h2>新建 Agent</h2>
+          <div class="form-row compact">
+            <label><span class="hint">Agent ID</span><input id="newAgentId" placeholder="guardian" /></label>
+            <label><span class="hint">显示名</span><input id="newAgentName" placeholder="守护灵" /></label>
+            <label><span class="hint">voice_type</span><input id="newAgentVoice" placeholder="火山复刻 ID" /></label>
+            <label><span class="hint">cluster</span><input id="newAgentCluster" value="volcano_icl" /></label>
+            <label><span class="hint">soul_path</span><input id="newAgentSoul" placeholder="data/agents/shuxin/SOUL.md" /></label>
+          </div>
+          <div class="toolbar" style="margin-top:12px"><button onclick="createAgent()">保存 Agent</button></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>Agent 音色与人格</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <input id="agentsSearch" placeholder="查找 Agent" />
+              <select id="agentsLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
+              <button class="secondary" onclick="resetList('agents')">查找</button>
+            </div>
+          </div>
+          <div id="agentList" class="table"></div>
+          <div id="agentsPager" class="pager"></div>
+        </div>
+      </div>
+      <!-- paymentPlans tab removed -->
+      <div id="bindings" class="grid" style="display:none">
+        <div class="panel" style="grid-column:1 / -1">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>点击式用户设备绑定</h2>
+            <button class="secondary" onclick="loadAll()">刷新列表</button>
+          </div>
+          <div class="bind-board">
+            <section>
+              <h2>选择用户</h2>
+              <div class="toolbar" style="margin-bottom:8px">
+                <input id="bindUsersSearch" placeholder="查找用户 / 模型" />
+                <select id="bindUsersLimit" class="page-size"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
+                <button class="secondary" onclick="resetList('bindUsers')">查找</button>
+              </div>
+              <div id="bindUserList" class="list"></div>
+              <div id="bindUsersPager" class="pager"></div>
+            </section>
+            <section class="bind-action">
+              <h2>绑定操作</h2>
+              <div id="bindSummary" class="bind-summary hint">先选择一个用户，再选择一台未绑定设备。</div>
+              <button id="bindSelectedBtn" onclick="bindSelected()" disabled>绑定所选</button>
+              <div class="hint">用户 token 仅用于旧 demo 兼容；小程序和真实硬件使用微信 openid 与设备绑定关系。</div>
+            </section>
+            <section>
+              <h2>选择设备</h2>
+              <div class="toolbar" style="margin-bottom:8px">
+                <input id="bindDevicesSearch" placeholder="查找设备 / 外壳码 / 备注" />
+                <select id="bindDevicesLimit" class="page-size"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
+                <button class="secondary" onclick="resetList('bindDevices')">查找</button>
+              </div>
+              <div id="bindDeviceList" class="list"></div>
+              <div id="bindDevicesPager" class="pager"></div>
+            </section>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>当前绑定</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <input id="bindingsSearch" placeholder="查找用户 / 设备 / 绑定 ID" />
+              <select id="bindingsLimit" class="page-size"><option value="20">20</option><option value="50">50</option></select>
+              <button class="secondary" onclick="resetList('bindings')">查找</button>
+            </div>
+          </div>
+          <div id="bindingList" class="table"></div>
+          <div id="bindingsPager" class="pager"></div>
+        </div>
+        <div class="panel"><h2>说明</h2><div class="hint">后台只给管理端使用。删除用户或设备是软删除；解绑只解除设备访问权，不删除用户记忆。</div><pre id="bindingMsg"></pre></div>
+      </div>
+      <div id="adapters" class="grid" style="display:none">
+        <div class="panel"><h2>可用适配器</h2><div id="adapterList" class="list"></div></div>
+        <div class="panel"><h2>调用适配器</h2><textarea id="adapterPayload"></textarea><div class="toolbar"><button onclick="callAdapter()">调用</button></div><pre id="adapterResult"></pre></div>
+      </div>
+      <div id="billing" class="grid" style="display:none">
+        <div class="panel stack" style="grid-column: 1 / -1;">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>消费总览</h2>
+            <div class="toolbar" style="margin-bottom:0">
+              <select id="billingMonth" onchange="loadBillingSummary(); resetBillingList();" style="width:120px;">
+              </select>
+              <button class="secondary danger" onclick="clearMonthlyBilling()">清空当月数据</button>
+            </div>
+          </div>
+          
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:16px;">
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">本月总支出</div>
+              <div id="billingTotalCost" style="font-size:28px; font-weight:700; margin:8px 0; color:var(--text); font-family:var(--mono);">¥0.0000</div>
+              <div style="display:flex; height:6px; border-radius:3px; overflow:hidden; background:rgba(0,0,0,0.06);">
+                <div id="barLLM" style="width:0%; background:#ff3b30; transition:width 0.3s ease;"></div>
+                <div id="barSTT" style="width:0%; background:#0071e3; transition:width 0.3s ease;"></div>
+                <div id="barTTS" style="width:0%; background:#34c759; transition:width 0.3s ease;"></div>
+              </div>
+            </div>
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">对话交互统计</div>
+              <div id="billingAvgCost" style="font-size:22px; font-weight:700; margin:8px 0; color:var(--text); font-family:var(--mono);">¥0.0000 / 轮</div>
+              <div id="billingTotalTurns" class="hint">共计 0 轮</div>
+            </div>
+            <div class="panel" style="padding:16px; border-radius:var(--radius); background:var(--bg); box-shadow:none; border:none; display:flex; flex-direction:column; justify-content:space-between; min-height:110px;">
+              <div class="field-label">消费分布占比</div>
+              <div style="font-size:13px; line-height:1.4; display:grid; gap:2px; margin-top:4px;">
+                <div><span class="badge" style="background:rgba(255,59,48,0.1); color:#ff3b30; height:18px; padding:0 6px; font-size:10px;">LLM</span> <span id="textLLM" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+                <div><span class="badge" style="background:rgba(0,113,227,0.1); color:#0071e3; height:18px; padding:0 6px; font-size:10px;">STT</span> <span id="textSTT" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+                <div><span class="badge" style="background:rgba(52,199,89,0.1); color:#34c759; height:18px; padding:0 6px; font-size:10px;">TTS</span> <span id="textTTS" style="font-family:var(--mono); font-weight:600;">¥0.0000 (0%)</span></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="tabs" style="margin-top:12px; margin-bottom:12px; align-self:flex-start;">
+            <button id="subtabRecords" class="active" onclick="switchSubtab('records')">消费明细流水</button>
+            <button id="subtabPricing" onclick="switchSubtab('pricing')">服务价格配置</button>
+          </div>
+          
+          <div id="billingSubtab-records" class="stack">
+            <div class="toolbar">
+              <input id="billingUserFilter" placeholder="过滤用户 ID" oninput="resetBillingList()" />
+              <button class="secondary" onclick="resetBillingList()">查询</button>
+            </div>
+            <div id="billingRecordsList" class="table">
+            </div>
+            <div id="billingPager" class="pager">
+              <button class="secondary" id="btnPrevBilling" onclick="prevBillingPage()" style="display:none">上一页</button>
+              <button class="secondary" id="btnNextBilling" onclick="nextBillingPage()" style="display:none">下一页</button>
+            </div>
+          </div>
+          
+          <div id="billingSubtab-pricing" class="stack" style="display:none">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+              <div class="panel">
+                <h2>语音识别 (STT) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / 秒</div>
+                <div class="stack" id="pricingSTTContainer"></div>
+              </div>
+              <div class="panel">
+                <h2>语音合成 (TTS) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / 字</div>
+                <div class="stack" id="pricingTTSContainer"></div>
+              </div>
+              <div class="panel">
+                <h2>语言模型 (LLM) 单价</h2>
+                <div class="hint" style="margin-bottom:10px;">最小计费单位：元 / Token</div>
+                <div class="stack" id="pricingLLMContainer"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div id="adminModal" class="modal-backdrop" onclick="if(event.target===this)closeAdminModal()">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle">
+      <div class="modal-header">
+        <h3 id="adminModalTitle">详情</h3>
+        <button type="button" class="secondary modal-close" onclick="closeAdminModal()">关闭</button>
+      </div>
+      <div id="adminModalBody"></div>
+      <div id="adminModalActions" class="modal-actions"></div>
+      <div id="adminModalMsg" class="hint" style="margin-top:8px"></div>
+    </div>
+  </div>
+  <script>
+    let authenticated = {{AUTHENTICATED}};
+    const voiceTestMode = false;
+    const platformLlmDefaults = {"provider": "openai-compatible", "model": "deepseek-chat", "base_url": "https://www.dmxapi.cn"};
+    let users = [];
+    let agents = [];
+    let devices = [];
+    let deviceSecretEncryptionConfigured = true;
+    let mbtiTypes = [];
+    let bindUsersPage = [];
+    let bindDevicesPage = [];
+    let bindings = [];
+    let lastBatch = [];
+    let selectedUserId = '';
+    let selectedDeviceId = '';
+    let adminModalCopyPayload = '';
+    const listState = {
+      devices: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      users: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      agents: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      bindings: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      bindUsers: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      bindDevices: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+      billing: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
+    };
+    const TAB_PANELS = ['devices', 'users', 'agents', 'bindings', 'adapters', 'billing'];
+    const TAB_BUTTONS = ['tabDevices', 'tabUsers', 'tabAgents', 'tabBindings', 'tabAdapters', 'tabBilling'];
+    const TAB_BUTTON_BY_PANEL = {
+      devices: 'tabDevices', users: 'tabUsers', agents: 'tabAgents',
+      bindings: 'tabBindings', adapters: 'tabAdapters', billing: 'tabBilling',
+    };
+    const headers = () => ({'Content-Type': 'application/json'});
+    function $(id) { return document.getElementById(id); }
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function formatDateTimeCN(iso) {
+      if (!iso || iso === '-') return '—';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      });
+    }
+    function jsQuote(value) {
+      return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+    }
+    function truncateId(text, head = 10, tail = 6) {
+      const s = String(text ?? '');
+      if (s.length <= head + tail + 3) return s;
+      return s.slice(0, head) + '…' + s.slice(-tail);
+    }
+    function closeAdminModal() {
+      const el = $('adminModal');
+      if (!el) return;
+      el.classList.remove('open');
+      $('adminModalBody').innerHTML = '';
+      $('adminModalActions').innerHTML = '';
+      $('adminModalMsg').textContent = '';
+      adminModalCopyPayload = '';
+    }
+    async function copyAdminText(text) {
+      const msg = $('adminModalMsg');
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        if (msg) msg.textContent = '已复制到剪贴板';
+      } catch (err) {
+        if (msg) msg.textContent = '复制失败，请手动选择复制';
+      }
+    }
+    function openAdminModal({ title, bodyHtml, copyText, actionsHtml, autoCopy }) {
+      $('adminModalTitle').textContent = title || '详情';
+      $('adminModalBody').innerHTML = bodyHtml || '';
+      const actionsEl = $('adminModalActions');
+      actionsEl.innerHTML = actionsHtml || '';
+      adminModalCopyPayload = copyText || '';
+      if (copyText) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = autoCopy ? '再次复制' : '复制';
+        btn.addEventListener('click', () => copyAdminText(copyText));
+        actionsEl.appendChild(btn);
+      }
+      $('adminModalMsg').textContent = '';
+      $('adminModal').classList.add('open');
+      if (autoCopy && copyText) copyAdminText(copyText);
+    }
+    function openCopyableDetail(title, fullText, autoCopy = true) {
+      openAdminModal({
+        title: title || '详情',
+        bodyHtml: `<pre class="modal-body-text">${esc(fullText)}</pre>`,
+        copyText: fullText,
+        autoCopy: autoCopy !== false,
+      });
+    }
+    function openIdDetail(label, fullId) {
+      openCopyableDetail(label || 'ID', fullId, true);
+    }
+    function llmApiKeyConfigured(llm) {
+      const key = llm && llm.api_key;
+      return key === '***' || Boolean(key && String(key).trim());
+    }
+    function renderUserLlmStatus(u) {
+      const llm = u.llm_config || {};
+      const model = llm.model || '未配置';
+      const base = llm.base_url || '默认';
+      const keyOk = llmApiKeyConfigured(llm);
+      const keyBadge = keyOk
+        ? '<span class="badge">key=已配置</span>'
+        : '<span class="badge warn">key=未配置</span>';
+      const wxWarn = (String(u.user_id || '').startsWith('wx_') && !keyOk)
+        ? '<span class="badge warn">微信用户需配 LLM</span>' : '';
+      return `<div class="meta-line">${esc(model)} · base=${esc(base)}</div><div class="badge-row">${keyBadge}${wxWarn}</div>`;
+    }
+    function openUserLlmModal(userId) {
+      const u = users.find(item => item.user_id === userId);
+      if (!u) return;
+      const llm = u.llm_config || {};
+      const modelVal = llm.model || platformLlmDefaults.model || '';
+      const baseVal = llm.base_url || platformLlmDefaults.base_url || '';
+      const keyHint = llmApiKeyConfigured(llm) ? '已配置，留空则不修改' : '未配置，请填写';
+      const q = jsQuote(userId);
+      openAdminModal({
+        title: `配置 LLM · ${userId}`,
+        bodyHtml: `<div class="llm-form">
+          <label><span class="hint">模型</span><input id="llmModalModel" value="${esc(modelVal)}" placeholder="${esc(platformLlmDefaults.model || '')}" /></label>
+          <label><span class="hint">Base URL</span><input id="llmModalBaseUrl" type="url" value="${esc(baseVal)}" placeholder="${esc(platformLlmDefaults.base_url || '')}" /></label>
+          <label><span class="hint">API Key</span><input id="llmModalApiKey" type="password" placeholder="${esc(keyHint)}" autocomplete="off" /></label>
+        </div>`,
+        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="saveUserLlmModal('${q}')">保存</button>`,
+      });
+    }
+    async function saveUserLlmModal(userId) {
+      const u = users.find(item => item.user_id === userId);
+      if (!u) return;
+      const llm = {
+        model: ($('llmModalModel') && $('llmModalModel').value) || '',
+        base_url: ($('llmModalBaseUrl') && $('llmModalBaseUrl').value) || '',
+        api_key: ($('llmModalApiKey') && $('llmModalApiKey').value) || '',
+      };
+      const payload = {
+        user_id: userId,
+        token_quota_total: Number(u.token_quota_total || 0),
+        token_quota_used: Number(u.token_quota_used || 0),
+        audio_quota_mb: Number(u.audio_quota_mb || 512),
+        enabled: u.enabled !== false,
+        llm_config: llm,
+      };
+      const res = await fetch('/admin/api/users', {method:'POST', headers:headers(), body:JSON.stringify(payload), credentials:'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        $('adminModalMsg').textContent = data.error || '保存失败';
+        return;
+      }
+      closeAdminModal();
+      await loadUsers();
+    }
+    function renderClipCell(fullText, metaHtml, label, stopPropagation) {
+      const lid = label || 'ID';
+      const q = jsQuote(fullText);
+      const lq = jsQuote(lid);
+      const stop = stopPropagation ? 'event.stopPropagation();' : '';
+      const meta = metaHtml ? `<div class="meta">${metaHtml}</div>` : '';
+      return `<div class="cell-clip" role="button" tabindex="0" title="${esc(fullText)}"
+        onclick="${stop}openIdDetail('${lq}', '${q}')"
+        onkeydown="if(event.key==='Enter'){ event.preventDefault(); ${stop}openIdDetail('${lq}', '${q}'); }">
+        <strong>${esc(truncateId(fullText))}</strong>${meta}
+      </div>`;
+    }
+    function renderEncryptionBanner() {
+      const banner = $('batchEncryptionBanner');
+      if (banner) banner.style.display = deviceSecretEncryptionConfigured ? 'none' : 'block';
+    }
+    function renderSecretCell(d) {
+      const id = d.device_id;
+      const q = jsQuote(id);
+      const masked = d.device_secret_masked || '';
+      const display = masked || (d.device_secret_retrievable ? '已配置' : '未入库');
+      const hintMeta = d.device_secret_retrievable
+        ? '点击查看并复制'
+        : (deviceSecretEncryptionConfigured ? '需重新制码后查看' : '需先配置加密密钥并重新制码');
+      return `<div class="cell-clip cell-secret" role="button" tabindex="0" title="${esc(id)} 密钥"
+        onclick="revealDeviceSecret('${q}')"
+        onkeydown="if(event.key==='Enter'){ event.preventDefault(); revealDeviceSecret('${q}'); }">
+        <strong>${esc(truncateId(display))}</strong>
+        <div class="meta">${esc(hintMeta)}</div>
+      </div>`;
+    }
+    async function copyClaimCode(text) {
+      const value = String(text || '').trim();
+      if (!value) { alert('无外壳码'); return; }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(value);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = value;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        alert('外壳码已复制');
+      } catch (err) {
+        alert('复制失败，请手动选择复制');
+      }
+    }
+    function boot() {
+      $('login').style.display = authenticated ? 'none' : 'block';
+      $('admin').style.display = authenticated ? 'block' : 'none';
+      $('adapterPayload').value = JSON.stringify({adapter_name:'skills', action:'list', params:{}}, null, 2);
+      if (authenticated) { refreshBatchStart(); loadAll(); }
+    }
+    async function login() {
+      const res = await fetch('/admin/api/login', {method:'POST', headers:headers(), body:JSON.stringify({token:$('adminToken').value})});
+      const data = await res.json();
+      if (!res.ok) { $('loginMsg').textContent = data.error || 'login failed'; return; }
+      authenticated = true; boot();
+    }
+    function showTab(name) {
+      for (const id of TAB_PANELS) {
+        const el = $(id);
+        if (el) el.style.display = id === name ? 'grid' : 'none';
+      }
+      for (const id of TAB_BUTTONS) {
+        const btn = $(id);
+        if (btn) btn.classList.remove('active');
+      }
+      const activeBtn = $(TAB_BUTTON_BY_PANEL[name]);
+      if (activeBtn) activeBtn.classList.add('active');
+      if (name === 'bindings' && authenticated) {
+        loadBindUsers();
+        loadBindDevices();
+      }
+      if (name === 'billing' && authenticated) loadBillingCenter();
+    }
+    function listUrl(name, path) {
+      const state = listState[name];
+      const params = new URLSearchParams({limit:String(state.limit), cursor:state.cursor, q:state.q});
+      return `${path}?${params.toString()}`;
+    }
+    function syncListControls(name) {
+      const state = listState[name];
+      const search = $(name + 'Search');
+      const limit = $(name + 'Limit');
+      if (search) state.q = search.value.trim();
+      if (limit) state.limit = Number(limit.value || 20);
+    }
+    function resetList(name) {
+      syncListControls(name);
+      listState[name].cursor = '';
+      listState[name].nextCursor = '';
+      listState[name].stack = [];
+      return loadList(name);
+    }
+    function nextList(name) {
+      const state = listState[name];
+      if (!state.nextCursor) return;
+      state.stack.push(state.cursor);
+      state.cursor = state.nextCursor;
+      return loadList(name);
+    }
+    function prevList(name) {
+      const state = listState[name];
+      state.cursor = state.stack.pop() || '';
+      return loadList(name);
+    }
+    function loadList(name) {
+      if (name === 'devices') return loadDevices();
+      if (name === 'users') return loadUsers();
+      if (name === 'agents') return loadAgents();
+      if (name === 'bindUsers') return loadBindUsers();
+      if (name === 'bindDevices') return loadBindDevices();
+      return loadBindings();
+    }
+    function renderPager(name, count) {
+      const state = listState[name];
+      const pager = $(name + 'Pager');
+      if (!pager) return;
+      pager.innerHTML = `
+        <span class="hint">本页 ${count} 条 · 每页 ${state.limit} · ${state.q ? `搜索: ${esc(state.q)}` : '未筛选'}</span>
+        <button class="secondary" onclick="prevList('${name}')" ${state.stack.length ? '' : 'disabled'}>上一页</button>
+        <button class="secondary" onclick="nextList('${name}')" ${state.nextCursor ? '' : 'disabled'}>下一页</button>`;
+    }
+    async function loadAll() {
+      await Promise.all([
+        loadMbtiTypes(), loadDevices(), loadUsers(), loadAgents(), loadPaymentPlans(), loadBindings(), loadAdapters(),
+        loadBindUsers(), loadBindDevices(),
+      ]);
+    }
+    async function loadMbtiTypes() {
+      const res = await fetch('/admin/api/mbti/types', {headers: headers(), credentials: 'same-origin'});
+      const data = await res.json();
+      if (res.ok) mbtiTypes = data.items || [];
+    }
+    function mbtiOptionsHtml(selected) {
+      const items = mbtiTypes.length
+        ? mbtiTypes
+        : (selected ? [{type: selected, tagline: ''}] : []);
+      let html = '<option value="">—</option>';
+      for (const item of items) {
+        const sel = item.type === selected ? ' selected' : '';
+        html += `<option value="${esc(item.type)}"${sel}>${esc(item.type)}</option>`;
+      }
+      return html;
+    }
+    function agentOptionsHtml(selected) {
+      const opts = agents.map(a => `<option value="${esc(a.agent_id)}" ${a.agent_id === selected ? 'selected' : ''}>${esc(a.display_name || a.agent_id)} (${esc(a.agent_id)})</option>`).join('');
+      return `<option value="">— 默认 shuxin —</option>` + opts;
+    }
+    async function applyVolcTtsDefaults() {
+      if (!confirm('将所有未删除设备的 TTS 设为火山复刻 (volcengine-clone)？')) return;
+      const res = await fetch('/admin/api/devices/apply-tts-defaults', {method:'POST', headers:headers(), credentials:'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        openAdminModal({title: '应用 TTS 失败', bodyHtml: `<p class="hint">${esc(data.error || '操作失败')}</p>`});
+        return;
+      }
+      openAdminModal({
+        title: '已应用火山 TTS',
+        bodyHtml: `<p class="hint">已更新 ${data.updated_count ?? 0} 台设备为 volcengine-clone。</p>`,
+      });
+      await loadDevices();
+    }
+    async function loadAgents() {
+      const data = await (await fetch(listUrl('agents', '/admin/api/agents'))).json();
+      agents = data.items || [];
+      listState.agents.nextCursor = data.next_cursor || '';
+      $('agentList').innerHTML = `<div class="table-row table-head"><div>Agent</div><div>voice_type</div><div>cluster</div><div>soul_path</div><div>操作</div></div>` + agents.map(a => {
+        const q = jsQuote(a.agent_id);
+        return `<div class="table-row">
+          <div><strong>${esc(a.display_name || a.agent_id)}</strong><div class="meta">${esc(a.agent_id)}</div></div>
+          <input id="voice_${esc(a.agent_id)}" value="${esc(a.voice_type || '')}" placeholder="复刻 ID" />
+          <input id="cluster_${esc(a.agent_id)}" value="${esc(a.cluster || 'volcano_icl')}" />
+          <input id="soul_${esc(a.agent_id)}" value="${esc(a.soul_path || '')}" />
+          <div class="toolbar">
+            <button class="secondary" onclick="saveAgentRow('${q}')">保存</button>
+            <button class="secondary" onclick="previewAgent('${q}')">试听</button>
+            <button class="danger" onclick="deleteAgent('${q}')" ${a.agent_id === 'shuxin' ? 'disabled' : ''}>删除</button>
+          </div>
+        </div>`;
+      }).join('');
+      renderPager('agents', agents.length);
+    }
+    async function loadPaymentPlans() {
+      const settingsRes = await fetch('/admin/api/platform/payment-settings', {headers: headers(), credentials: 'same-origin'});
+      const settings = await settingsRes.json();
+      if (settingsRes.ok && settings.credit_ratio != null) {
+        $('creditRatio').value = settings.credit_ratio;
+      }
+      const res = await fetch('/admin/api/payment/plans', {headers: headers(), credentials: 'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        $('paymentPlanList').innerHTML = `<p class="hint">${esc(data.error || '加载失败')}</p>`;
+        return;
+      }
+      const plans = data.items || [];
+      $('paymentPlanList').innerHTML = `<div class="table-row table-head"><div>档位</div><div>支付价(元)</div><div>排序</div><div>启用</div><div>操作</div></div>` + plans.map(p => {
+        const q = jsQuote(p.plan_id || p.id);
+        const pid = esc(p.plan_id || p.id);
+        const yuan = (Number(p.amount_fen || 0) / 100).toFixed(2);
+        return `<div class="table-row">
+          <div><strong>${esc(p.name)}</strong><div class="meta">${pid} · ${esc(p.description || '')}</div></div>
+          <input id="planAmount_${pid}" type="number" min="1" value="${esc(String(p.amount_fen || 0))}" />
+          <input id="planSort_${pid}" type="number" value="${esc(String(p.sort_order ?? 0))}" />
+          <select id="planEnabled_${pid}"><option value="true" ${p.enabled !== false ? 'selected' : ''}>启用</option><option value="false" ${p.enabled === false ? 'selected' : ''}>停用</option></select>
+          <div class="toolbar">
+            <input id="planName_${pid}" value="${esc(p.name)}" placeholder="名称" style="min-width:80px" />
+            <button class="secondary" onclick="savePaymentPlanRow('${q}')">保存</button>
+            <button class="danger" onclick="disablePaymentPlan('${q}')" ${p.enabled === false ? 'disabled' : ''}>停用</button>
+          </div>
+        </div>`;
+      }).join('') || '<div class="hint">暂无套餐</div>';
+    }
+    async function saveCreditRatio() {
+      const ratio = Number($('creditRatio').value || 0);
+      const res = await fetch('/admin/api/platform/payment-settings', {
+        method: 'PATCH',
+        headers: headers(),
+        credentials: 'same-origin',
+        body: JSON.stringify({credit_ratio: ratio}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) { alert(data.error || '保存失败'); return; }
+      $('creditRatio').value = data.credit_ratio;
+      alert('到账比例已保存：' + data.credit_ratio);
+    }
+    async function createPaymentPlan() {
+      const payload = {
+        plan_id: $('newPlanId').value.trim(),
+        name: $('newPlanName').value.trim(),
+        amount_fen: Number($('newPlanAmountFen').value || 0),
+        sort_order: Number($('newPlanSort').value || 0),
+        description: $('newPlanDesc').value.trim(),
+        enabled: true,
+      };
+      const res = await fetch('/admin/api/payment/plans', {method:'POST', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) { alert(data.error || '创建失败'); return; }
+      $('newPlanId').value = ''; $('newPlanName').value = ''; $('newPlanAmountFen').value = ''; $('newPlanDesc').value = '';
+      await loadPaymentPlans();
+    }
+    async function savePaymentPlanRow(planId) {
+      const payload = {
+        name: $('planName_' + planId).value.trim(),
+        amount_fen: Number($('planAmount_' + planId).value || 0),
+        sort_order: Number($('planSort_' + planId).value || 0),
+        enabled: $('planEnabled_' + planId).value === 'true',
+      };
+      const res = await fetch('/admin/api/payment/plans/' + encodeURIComponent(planId), {
+        method: 'PATCH', headers: headers(), body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '保存失败');
+      else await loadPaymentPlans();
+    }
+    async function disablePaymentPlan(planId) {
+      if (!confirm('停用套餐 ' + planId + '？小程序将不再展示。')) return;
+      const res = await fetch('/admin/api/payment/plans/' + encodeURIComponent(planId), {
+        method: 'DELETE', headers: headers(),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '停用失败');
+      else await loadPaymentPlans();
+    }
+    async function createAgent() {
+      const payload = {
+        agent_id: $('newAgentId').value.trim(),
+        display_name: $('newAgentName').value.trim(),
+        voice_type: $('newAgentVoice').value.trim(),
+        cluster: $('newAgentCluster').value.trim() || 'volcano_icl',
+        soul_path: $('newAgentSoul').value.trim(),
+      };
+      const res = await fetch('/admin/api/agents', {method:'POST', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) { alert(data.error || 'create failed'); return; }
+      $('newAgentId').value = ''; $('newAgentName').value = ''; $('newAgentVoice').value = '';
+      await loadAgents();
+    }
+    async function saveAgentRow(id) {
+      const payload = {
+        voice_type: $('voice_' + id).value.trim(),
+        cluster: $('cluster_' + id).value.trim(),
+        soul_path: $('soul_' + id).value.trim(),
+      };
+      const res = await fetch('/admin/api/agents/' + encodeURIComponent(id), {method:'PATCH', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'update failed');
+      await loadAgents();
+    }
+    async function previewAgent(id) {
+      const text = prompt('试听文本', '你好，我是初心') || '你好，我是初心';
+      const res = await fetch('/admin/api/tts/preview', {method:'POST', headers:headers(), body:JSON.stringify({agent_id:id, text})});
+      const data = await res.json();
+      if (!res.ok || data.error) { alert(data.error || 'preview failed'); return; }
+      if (data.audio_url) {
+        const audio = new Audio(data.audio_url + '?t=' + Date.now());
+        audio.play().catch(() => alert('播放失败，请检查浏览器自动播放策略'));
+      }
+    }
+    async function deleteAgent(id) {
+      if (!confirm('删除 Agent ' + id + '？')) return;
+      await fetch('/admin/api/agents/' + encodeURIComponent(id), {method:'DELETE', headers:headers()});
+      await loadAgents();
+    }
+    async function saveUserAgent(userId, agentId) {
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId), {
+        method:'PATCH', headers:headers(), body:JSON.stringify({agent_id: agentId || 'shuxin'}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'agent update failed');
+    }
+    async function saveUserFactoryRole(userId, enabled) {
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId), {
+        method:'PATCH',
+        headers:headers(),
+        body:JSON.stringify({metadata: {factory_role: enabled ? 'true' : 'false'}}),
+        credentials:'same-origin',
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert(data.error || 'factory_role update failed');
+        await loadUsers();
+        return;
+      }
+      await loadUsers();
+    }
+    function deviceStatusBadges(d) {
+      const badges = [];
+      badges.push(`<span class="badge ${d.status.online ? '' : 'off'}">${d.status.online ? '在线' : '离线'}</span>`);
+      if (d.bound_user_id) {
+        const uid = d.bound_user_id;
+        const q = jsQuote(uid);
+        badges.push(`<span class="badge badge-click" role="button" tabindex="0" title="${esc(uid)}"
+          onclick="event.stopPropagation();openIdDetail('绑定用户', '${q}')"
+          onkeydown="if(event.key==='Enter'){ event.stopPropagation(); event.preventDefault(); openIdDetail('绑定用户', '${q}'); }">已绑定 ${esc(truncateId(uid))}</span>`);
+      } else badges.push(`<span class="badge warn">未绑定</span>`);
+      if (d.claim_status) badges.push(`<span class="badge">认领:${esc(d.claim_status)}</span>`);
+      if (d.lifecycle_status) badges.push(`<span class="badge">${esc(d.lifecycle_status)}</span>`);
+      const mbti = (d.metadata && d.metadata.mbti) ? d.metadata.mbti : '';
+      const mbtiStatus = (d.metadata && d.metadata.mbti_status)
+        ? d.metadata.mbti_status
+        : (mbti ? 'locked' : '');
+      if (mbti) badges.push(`<span class="badge">${esc(mbti)}</span>`);
+      if (mbtiStatus) {
+        const warn = mbtiStatus === 'sealed' ? ' warn' : '';
+        badges.push(`<span class="badge${warn}">mbti:${esc(mbtiStatus)}</span>`);
+      }
+      if (!d.enabled) badges.push(`<span class="badge off">已停用</span>`);
+      return `<div class="badge-row">${badges.join('')}</div>`;
+    }
+    function showSecretRotateHint(id) {
+      const bodyHtml = deviceSecretEncryptionConfigured
+        ? '<p class="hint">该设备制码时未写入可解密密文（多为历史假数据）。请重新批量制码，或通过工程 API <code>POST /admin/api/devices/{id}/rotate-secret</code> 轮换密钥后重烧固件。</p>'
+        : '<p class="hint">未配置 <code>SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY</code>。请先在 <code>.env</code> 生成 Fernet 密钥、重部署 Docker，再重新批量制码；之后可在本页「查看」密钥。</p>';
+      openAdminModal({ title: '设备密钥', bodyHtml });
+    }
+    async function revealDeviceSecret(id) {
+      const d = devices.find(item => item.device_id === id);
+      if (d && !d.device_secret_retrievable) {
+        showSecretRotateHint(id);
+        return;
+      }
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/secret', {headers: headers(), credentials: 'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (d && !d.device_secret_retrievable) showSecretRotateHint(id);
+        else openAdminModal({title: '设备密钥', bodyHtml: `<p class="hint">${esc(data.error || '查看失败')}</p>`});
+        return;
+      }
+      openCopyableDetail(`设备 ${id} 密钥`, data.device_secret || '', true);
+    }
+    async function applyTencentSttDefaults() {
+      if (!confirm('将所有未删除设备的 STT 设为腾讯实时识别 (tencent-realtime)？')) return;
+      const res = await fetch('/admin/api/devices/apply-stt-defaults', {method:'POST', headers:headers(), credentials:'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        openAdminModal({title: '应用 STT 失败', bodyHtml: `<p class="hint">${esc(data.error || '操作失败')}</p>`});
+        return;
+      }
+      openAdminModal({
+        title: '已应用腾讯 STT',
+        bodyHtml: `<p class="hint">已更新 ${data.updated_count ?? 0} 台设备为 tencent-realtime。</p>`,
+      });
+      await loadDevices();
+    }
+    async function loadDevices() {
+      const data = await (await fetch(listUrl('devices', '/admin/api/devices'))).json();
+      devices = data.items || [];
+      deviceSecretEncryptionConfigured = data.device_secret_encryption_configured !== false;
+      renderEncryptionBanner();
+      listState.devices.nextCursor = data.next_cursor || '';
+      $('deviceList').innerHTML = devices.length ? devices.map(d => {
+        const sttType = (d.stt_config && d.stt_config.type) ? d.stt_config.type : 'local';
+        const ttsType = (d.tts_config && d.tts_config.type) ? d.tts_config.type : 'volcengine-clone';
+        const mbti = (d.metadata && d.metadata.mbti) ? d.metadata.mbti : '';
+        const q = jsQuote(d.device_id);
+        const claimCode = d.claim_code || '';
+        const claimQ = jsQuote(claimCode);
+        const unbindBtn = d.active_binding_id
+          ? `<button type="button" class="btn-destructive" onclick="unbindBinding('${esc(d.active_binding_id)}', '${jsQuote(d.bound_user_id || '')}', '${q}')">解绑</button>`
+          : '';
+        return `<article class="device-card">
+        <div class="device-card-head">
+          <div class="device-card-id">${renderClipCell(d.device_id, `auth=${esc(d.auth_mode || '')} · stt=${esc(sttType)} · tts=${esc(ttsType)}`, '设备 ID')}</div>
+          <div>${deviceStatusBadges(d)}</div>
+        </div>
+        <div class="device-card-body">
+          <div class="device-card-section">
+            <span class="field-label">外壳码</span>
+            <div class="readonly-field">
+              <code class="claim-code">${claimCode ? esc(claimCode) : '—'}</code>
+              ${claimCode ? `<button type="button" class="ghost" onclick="copyClaimCode('${claimQ}')">复制</button>` : ''}
+            </div>
+          </div>
+          <div class="device-card-section">
+            <span class="field-label">MBTI</span>
+            <div class="device-card-mbti">
+              <select id="mbti_${esc(d.device_id)}">${mbtiOptionsHtml(mbti)}</select>
+              <button type="button" class="secondary" onclick="saveDeviceMbti('${q}')">保存</button>
+            </div>
+          </div>
+          <div class="device-card-section">
+            <span class="field-label">设备密钥</span>
+            ${renderSecretCell(d)}
+          </div>
+          <div class="device-card-section device-card-note">
+            <span class="field-label">运营备注</span>
+            <textarea id="note_${esc(d.device_id)}" rows="2" placeholder="售后备注、展厅位置等…">${esc(d.note || '')}</textarea>
+            <div class="toolbar" style="margin-bottom:0">
+              <button type="button" class="secondary" onclick="saveDeviceNote('${q}')">保存备注</button>
+              <button type="button" class="ghost" onclick="clearDeviceNote('${q}')">清空</button>
+            </div>
+          </div>
+        </div>
+        ${unbindBtn ? `<div class="device-card-footer">${unbindBtn}</div>` : ''}
+      </article>`;
+      }).join('') : '<div class="hint">暂无设备</div>';
+      renderPager('devices', devices.length);
+    }
+    async function loadUsers() {
+      await loadAgents();
+      const data = await (await fetch(listUrl('users', '/admin/api/users'))).json();
+      users = data.items || [];
+      listState.users.nextCursor = data.next_cursor || '';
+      $('userList').innerHTML = `<div class="table-row users table-head"><div>用户</div><div>Agent</div><div>启用</div><div>工厂QA</div><div>音频MB</div><div>用户余额 / DMX</div><div>LLM 状态</div><div>操作</div></div>` + users.map(u => {
+        const q = jsQuote(u.user_id);
+        const agentSel = `<select id="agent_${esc(u.user_id)}" onchange="saveUserAgent('${q}', this.value)">${agentOptionsHtml(u.agent_id || 'shuxin')}</select>`;
+        const factoryQa = String((u.metadata && u.metadata.factory_role) || '').toLowerCase() === 'true';
+        const qaBadge = factoryQa ? '<span class="badge">QA</span>' : '';
+        return `<div class="table-row users">
+          <div>${renderClipCell(u.user_id, `token=${u.token_configured ? '已配置' : '未配置'}`, '用户 ID')} ${qaBadge}</div>
+          <div>${agentSel}</div>
+          <input id="userEnabled_${esc(u.user_id)}" value="${u.enabled ? 'true' : 'false'}" />
+          <label class="meta"><input type="checkbox" id="factoryQa_${esc(u.user_id)}" ${factoryQa ? 'checked' : ''} onchange="saveUserFactoryRole('${q}', this.checked)" /> QA</label>
+          <input id="audio_${esc(u.user_id)}" type="number" min="1" value="${u.audio_quota_mb || 512}" />
+          <div class="toolbar" style="margin-bottom:0">
+            <span id="dmxBalance_${esc(u.user_id)}" class="meta">—</span>
+            <button type="button" class="ghost" onclick="refreshUserQuota('${q}')">刷新</button>
+            <button type="button" class="secondary" onclick="openUserTopUpModal('${q}')">充值</button>
+          </div>
+          <div>${renderUserLlmStatus(u)}</div>
+          <div class="toolbar">
+            <button class="secondary" onclick="openUserLlmModal('${q}')">配置 LLM</button>
+            <button class="secondary" onclick="saveUserRow('${q}')">保存</button>
+            <button class="danger" onclick="deleteUser('${q}')">删除</button>
+          </div>
+        </div>`;
+      }).join('');
+      renderPager('users', users.length);
+      await Promise.all(users.map(u => refreshUserQuota(u.user_id)));
+    }
+    async function loadBindUsers() {
+      const data = await (await fetch(listUrl('bindUsers', '/admin/api/users'))).json();
+      bindUsersPage = data.items || [];
+      listState.bindUsers.nextCursor = data.next_cursor || '';
+      renderBindingBoard();
+      renderPager('bindUsers', bindUsersPage.length);
+    }
+    async function loadBindDevices() {
+      const data = await (await fetch(listUrl('bindDevices', '/admin/api/devices'))).json();
+      bindDevicesPage = data.items || [];
+      listState.bindDevices.nextCursor = data.next_cursor || '';
+      renderBindingBoard();
+      renderPager('bindDevices', bindDevicesPage.length);
+    }
+    async function loadBindings() {
+      const data = await (await fetch(listUrl('bindings', '/admin/api/bindings'))).json();
+      bindings = data.items || [];
+      listState.bindings.nextCursor = data.next_cursor || '';
+      $('bindingList').innerHTML = bindings.length
+        ? `<div class="table-row bindings table-head"><div>用户</div><div>设备</div><div>绑定时间</div><div>解绑时间</div><div>在线</div><div>操作</div></div>`
+          + bindings.map(b => `<div class="table-row bindings">
+          ${renderClipCell(b.user_id, '', '用户 ID')}
+          ${renderClipCell(b.device_id, '', '设备 ID')}
+          <div class="meta">${esc(formatDateTimeCN(b.bound_at) || '-')}</div>
+          <div class="meta">${esc(formatDateTimeCN(b.unbound_at) || '-')}</div>
+          <div><span class="badge ${b.online ? '' : 'off'}">${b.online ? '在线' : '离线'}</span></div>
+          <div><button type="button" class="btn-destructive" onclick="unbindBinding('${esc(b.binding_id)}', '${jsQuote(b.user_id || '')}', '${jsQuote(b.device_id || '')}')">解绑</button></div>
+        </div>`).join('')
+        : '<div class="hint">暂无 active binding</div>';
+      renderPager('bindings', bindings.length);
+    }
+    async function loadAdapters() {
+      const data = await (await fetch('/admin/api/adapters')).json();
+      $('adapterList').innerHTML = (data.items || []).map(a => `<div class="item"><div><strong>${a.name}</strong><div class="meta">${a.actions.join(', ')}</div></div></div>`).join('');
+    }
+    function selectedBindUser() {
+      return bindUsersPage.find(u => u.user_id === selectedUserId) || null;
+    }
+    function renderBindingBoard() {
+      if (!$('bindUserList') || !$('bindDeviceList')) return;
+      $('bindUserList').innerHTML = bindUsersPage.length ? bindUsersPage.map(u => {
+        const llm = u.llm_config || {};
+        const modelHint = llm.model ? ` · ${esc(llm.model)}` : '';
+        return `
+        <div class="item selectable ${selectedUserId === u.user_id ? 'selected' : ''}" onclick="selectUser('${jsQuote(u.user_id)}')">
+          <div>
+            ${renderClipCell(u.user_id, `音频 ${u.audio_quota_mb}MB${modelHint}`, '用户 ID', true)}
+          </div>
+          <span class="badge">${bindings.filter(b => b.user_id === u.user_id && b.status === 'active').length} 台</span>
+        </div>`;
+      }).join('') : '<div class="hint">暂无用户</div>';
+      $('bindDeviceList').innerHTML = bindDevicesPage.length ? bindDevicesPage.map(d => {
+        const boundTo = d.bound_user_id || '';
+        const disabled = Boolean(boundTo);
+        const statusClass = d.status.online ? 'badge' : 'badge off';
+        return `
+          <div class="item selectable ${selectedDeviceId === d.device_id ? 'selected' : ''} ${disabled ? 'muted' : ''}" onclick="${disabled ? '' : `selectDevice('${jsQuote(d.device_id)}')`}">
+            <div>
+              ${renderClipCell(d.device_id, `${esc(d.note || '')}`, '设备 ID', true)}
+              ${boundTo ? renderClipCell(boundTo, '已绑定', '绑定用户', true) : '<div class="meta">未绑定</div>'}
+            </div>
+            <span class="${statusClass}">${d.status.online ? '在线' : '离线'}</span>
+          </div>`;
+      }).join('') : '<div class="hint">暂无设备</div>';
+      const userLabel = selectedUserId || '未选择用户';
+      const deviceLabel = selectedDeviceId || '未选择设备';
+      const picked = selectedBindUser();
+      const llm = picked && picked.llm_config ? picked.llm_config : {};
+      const llmHint = picked
+        ? ` · LLM: ${esc(llm.model || '未配置')} / ${esc(llm.base_url || '默认')} / key=${llm.api_key ? '已配置' : '未配置'}`
+        : '';
+      $('bindSummary').textContent = `${userLabel} -> ${deviceLabel}${llmHint}`;
+      $('bindSelectedBtn').disabled = !(selectedUserId && selectedDeviceId);
+    }
+    function selectUser(userId) {
+      selectedUserId = userId;
+      renderBindingBoard();
+    }
+    function selectDevice(deviceId) {
+      selectedDeviceId = deviceId;
+      renderBindingBoard();
+    }
+    async function bindSelected() {
+      if (!(selectedUserId && selectedDeviceId)) return;
+      const res = await fetch('/admin/api/bindings', {
+        method:'POST',
+        headers:headers(),
+        body:JSON.stringify({user_id:selectedUserId, device_id:selectedDeviceId})
+      });
+      const data = await res.json();
+      $('bindingMsg').textContent = JSON.stringify(data, null, 2);
+      if (res.ok && !data.error) selectedDeviceId = '';
+      await Promise.all([loadBindings(), loadBindDevices(), loadDevices()]);
+    }
+    function renderBatch(items) {
+      lastBatch = items || [];
+      $('batchResult').innerHTML = lastBatch.length ? `<div class="table-row table-head"><div>设备 ID</div><div>外壳码</div><div>密钥</div><div>条码</div><div>扫码内容</div></div>` + lastBatch.map(item => `<div class="table-row">
+        <div><strong>${esc(item.device_id)}</strong></div>
+        <div>${esc(item.claim_code)}</div>
+        <input value="${esc(item.device_secret)}" readonly />
+        <div><img src="${esc(item.barcode_url)}" alt="${esc(item.claim_code)}" style="height:48px;background:white;border:1px solid #d8ddd5" /></div>
+        <div class="meta">${esc(item.qr_payload || '')}</div>
+      </div>`).join('') : '';
+    }
+    async function refreshBatchStart() {
+      const prefix = $('batchDevicePrefix').value || 'SX';
+      const params = new URLSearchParams({device_prefix: prefix});
+      const res = await fetch('/admin/api/factory/devices/next-sequence?' + params.toString());
+      const data = await res.json();
+      if (!res.ok || data.error) { $('batchNextHint').textContent = data.error || '无法读取下一编号'; return; }
+      $('batchStart').value = data.next_sequence || 1;
+      $('batchNextHint').textContent = deviceSecretEncryptionConfigured
+        ? `下一设备号 ${data.next_device_id}；入库后可在设备列表「查看」密钥。`
+        : `下一设备号 ${data.next_device_id}；请先配置 SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY 再制码。`;
+    }
+    async function provisionBatch() {
+      const payload = {
+        device_prefix: $('batchDevicePrefix').value,
+        device_start: Number($('batchStart').value || 1),
+        label_prefix: $('batchLabelPrefix').value,
+        label_batch: $('batchLabelBatch').value,
+        quantity: Number($('batchQuantity').value || 1),
+      };
+      const res = await fetch('/admin/api/factory/devices/batch', {method:'POST', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) { alert(data.error || 'batch failed'); return; }
+      renderBatch(data.items || []);
+      await refreshBatchStart();
+      await loadDevices();
+    }
+    function downloadBatchCsv() {
+      if (!lastBatch.length) return;
+      const rows = [['device_id','claim_code','device_secret','qr_payload'], ...lastBatch.map(i => [i.device_id, i.claim_code, i.device_secret, i.qr_payload])];
+      const csv = rows.map(row => row.map(cell => `"${String(cell || '').replaceAll('"', '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'shuxin-device-batch.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    async function saveDeviceNote(id) {
+      const noteEl = $('note_' + id);
+      if (!noteEl) { alert('备注控件未找到'); return; }
+      const payload = {note: noteEl.value, enabled: true};
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id), {method:'PATCH', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '备注保存失败');
+      else await loadDevices();
+    }
+    async function clearDeviceNote(id) {
+      if (!confirm('确认清空该设备备注？')) return;
+      const noteEl = $('note_' + id);
+      if (noteEl) noteEl.value = '';
+      const payload = {note: '', enabled: true};
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id), {method:'PATCH', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || '清空失败');
+      else await loadDevices();
+    }
+    async function saveDeviceMbti(id) {
+      const mbti = $('mbti_' + id).value.trim();
+      if (!mbti) { alert('请选择 MBTI 类型'); return; }
+      const res = await fetch('/admin/api/devices/' + encodeURIComponent(id) + '/mbti', {
+        method:'PATCH', headers:headers(), body:JSON.stringify({mbti}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'mbti update failed');
+      await loadDevices();
+    }
+    function formatDualBalance(quota) {
+      if (!quota || !quota.configured) return '未配置 DMX';
+      if (quota.unlimited_quota) return '无限';
+      const display = quota.display_balance_yuan ?? quota.remain_yuan;
+      const dmx = quota.dmx_remain_yuan;
+      if (display == null && dmx == null) return '查询失败';
+      const displayText = display != null ? `${Number(display).toFixed(2)} 元` : '—';
+      const dmxText = dmx != null ? `${Number(dmx).toFixed(2)} 元` : '—';
+      const suffix = quota.exhausted ? '（已用尽）' : '';
+      return `用户 ${displayText} / DMX ${dmxText}${suffix}`;
+    }
+    function formatDmxBalance(quota) {
+      return formatDualBalance(quota);
+    }
+    async function refreshUserQuota(userId) {
+      const el = $('dmxBalance_' + userId);
+      if (el) el.textContent = '查询中…';
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId) + '/quota', {headers: headers(), credentials:'same-origin'});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (el) el.textContent = data.error || '查询失败';
+        return;
+      }
+      if (el) el.textContent = formatDmxBalance(data);
+    }
+    function openUserTopUpModal(userId) {
+      const q = jsQuote(userId);
+      openAdminModal({
+        title: `用户充值 · ${userId}`,
+        bodyHtml: `<div class="llm-form">
+          <label><span class="hint">用户可见金额（元）</span><input id="topUpAmount" type="number" min="0.01" step="0.01" value="10" /></label>
+          <label><span class="hint">备注（可选）</span><input id="topUpNote" placeholder="微信收款单号等" /></label>
+          <p class="hint">双账本：用户余额 += 填写金额；DMX 实际 += 金额 × 当前到账比例（与微信支付一致）。</p>
+        </div>`,
+        actionsHtml: `<button type="button" class="secondary" onclick="closeAdminModal()">取消</button><button type="button" onclick="submitUserTopUp('${q}')">确认充值</button>`,
+      });
+    }
+    async function submitUserTopUp(userId) {
+      const addYuan = Number(($('topUpAmount') && $('topUpAmount').value) || 0);
+      const note = ($('topUpNote') && $('topUpNote').value) || '';
+      if (!(addYuan > 0)) {
+        $('adminModalMsg').textContent = '请输入大于 0 的充值金额';
+        return;
+      }
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(userId) + '/quota/top-up', {
+        method: 'POST',
+        headers: headers(),
+        credentials: 'same-origin',
+        body: JSON.stringify({add_yuan: addYuan, note}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        $('adminModalMsg').textContent = data.error || '充值失败';
+        return;
+      }
+      closeAdminModal();
+      await refreshUserQuota(userId);
+      alert(`充值成功：+${addYuan} 元，当前余额 ${formatDmxBalance(data)}`);
+    }
+    async function createUser() {
+      const llm = {
+        model: $('newModel').value || platformLlmDefaults.model || '',
+        base_url: $('newBaseUrl').value || platformLlmDefaults.base_url || '',
+        api_key: $('newApiKey').value,
+      };
+      const payload = {user_id:$('newUserId').value, audio_quota_mb:512, enabled:true, llm_config:llm};
+      const res = await fetch('/admin/api/users', {method:'POST', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'save failed');
+      $('newApiKey').value = '';
+      await loadUsers();
+    }
+    async function saveUserRow(id) {
+      const payload = {
+        user_id:id,
+        audio_quota_mb:Number($('audio_' + id).value || 512),
+        enabled:$('userEnabled_' + id).value !== 'false',
+      };
+      const res = await fetch('/admin/api/users', {method:'POST', headers:headers(), body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (!res.ok || data.error) alert(data.error || 'save failed');
+      await loadUsers();
+    }
+    async function unbindBinding(bindingId, userId, deviceId) {
+      const uid = userId || '';
+      const did = deviceId || '';
+      const msg = `确认解绑？\n用户：${uid}\n设备：${did}\n\n认领码将恢复为可扫码状态；用户记忆保留。用户刷新小程序后设备将从列表消失。`;
+      if (!confirm(msg)) return;
+      const res = await fetch('/admin/api/bindings/unbind', {method:'POST', headers:headers(), body:JSON.stringify({binding_id: bindingId})});
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        alert(data.error || '解绑失败');
+        return;
+      }
+      $('bindingMsg').textContent = JSON.stringify(data, null, 2);
+      alert('已解绑。用户刷新小程序后设备将从列表消失；可重新扫码绑定。');
+      await Promise.all([loadBindings(), loadBindUsers(), loadBindDevices(), loadDevices()]);
+    }
+    async function deleteUser(id) {
+      const msg = voiceTestMode
+        ? `测试模式：将真删除用户 ${id}（解绑设备并清 DB 记忆），确认？`
+        : `确认删除用户 ${id}？（软删除，同一微信再登录可恢复旧配置）`;
+      if (!confirm(msg)) return;
+      const res = await fetch('/admin/api/users/' + encodeURIComponent(id), {method:'DELETE', headers: headers(), credentials:'same-origin'});
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) alert(data.error || '删除失败');
+      await loadUsers();
+    }
+    async function callAdapter() {
+      const body = JSON.parse($('adapterPayload').value);
+      const res = await fetch(`/admin/api/adapters/${body.adapter_name}/${body.action}`, {method:'POST', headers:headers(), body:JSON.stringify(body.params || {})});
+      $('adapterResult').textContent = JSON.stringify(await res.json(), null, 2);
+    }
+    // -- 消费账单 (Billing Center) JS 逻辑 --
+    let billingMonthsPopulated = false;
+    let pricingDebounceTimer = null;
+
+    function populateBillingMonths() {
+      if (billingMonthsPopulated) return;
+      const select = $('billingMonth');
+      if (!select) return;
+      select.innerHTML = '';
+
+      const d = new Date();
+      for (let i = 0; i < 6; i++) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const str = `${y}-${m}`;
+        const opt = document.createElement('option');
+        opt.value = str;
+        opt.textContent = str;
+        select.appendChild(opt);
+
+        // 前推一个月
+        d.setMonth(d.getMonth() - 1);
+      }
+      billingMonthsPopulated = true;
+    }
+
+    async function loadBillingCenter() {
+      populateBillingMonths();
+      await Promise.all([
+        loadBillingSummary(),
+        resetBillingList(),
+        loadPricingSettings()
+      ]);
+    }
+
+    async function loadBillingSummary() {
+      const month = $('billingMonth').value;
+      if (!month) return;
+      try {
+        const res = await fetch(`/admin/api/billing/summary?month=${encodeURIComponent(month)}`, {headers: headers(), credentials: 'same-origin'});
+        const payload = await res.json();
+        if (res.ok && payload.success) {
+          const data = payload.data;
+          $('billingTotalCost').textContent = `¥${data.total_cost.toFixed(4)}`;
+          $('billingAvgCost').textContent = `¥${data.average_turn_cost.toFixed(4)} / 轮`;
+          $('billingTotalTurns').textContent = `共计 ${data.total_turns} 轮`;
+
+          // 占比更新
+          const bd = data.breakdown;
+          $('barLLM').style.width = `${bd.llm.percentage}%`;
+          $('barSTT').style.width = `${bd.stt.percentage}%`;
+          $('barTTS').style.width = `${bd.tts.percentage}%`;
+
+          $('textLLM').textContent = `¥${bd.llm.cost.toFixed(4)} (${bd.llm.percentage}%)`;
+          $('textSTT').textContent = `¥${bd.stt.cost.toFixed(4)} (${bd.stt.percentage}%)`;
+          $('textTTS').textContent = `¥${bd.tts.cost.toFixed(4)} (${bd.tts.percentage}%)`;
+        }
+      } catch (err) {
+        console.error('Failed to load billing summary:', err);
+      }
+    }
+
+    function switchSubtab(subname) {
+      $('billingSubtab-records').style.display = subname === 'records' ? 'block' : 'none';
+      $('billingSubtab-pricing').style.display = subname === 'pricing' ? 'block' : 'none';
+      $('subtabRecords').className = subname === 'records' ? 'active' : '';
+      $('subtabPricing').className = subname === 'pricing' ? 'active' : '';
+    }
+
+    function resetBillingList() {
+      const state = listState.billing;
+      state.cursor = '';
+      state.nextCursor = '';
+      state.stack = [];
+      loadBillingList();
+    }
+
+    async function loadBillingList() {
+      const month = $('billingMonth').value;
+      const userId = $('billingUserFilter').value.trim();
+      const state = listState.billing;
+      if (!month) return;
+
+      const params = new URLSearchParams({
+        month: month,
+        user_id: userId,
+        limit: String(state.limit),
+        cursor: state.cursor
+      });
+
+      try {
+        const res = await fetch(`/admin/api/billing/records?${params.toString()}`, {headers: headers(), credentials: 'same-origin'});
+        const payload = await res.json();
+        if (res.ok && payload.success) {
+          const data = payload.data;
+          state.nextCursor = data.next_cursor || '';
+          renderBillingRecords(data.items || []);
+        }
+      } catch (err) {
+        console.error('Failed to load billing records:', err);
+      }
+    }
+
+    function renderBillingRecords(items) {
+      const list = $('billingRecordsList');
+      list.innerHTML = '';
+      if (items.length === 0) {
+        list.innerHTML = '<div class="hint" style="padding:20px;text-align:center;">暂无消费明细</div>';
+        $('btnPrevBilling').style.display = 'none';
+        $('btnNextBilling').style.display = 'none';
+        return;
+      }
+
+      // 表头
+      const head = document.createElement('div');
+      head.className = 'table-row';
+      head.style.gridTemplateColumns = 'minmax(120px, 0.6fr) 64px minmax(120px, 0.8fr) 100px 90px minmax(140px, 1fr) 50px';
+      head.innerHTML = `
+        <div class="field-label">用户 ID</div>
+        <div class="field-label">类型</div>
+        <div class="field-label">模型/音色</div>
+        <div class="field-label">使用量</div>
+        <div class="field-label">折算金额</div>
+        <div class="field-label">消费时间</div>
+        <div class="field-label" style="text-align:right">操作</div>
+      `;
+      list.appendChild(head);
+
+      for (const item of items) {
+        const row = document.createElement('div');
+        row.className = 'table-row';
+        row.id = `bill-row-${item.id}`;
+        row.style.gridTemplateColumns = 'minmax(120px, 0.6fr) 64px minmax(120px, 0.8fr) 100px 90px minmax(140px, 1fr) 50px';
+        row.style.transition = 'all 0.3s ease';
+
+        let typeBadge = '';
+        let unit = '';
+        let amt = item.usage_amount;
+        if (item.type === 'stt') {
+          typeBadge = '<span class="badge" style="background:rgba(0,113,227,0.1); color:#0071e3">STT</span>';
+          unit = '秒';
+          amt = amt.toFixed(1);
+        } else if (item.type === 'tts') {
+          typeBadge = '<span class="badge" style="background:rgba(52,199,89,0.1); color:#34c759">TTS</span>';
+          unit = '字';
+          amt = amt.toFixed(0);
+        } else if (item.type === 'llm') {
+          typeBadge = '<span class="badge" style="background:rgba(255,59,48,0.1); color:#ff3b30">LLM</span>';
+          unit = 'tokens';
+          amt = amt.toFixed(0);
+        }
+
+        row.innerHTML = `
+          <div class="cell-clip" onclick="copyText('${jsQuote(item.user_id)}')"><strong title="${esc(item.user_id)}">${truncateId(item.user_id, 8, 6)}</strong></div>
+          <div>${typeBadge}</div>
+          <div style="font-size:13px;color:var(--text);font-family:var(--mono);" title="${esc(item.model)}">${esc(item.model)}</div>
+          <div style="font-size:13px;color:var(--text-secondary);font-family:var(--mono);">${amt} ${unit}</div>
+          <div style="font-size:13px;color:var(--text);font-weight:600;font-family:var(--mono);">¥${item.cost_yuan.toFixed(4)}</div>
+          <div style="font-size:12px;color:var(--text-secondary);">${esc(formatDateTimeCN(item.created_at))}</div>
+          <div style="text-align:right">
+            <button class="btn-destructive ghost" onclick="deleteBillingRecord('${item.id}', this)" style="height:24px;padding:0 6px;font-size:11px;">删除</button>
+          </div>
+        `;
+        list.appendChild(row);
+      }
+
+      const state = listState.billing;
+      $('btnPrevBilling').style.display = state.stack.length ? 'inline-block' : 'none';
+      $('btnNextBilling').style.display = state.nextCursor ? 'inline-block' : 'none';
+    }
+
+    function prevBillingPage() {
+      const state = listState.billing;
+      if (!state.stack.length) return;
+      state.cursor = state.stack.pop();
+      loadBillingList();
+    }
+
+    function nextBillingPage() {
+      const state = listState.billing;
+      if (!state.nextCursor) return;
+      state.stack.push(state.cursor);
+      state.cursor = state.nextCursor;
+      loadBillingList();
+    }
+
+    async function deleteBillingRecord(id, btn) {
+      if (!confirm('确认删除此计费记录吗？这将使月度消费总额重新统计。')) return;
+      try {
+        const res = await fetch(`/admin/api/billing/records/${id}`, {method: 'DELETE', headers: headers(), credentials: 'same-origin'});
+        if (res.ok) {
+          const row = $(`bill-row-${id}`);
+          if (row) {
+            row.style.transform = 'translateX(-100px)';
+            row.style.opacity = '0';
+            setTimeout(() => {
+              row.remove();
+              loadBillingSummary();
+            }, 300);
+          }
+        } else {
+          alert('删除失败');
+        }
+      } catch (err) {
+        alert('删除请求失败');
+      }
+    }
+
+    async function clearMonthlyBilling() {
+      const month = $('billingMonth').value;
+      if (!month) return;
+      if (!confirm(`警告：确认清空 ${month} 的所有用户消费明细流水吗？本操作不可逆！`)) return;
+      try {
+        const res = await fetch(`/admin/api/billing/records/months/${encodeURIComponent(month)}`, {method: 'DELETE', headers: headers(), credentials: 'same-origin'});
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert(`清理完成，共删除 ${data.deleted_count} 条记录`);
+          loadBillingCenter();
+        } else {
+          alert('清理失败');
+        }
+      } catch (err) {
+        alert('清理请求失败');
+      }
+    }
+
+    async function loadPricingSettings() {
+      try {
+        const res = await fetch('/admin/api/billing/pricing', {headers: headers(), credentials: 'same-origin'});
+        const payload = await res.json();
+        if (res.ok && payload.success) {
+          const data = payload.data;
+          renderPricingSection('stt', data.stt, $('pricingSTTContainer'));
+          renderPricingSection('tts', data.tts, $('pricingTTSContainer'));
+          renderPricingSection('llm', data.llm, $('pricingLLMContainer'));
+        }
+      } catch (err) {
+        console.error('Failed to load pricing settings:', err);
+      }
+    }
+
+    function renderPricingSection(type, items, container) {
+      container.innerHTML = '';
+      if (!items || Object.keys(items).length === 0) {
+        container.innerHTML = '<div class="hint">暂无配置项</div>';
+        return;
+      }
+
+      for (const [name, price] of Object.entries(items)) {
+        const label = document.createElement('label');
+        label.style.display = 'grid';
+        label.style.gap = '4px';
+        label.style.marginBottom = '10px';
+
+        const displayName = name === 'default' ? '默认兜底模型' : name;
+        label.innerHTML = `
+          <span class="hint" style="font-weight:600;color:var(--text);">${esc(displayName)}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" step="any" min="0" value="${price}" 
+              id="price-${type}-${name}"
+              style="font-family:var(--mono);flex:1;"
+              oninput="debounceSavePricing('${type}', '${name}', this)"
+              onblur="savePricing('${type}', '${name}', this)" />
+            <span id="saved-check-${type}-${name}" style="color:#34c759;font-weight:bold;opacity:0;transition:opacity 0.2s;">✓</span>
+          </div>
+        `;
+        container.appendChild(label);
+      }
+    }
+
+    function debounceSavePricing(type, key, input) {
+      if (pricingDebounceTimer) clearTimeout(pricingDebounceTimer);
+      pricingDebounceTimer = setTimeout(() => {
+        savePricing(type, key, input);
+      }, 800);
+    }
+
+    async function savePricing(type, key, input) {
+      if (pricingDebounceTimer) clearTimeout(pricingDebounceTimer);
+      const val = parseFloat(input.value);
+      if (isNaN(val) || val < 0) return;
+
+      const payload = {};
+      payload[type] = {};
+      payload[type][key] = val;
+
+      try {
+        const res = await fetch('/admin/api/billing/pricing', {
+          method: 'PATCH',
+          headers: headers(),
+          body: JSON.stringify(payload),
+          credentials: 'same-origin'
+        });
+        if (res.ok) {
+          const check = $(`saved-check-${type}-${key}`);
+          if (check) {
+            check.style.opacity = '1';
+            setTimeout(() => { check.style.opacity = '0'; }, 1200);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to save pricing setting:', err);
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

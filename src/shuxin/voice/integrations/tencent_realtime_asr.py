@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlencode
 
-from shuxin.voice.config import ProviderConfig
+from shuxin.voice.config.config import ProviderConfig
 
 ASR_HOST = "asr.cloud.tencent.com"
 ASR_PATH_TEMPLATE = "/asr/v2/{appid}"

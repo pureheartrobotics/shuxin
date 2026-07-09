@@ -6,8 +6,8 @@ import hmac
 import json
 from urllib.parse import parse_qs, urlparse
 
-from shuxin.voice.config import ProviderConfig
-from shuxin.voice.tencent_realtime_asr import (
+from shuxin.voice.config.config import ProviderConfig
+from shuxin.voice.integrations.tencent_realtime_asr import (
     PCM_16K_200MS_BYTES,
     TencentRealtimeASRSession,
     build_tencent_realtime_asr_url,
@@ -19,7 +19,7 @@ from shuxin.voice.tencent_realtime_asr import (
 def test_build_tencent_realtime_asr_url_signs_sorted_query(monkeypatch):
     monkeypatch.setenv("TENCENTCLOUD_SECRET_ID", "sid")
     monkeypatch.setenv("TENCENTCLOUD_SECRET_KEY", "skey")
-    monkeypatch.setattr("shuxin.voice.tencent_realtime_asr.random.randint", lambda *_: 123)
+    monkeypatch.setattr("shuxin.voice.integrations.tencent_realtime_asr.random.randint", lambda *_: 123)
     config = ProviderConfig(type="tencent-realtime", appid="app-001", model="16k_zh")
 
     url = build_tencent_realtime_asr_url(config, voice_id="voice-001", now=1000)

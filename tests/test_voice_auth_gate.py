@@ -4,7 +4,7 @@ import json
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from shuxin.voice.server import _VoiceWebSocketSession
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession
 
 class MockWebSocket:
     def __init__(self):

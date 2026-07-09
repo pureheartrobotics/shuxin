@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from shuxin.voice.time_display import format_beijing_iso
-from shuxin.voice.memory_summary import should_merge_summary
-from shuxin.voice.storage import UserVoiceStorage
-from shuxin.voice.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
+from shuxin.voice.persistence.time_display import format_beijing_iso
+from shuxin.voice.persistence.memory_summary import should_merge_summary
+from shuxin.voice.persistence.storage import UserVoiceStorage
+from shuxin.voice.persistence.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
 
 
 class VoiceLocalRepository:
@@ -324,7 +324,7 @@ class VoiceLocalRepository:
         raise RuntimeError("DATABASE_URL is required for mini-program device unbinding")
 
     async def list_devices(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
-        from shuxin.voice.device_secret_crypto import device_secret_encryption_configured
+        from shuxin.voice.persistence.device_secret_crypto import device_secret_encryption_configured
 
         default = self.device_provider.get(None)
         shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
@@ -438,7 +438,7 @@ class VoiceLocalRepository:
     async def list_agents(self, *, limit: int = 50, cursor: str = "", q: str = "") -> dict[str, Any]:
         import os
 
-        from shuxin.voice.agents import AgentRecord
+        from shuxin.voice.persistence.agents import AgentRecord
 
         record = AgentRecord(
             agent_id="shuxin",
@@ -451,7 +451,7 @@ class VoiceLocalRepository:
     async def get_agent(self, agent_id: str) -> AgentRecord:
         import os
 
-        from shuxin.voice.agents import AgentRecord, DEFAULT_AGENT_ID
+        from shuxin.voice.persistence.agents import AgentRecord, DEFAULT_AGENT_ID
 
         selected = agent_id.strip() or DEFAULT_AGENT_ID
         return AgentRecord(
@@ -462,7 +462,7 @@ class VoiceLocalRepository:
         )
 
     async def get_user_agent_id(self, user_id: str) -> str:
-        from shuxin.voice.agents import DEFAULT_AGENT_ID
+        from shuxin.voice.persistence.agents import DEFAULT_AGENT_ID
 
         return DEFAULT_AGENT_ID
 

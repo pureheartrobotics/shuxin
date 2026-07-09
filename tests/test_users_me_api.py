@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 from shuxin.voice.server import create_app
 
 

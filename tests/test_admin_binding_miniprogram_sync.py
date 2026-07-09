@@ -137,7 +137,7 @@ def test_admin_patch_note_without_claim_code(monkeypatch) -> None:
 def test_admin_ui_has_note_and_unbind_helpers() -> None:
     from pathlib import Path
 
-    server = Path("src/shuxin/voice/server.py").read_text(encoding="utf-8")
+    server = Path("src/shuxin/voice/static/admin.html").read_text(encoding="utf-8")
     assert "saveDeviceNote" in server
     assert "clearDeviceNote" in server
     assert "active_binding_id" in server

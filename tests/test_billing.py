@@ -3,7 +3,7 @@ import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from shuxin.voice.billing import BillingService, DEFAULT_PRICING
+from shuxin.voice.persistence.billing import BillingService, DEFAULT_PRICING
 
 
 class DummyRepo:

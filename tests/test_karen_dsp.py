@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from shuxin.voice.karen_dsp import (
+from shuxin.voice.audio.karen_dsp import (
     KAREN_V2_MED,
     _flatten_pitch,
     _ring_modulate_wet_dry,

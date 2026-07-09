@@ -6,10 +6,10 @@ import sqlite3
 
 import pytest
 
-from shuxin.voice.config import ProviderConfig
+from shuxin.voice.config.config import ProviderConfig
 from shuxin.voice.providers import create_stt_provider, create_tts_provider
-from shuxin.voice.storage import UserVoiceStorage
-from shuxin.voice.users import UserConfigProvider, UserSettings
+from shuxin.voice.persistence.storage import UserVoiceStorage
+from shuxin.voice.persistence.users import UserConfigProvider, UserSettings
 
 
 def test_user_config_auth_and_quota_reload(tmp_path):

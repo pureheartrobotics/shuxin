@@ -194,7 +194,7 @@ class CompanionPlugin:
         lines = ["## 长期成长"]
 
         try:
-            from shuxin.voice.user_profile import format_profile_context, load_profile
+            from shuxin.voice.config.user_profile import format_profile_context, load_profile
 
             profile_block = format_profile_context(load_profile(user_home))
             if profile_block.strip():
@@ -330,7 +330,7 @@ class CompanionPlugin:
         # 4b. 更新常驻用户画像（不受 7 日 summary 窗口限制）
         if self.data_dir:
             try:
-                from shuxin.voice.user_profile import update_profile_from_text
+                from shuxin.voice.config.user_profile import update_profile_from_text
 
                 user_home = Path(self.data_dir).parent
                 update_profile_from_text(user_home, message)

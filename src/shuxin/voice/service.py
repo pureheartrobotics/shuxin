@@ -6,10 +6,10 @@ from pathlib import Path
 from shuxin.core.agent import Agent
 from shuxin.core.config import Config
 from shuxin.core.identity import VALID_MBTI_TYPES
-from shuxin.voice.agents import AgentRecord
-from shuxin.voice.config import DeviceConfig, DeviceConfigProvider
+from shuxin.voice.persistence.agents import AgentRecord
+from shuxin.voice.config.config import DeviceConfig, DeviceConfigProvider
 from shuxin.voice.providers import create_stt_provider
-from shuxin.voice.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
+from shuxin.voice.config.tts_config import create_tts_provider_from_agent, create_tts_provider_from_device
 
 
 def _voice_max_history() -> int:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from shuxin.voice.server import _VoiceWebSocketSession, _negotiate_audio_params
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession, _negotiate_audio_params
 
 
 def _make_session() -> _VoiceWebSocketSession:

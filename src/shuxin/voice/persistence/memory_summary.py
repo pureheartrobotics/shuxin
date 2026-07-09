@@ -12,9 +12,9 @@ from typing import Any, Iterable
 
 from shuxin.core.config import Config, get_shuxin_home
 from shuxin.core.llm import LLMMessage, LLMProvider, PROVIDER_REGISTRY
-from shuxin.voice.config import DeviceConfig
+from shuxin.voice.config.config import DeviceConfig
 
-logger = logging.getLogger("shuxin.voice.memory_summary")
+logger = logging.getLogger("shuxin.voice.persistence.memory_summary")
 
 SUMMARY_WINDOW_DAYS = 7
 MAX_RECENT_TOPICS = 10

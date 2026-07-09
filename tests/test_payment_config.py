@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from shuxin.voice.payment_config import (
+from shuxin.voice.config.payment_config import (
     compute_payment_credits,
     get_payment_plan,
     load_payment_plans,

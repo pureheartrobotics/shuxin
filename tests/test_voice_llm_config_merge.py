@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shuxin.voice.config import LLMDeviceConfig, merge_llm_device_config
+from shuxin.voice.config.config import LLMDeviceConfig, merge_llm_device_config
 
 
 def test_empty_api_key_in_user_config_does_not_wipe_device_key() -> None:

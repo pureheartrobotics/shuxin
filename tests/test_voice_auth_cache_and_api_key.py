@@ -2,7 +2,7 @@ from __future__ import annotations
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 
 class FakePool:
     def __init__(self, fetchrow=None, fetchval=None, fetch=None) -> None:

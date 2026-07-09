@@ -4,10 +4,10 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from shuxin.voice.config import DeviceConfigProvider
+from shuxin.voice.config.config import DeviceConfigProvider
 from shuxin.voice.service import VoiceService
-from shuxin.voice.session import VoiceSessionRunner
-from shuxin.voice.transport import FileAudioOutputTransport
+from shuxin.voice.api.session import VoiceSessionRunner
+from shuxin.voice.api.transport import FileAudioOutputTransport
 
 
 def build_parser() -> argparse.ArgumentParser:

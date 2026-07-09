@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from shuxin.voice.barcode import decode_barcode_image, generate_code128_png
+from shuxin.voice.integrations.barcode import decode_barcode_image, generate_code128_png
 from shuxin.voice.server import create_app
 
 

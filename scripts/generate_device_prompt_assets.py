@@ -18,15 +18,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from shuxin.voice.agents import AgentRecord, DEFAULT_AGENT_ID  # noqa: E402
-from shuxin.voice.opus_codec import (  # noqa: E402
+from shuxin.voice.persistence.agents import AgentRecord, DEFAULT_AGENT_ID  # noqa: E402
+from shuxin.voice.audio.opus_codec import (  # noqa: E402
     DEFAULT_FRAME_DURATION_MS,
     FLASH_OPUS_BITRATE,
     FLASH_SAMPLE_RATE,
     opus_available,
     transcode_mp3_to_opus_frames,
 )
-from shuxin.voice.tts_config import create_tts_provider_from_agent  # noqa: E402
+from shuxin.voice.config.tts_config import create_tts_provider_from_agent  # noqa: E402
 
 SILENCE_FILTER = "silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-40dB"
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from shuxin.voice.agents import AgentRecord, invalidate_agent_cache
-from shuxin.voice.tts_config import resolve_tts_config_from_agent
+from shuxin.voice.persistence.agents import AgentRecord, invalidate_agent_cache
+from shuxin.voice.config.tts_config import resolve_tts_config_from_agent
 
 
 def test_resolve_tts_config_from_agent(monkeypatch) -> None:
@@ -42,7 +42,7 @@ def test_agent_record_admin_dict_unmasked() -> None:
 
 
 def test_invalidate_agent_cache() -> None:
-    from shuxin.voice.agents import cache_agent, get_cached_agent
+    from shuxin.voice.persistence.agents import cache_agent, get_cached_agent
 
     record = AgentRecord(agent_id="cache-test", voice_type="v")
     cache_agent(record)
@@ -54,7 +54,7 @@ def test_invalidate_agent_cache() -> None:
 def test_voice_service_applies_device_mbti() -> None:
     from shuxin.core.agent import Agent
     from shuxin.core.config import Config
-    from shuxin.voice.config import DeviceConfig
+    from shuxin.voice.config.config import DeviceConfig
     from shuxin.voice.service import VoiceService
 
     service = VoiceService()

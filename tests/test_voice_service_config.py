@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from shuxin.voice.service import VoiceService
-from shuxin.voice.config import DeviceConfig, LLMDeviceConfig
+from shuxin.voice.config.config import DeviceConfig, LLMDeviceConfig
 
 
 def test_voice_service_build_config_caps_history_and_tokens(tmp_path, monkeypatch) -> None:

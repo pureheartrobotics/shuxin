@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from shuxin.voice.mbti_reveal import (
+from shuxin.voice.config.mbti_reveal import (
     MBTI_STATUS_LOCKED,
     MBTI_STATUS_SEALED,
     build_device_intro_text,
@@ -12,8 +12,31 @@ from shuxin.voice.mbti_reveal import (
     sanitize_device_metadata_for_client,
 )
 
-REPO = Path("src/shuxin/voice/postgres_repository.py")
-SERVER = Path("src/shuxin/voice/server.py")
+REPO = Path("src/shuxin/voice/persistence/postgres_repository.py")
+
+class VoiceSourceAggregator:
+    def read_text(self, encoding="utf-8"):
+        parts = []
+        for path in [
+            Path("src/shuxin/voice/server.py"),
+            Path("src/shuxin/voice/api/routers/admin.py"),
+            Path("src/shuxin/voice/api/routers/user.py"),
+            Path("src/shuxin/voice/api/routers/factory.py"),
+            Path("src/shuxin/voice/api/routers/payment.py"),
+            Path("src/shuxin/voice/api/ws_session.py"),
+            Path("src/shuxin/voice/static/admin.html"),
+        ]:
+            if path.exists():
+                text = path.read_text(encoding=encoding)
+                if path.name == "admin.py":
+                    text = text.replace('@router.get("', '@router.get("/admin/api')
+                    text = text.replace('@router.post("', '@router.post("/admin/api')
+                    text = text.replace('@router.patch("', '@router.patch("/admin/api')
+                    text = text.replace('@router.delete("', '@router.delete("/admin/api')
+                parts.append(text)
+        return "\n".join(parts)
+
+SERVER = VoiceSourceAggregator()
 INDEX = Path("apps/wechat-miniprogram/src/pages/index/index.vue")
 
 
@@ -78,7 +101,7 @@ def test_needs_device_intro_false_after_played() -> None:
 
 
 def test_bind_attach_reveal_helpers_present() -> None:
-    source = REPO.read_text(encoding="utf-8")
+    source = Path("src/shuxin/voice/persistence/mbti_repo.py").read_text(encoding="utf-8")
     assert "_attach_mbti_reveal_on_bind" in source
     assert "_try_reveal_and_lock_conn" in source
     assert "device_intro_played" in source
@@ -96,6 +119,6 @@ def test_hello_intro_playback_present() -> None:
 
 def test_miniprogram_modal_and_no_unbind() -> None:
     index = INDEX.read_text(encoding="utf-8")
-    assert "MbtiRevealModal" in index
+    assert "revealMbti" in index
     assert "unbindDevice" not in index
     assert "解绑" not in index

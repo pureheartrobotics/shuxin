@@ -7,11 +7,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shuxin.voice.audio_effects import is_karen_style_effect
-from shuxin.voice.config import ProviderConfig, resolve_tts_effect
+from shuxin.voice.audio.audio_effects import is_karen_style_effect
+from shuxin.voice.config.config import ProviderConfig, resolve_tts_effect
 
 if TYPE_CHECKING:
-    from shuxin.voice.tts_config import ResolvedTtsConfig
+    from shuxin.voice.config.tts_config import ResolvedTtsConfig
 
 
 class STTProvider(ABC):
@@ -222,11 +222,11 @@ def create_tts_provider(
     resolved: "ResolvedTtsConfig | None" = None,
 ) -> TTSProvider:
     """根据设备配置创建 TTS provider。"""
-    from shuxin.voice.tts_config import ResolvedTtsConfig, resolve_tts_config
+    from shuxin.voice.config.tts_config import ResolvedTtsConfig, resolve_tts_config
 
     provider_type = (config.type or "volcengine-clone").lower()
     if provider_type in {"volcengine-clone", "volcengine", "volc-clone"}:
-        from shuxin.voice.volcengine_tts import VolcengineCloneTTSProvider
+        from shuxin.voice.integrations.volcengine_tts import VolcengineCloneTTSProvider
 
         cfg: ResolvedTtsConfig = resolved or resolve_tts_config(config)
         return VolcengineCloneTTSProvider(cfg)
@@ -238,8 +238,8 @@ def create_tts_provider(
         )
         return EdgeTTSProvider(config)
     if provider_type == "api":
-        from shuxin.voice.tts_config import resolve_tts_config as _resolve
-        from shuxin.voice.volcengine_tts import VolcengineCloneTTSProvider
+        from shuxin.voice.config.tts_config import resolve_tts_config as _resolve
+        from shuxin.voice.integrations.volcengine_tts import VolcengineCloneTTSProvider
 
         cfg = resolved or _resolve(config)
         if cfg.provider_type in {"volcengine-clone", "volcengine", "volc-clone"}:
@@ -272,7 +272,7 @@ def _extract_funasr_text(result) -> str:
 def _apply_karen_to_file(path: Path, strength: str) -> None:
     from pydub import AudioSegment
 
-    from shuxin.voice.audio_effects import apply_karen_voice
+    from shuxin.voice.audio.audio_effects import apply_karen_voice
 
     fmt = path.suffix.lower().lstrip(".") or "mp3"
     audio = AudioSegment.from_file(str(path))
@@ -295,7 +295,7 @@ def _finalize_tts_file(
         ) from exc
     audio = AudioSegment.from_file(str(input_path))
     if is_karen_style_effect(effect):
-        from shuxin.voice.audio_effects import apply_karen_voice
+        from shuxin.voice.audio.audio_effects import apply_karen_voice
 
         audio = apply_karen_voice(audio, strength=effect_strength)
     audio.export(str(output_path), format="wav")

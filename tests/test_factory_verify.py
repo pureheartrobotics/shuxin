@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from shuxin.voice.mbti_reveal import build_factory_verify_mbti_payload
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.config.mbti_reveal import build_factory_verify_mbti_payload
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 from shuxin.voice.server import create_app, _FACTORY_ACCEPTANCE_DISABLED
-from shuxin.voice import voice_session_registry as vsr
-from shuxin.voice.users import FACTORY_PROBE_USER_ID, UserSettings
+from shuxin.voice.api import voice_session_registry as vsr
+from shuxin.voice.persistence.users import FACTORY_PROBE_USER_ID, UserSettings
 
 
 class FakePool:

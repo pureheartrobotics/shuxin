@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from shuxin.voice.adapters import VoiceAdapterRegistry
+from shuxin.voice.integrations.adapters import VoiceAdapterRegistry
 
 
 def test_voice_adapter_registry_exposes_allowlisted_actions(tmp_path: Path) -> None:

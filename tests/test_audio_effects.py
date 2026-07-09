@@ -3,13 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from shuxin.voice.audio_effects import (
+from shuxin.voice.audio.audio_effects import (
     VOICEOVER_PRESET_CLEAR,
     apply_electric_voice,
     apply_karen_voice,
     is_karen_style_effect,
 )
-from shuxin.voice.config import ProviderConfig, resolve_tts_effect
+from shuxin.voice.config.config import ProviderConfig, resolve_tts_effect
 
 
 def _sine_segment(*, ms: int = 400, hz: int = 440) -> object:

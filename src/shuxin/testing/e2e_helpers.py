@@ -10,7 +10,7 @@ E2E_TEST_TOKEN = "e2e-test-token"
 
 
 def apply_demo_llm(device: Any) -> None:
-    from shuxin.voice.config import LLMDeviceConfig
+    from shuxin.voice.config.config import LLMDeviceConfig
 
     device.llm = LLMDeviceConfig(
         provider=os.environ.get("DEMO_LLM_PROVIDER", "openai-compatible").strip()
@@ -22,7 +22,7 @@ def apply_demo_llm(device: Any) -> None:
 
 
 def merge_device_llm(device: Any, settings: Any) -> None:
-    from shuxin.voice.config import merge_llm_device_config
+    from shuxin.voice.config.config import merge_llm_device_config
 
     if settings.llm_config:
         device.llm = merge_llm_device_config(device.llm, settings.llm_config)

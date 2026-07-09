@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from shuxin.voice.dmx_client import QUOTA_EXHAUSTED_MESSAGE
-from shuxin.voice.server import _VoiceWebSocketSession
+from shuxin.voice.integrations.dmx_client import QUOTA_EXHAUSTED_MESSAGE
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession
 
 
 class MockWebSocket:

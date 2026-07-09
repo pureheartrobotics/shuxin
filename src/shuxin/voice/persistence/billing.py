@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger("shuxin.voice.billing")
+logger = logging.getLogger("shuxin.voice.persistence.billing")
 
 CACHE_EXPIRY_SECONDS = 300  # 5分钟价格缓存
 

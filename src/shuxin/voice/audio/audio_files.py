@@ -8,7 +8,7 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 
-from shuxin.voice.users import validate_user_id
+from shuxin.voice.persistence.users import validate_user_id
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2

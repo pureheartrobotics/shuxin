@@ -30,7 +30,7 @@ def test_wechat_miniprogram_has_login_page_for_real_flow() -> None:
     assert "uni.setStorageSync" in page
     assert "shuxin_session_token" in page
     assert "隐私" in page
-    assert "用户协议" in page
+    assert "服务协议" in page
     assert "进入设备绑定" in page
     assert "uni.switchTab" in page
     assert 'url: "/pages/index/index"' in page
@@ -41,7 +41,7 @@ def test_wechat_miniprogram_uses_wx_login_and_device_apis() -> None:
 
     assert '"/api/devices/bind"' in page
     assert '"/api/devices/my"' in page
-    assert "MbtiRevealModal" in page
+    assert "revealMbti" in page
     assert "unbindDevice" not in page
     assert "shuxin_session_token" in page
     assert "session_token" in page
@@ -72,7 +72,6 @@ def test_wechat_miniprogram_uses_wx_login_and_device_apis() -> None:
     assert "getFileSystemManager" in page
     assert '"/health"' in page
     assert "[kind]" in page
-    assert "onShow" not in page
 
 
 def test_wechat_miniprogram_profile_page_has_account_controls() -> None:

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from shuxin.voice.server import _pop_speakable_segments
-from shuxin.voice.text_sanitize import (
+from shuxin.voice.api.ws_tts import TtsSentenceSegmenter
+from shuxin.voice.audio.text_sanitize import (
     clean_action_text,
     has_unclosed_parenthesis,
     prepare_speakable_text,
     strip_markdown_for_tts,
 )
+
+def _pop_speakable_segments(buffer: str, *, force: bool = False, allow_weak_punctuation: bool = False) -> tuple[list[str], str]:
+    return TtsSentenceSegmenter(None).pop_segments(buffer, force=force, allow_weak_punctuation=allow_weak_punctuation)
 
 
 def test_pop_speakable_segments_waits_for_sentence_boundary() -> None:

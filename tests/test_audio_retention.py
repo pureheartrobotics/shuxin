@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from shuxin.voice.storage import UserVoiceStorage
-from shuxin.voice.users import UserSettings
+from shuxin.voice.persistence.storage import UserVoiceStorage
+from shuxin.voice.persistence.users import UserSettings
 
 
 def test_purge_expired_audio_deletes_files_and_soft_deletes_attachments(tmp_path):

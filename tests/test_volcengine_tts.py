@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from shuxin.voice.config import ProviderConfig
+from shuxin.voice.config.config import ProviderConfig
 from shuxin.voice.providers import create_tts_provider
-from shuxin.voice.tts_config import TtsProfile, TtsProfileRegistry, resolve_tts_config
-from shuxin.voice.volcengine_tts import (
+from shuxin.voice.config.tts_config import TtsProfile, TtsProfileRegistry, resolve_tts_config
+from shuxin.voice.integrations.volcengine_tts import (
     VolcengineCloneTTSProvider,
     VolcengineTTSError,
     _extract_audio_bytes,
@@ -47,7 +47,7 @@ profiles:
 def test_resolve_tts_config_merges_profile_and_device(monkeypatch) -> None:
     monkeypatch.setenv("VOLCENGINE_TTS_API_KEY", "test-key")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    from shuxin.voice.tts_config import get_tts_profile_registry
+    from shuxin.voice.config.tts_config import get_tts_profile_registry
 
     get_tts_profile_registry.cache_clear()
 
@@ -69,7 +69,7 @@ def test_resolve_tts_config_merges_profile_and_device(monkeypatch) -> None:
 def test_resolve_tts_config_empty_speed_does_not_override_profile(monkeypatch) -> None:
     monkeypatch.setenv("VOLCENGINE_TTS_API_KEY", "test-key")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "env_voice")
-    from shuxin.voice.tts_config import get_tts_profile_registry
+    from shuxin.voice.config.tts_config import get_tts_profile_registry
 
     get_tts_profile_registry.cache_clear()
 
@@ -83,7 +83,7 @@ def test_resolve_tts_config_empty_speed_does_not_override_profile(monkeypatch) -
 def test_resolve_tts_config_requires_voice_type_and_api_key(monkeypatch) -> None:
     monkeypatch.delenv("VOLCENGINE_TTS_API_KEY", raising=False)
     monkeypatch.delenv("VOLCENGINE_TTS_VOICE_TYPE", raising=False)
-    from shuxin.voice.tts_config import get_tts_profile_registry
+    from shuxin.voice.config.tts_config import get_tts_profile_registry
 
     get_tts_profile_registry.cache_clear()
 
@@ -122,7 +122,7 @@ def test_resolve_tts_config_env_voice_type_fallback_when_profile_empty(monkeypat
         },
     )
     monkeypatch.setattr(
-        "shuxin.voice.tts_config.get_tts_profile_registry",
+        "shuxin.voice.config.tts_config.get_tts_profile_registry",
         lambda: empty_registry,
     )
 
@@ -135,7 +135,7 @@ def test_resolve_tts_config_env_voice_type_fallback_when_profile_empty(monkeypat
 def test_create_tts_provider_routes_volcengine(monkeypatch) -> None:
     monkeypatch.setenv("VOLCENGINE_TTS_API_KEY", "test-key")
     monkeypatch.setenv("VOLCENGINE_TTS_VOICE_TYPE", "voice_001")
-    from shuxin.voice.tts_config import get_tts_profile_registry
+    from shuxin.voice.config.tts_config import get_tts_profile_registry
 
     get_tts_profile_registry.cache_clear()
 
@@ -150,7 +150,7 @@ def test_create_tts_provider_routes_volcengine(monkeypatch) -> None:
 def test_volcengine_provider_writes_mp3(monkeypatch, tmp_path: Path) -> None:
     import asyncio
 
-    from shuxin.voice.tts_config import ResolvedTtsConfig
+    from shuxin.voice.config.tts_config import ResolvedTtsConfig
 
     audio = base64.b64encode(b"fake-mp3").decode("ascii")
 
@@ -171,7 +171,7 @@ def test_volcengine_provider_writes_mp3(monkeypatch, tmp_path: Path) -> None:
         async def post(self, *args, **kwargs):
             return FakeResponse()
 
-    monkeypatch.setattr("shuxin.voice.volcengine_tts.httpx.AsyncClient", lambda **kw: FakeClient())
+    monkeypatch.setattr("shuxin.voice.integrations.volcengine_tts.httpx.AsyncClient", lambda **kw: FakeClient())
 
     provider = VolcengineCloneTTSProvider(
         ResolvedTtsConfig(

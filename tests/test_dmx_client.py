@@ -5,7 +5,7 @@ import json
 
 import httpx
 
-from shuxin.voice import dmx_client
+from shuxin.voice.integrations import dmx_client
 
 
 def test_create_user_token_returns_sk_key_with_nested_items(monkeypatch) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from shuxin.voice.time_display import format_beijing_display, format_beijing_iso
+from shuxin.voice.persistence.time_display import format_beijing_display, format_beijing_iso
 
 
 def test_format_beijing_display_from_utc() -> None:
@@ -29,6 +29,7 @@ def test_format_beijing_display_naive_as_utc() -> None:
 def test_miniapp_admin_portal_uses_beijing_timezone() -> None:
     from pathlib import Path
 
-    text = Path("src/shuxin/voice/miniapp_admin.py").read_text(encoding="utf-8")
+    text = Path("src/shuxin/voice/static/miniapp_admin.html").read_text(encoding="utf-8")
     assert "Asia/Shanghai" in text
-    assert "formatTime" in text
+    # Note: Vue/js handles time display locally
+    assert "toLocaleString" in text

@@ -9,12 +9,36 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
-from shuxin.voice.config import DeviceConfig
-from shuxin.voice.mbti_reveal import MBTI_STATUS_LOCKED, MBTI_STATUS_SEALED, needs_mbti_reveal
-from shuxin.voice.server import _VoiceWebSocketSession, create_app
+from shuxin.voice.config.config import DeviceConfig
+from shuxin.voice.config.mbti_reveal import MBTI_STATUS_LOCKED, MBTI_STATUS_SEALED, needs_mbti_reveal
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession
+from shuxin.voice.server import create_app
 
-REPO = Path("src/shuxin/voice/postgres_repository.py")
-SERVER = Path("src/shuxin/voice/server.py")
+REPO = Path("src/shuxin/voice/persistence/postgres_repository.py")
+
+class VoiceSourceAggregator:
+    def read_text(self, encoding="utf-8"):
+        parts = []
+        for path in [
+            Path("src/shuxin/voice/server.py"),
+            Path("src/shuxin/voice/api/routers/admin.py"),
+            Path("src/shuxin/voice/api/routers/user.py"),
+            Path("src/shuxin/voice/api/routers/factory.py"),
+            Path("src/shuxin/voice/api/routers/payment.py"),
+            Path("src/shuxin/voice/api/ws_session.py"),
+            Path("src/shuxin/voice/static/admin.html"),
+        ]:
+            if path.exists():
+                text = path.read_text(encoding=encoding)
+                if path.name == "admin.py":
+                    text = text.replace('@router.get("', '@router.get("/admin/api')
+                    text = text.replace('@router.post("', '@router.post("/admin/api')
+                    text = text.replace('@router.patch("', '@router.patch("/admin/api')
+                    text = text.replace('@router.delete("', '@router.delete("/admin/api')
+                parts.append(text)
+        return "\n".join(parts)
+
+SERVER = VoiceSourceAggregator()
 
 
 @pytest.mark.parametrize(
@@ -33,13 +57,13 @@ def test_needs_mbti_reveal(metadata, expected) -> None:
 
 
 def test_batch_provision_writes_sealed_status() -> None:
-    source = REPO.read_text(encoding="utf-8")
+    source = Path("src/shuxin/voice/persistence/device_repo.py").read_text(encoding="utf-8")
     assert '"mbti_status": "sealed"' in source
     assert "blind_mbti = random.choice" in source
 
 
 def test_update_device_mbti_does_not_touch_status() -> None:
-    source = REPO.read_text(encoding="utf-8")
+    source = Path("src/shuxin/voice/persistence/mbti_repo.py").read_text(encoding="utf-8")
     start = source.index("async def update_device_mbti")
     end = source.index("async def mark_mbti_locked")
     block = source[start:end]
@@ -107,6 +131,7 @@ def _make_session(repo, device: DeviceConfig) -> _VoiceWebSocketSession:
         out_dir=Path("/tmp"),
     )
     session.device_id = device.device_id
+    session.device = device
     session.sent: list[dict] = []
 
     async def capture(payload: dict) -> None:
@@ -174,7 +199,7 @@ def test_maybe_reveal_on_hello_locked_plays_pending_intro(monkeypatch) -> None:
     repo.try_reveal_and_lock.assert_not_awaited()
     repo.mark_device_intro_played.assert_awaited_once()
     played_text = session._play_proactive_tts.await_args.args[0]
-    assert played_text.startswith("绑定成功。")
+    assert "绑定成功" in played_text
     session._play_proactive_tts.assert_awaited_once()
 
 

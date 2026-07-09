@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from shuxin.voice.opus_codec import (
+from shuxin.voice.audio.opus_codec import (
     DOWNLINK_SAMPLE_RATE,
     UPLINK_SAMPLE_RATE,
     OpusStreamDecoder,
@@ -25,7 +25,7 @@ VOLC_DEMO_MP3 = ROOT / "outputs" / "volc-demo.mp3"
 
 
 def test_negotiate_audio_params_pcm_default():
-    from shuxin.voice.server import _negotiate_audio_params
+    from shuxin.voice.api.ws_session import _negotiate_audio_params
 
     result = _negotiate_audio_params(None)
     assert result["format"] == "pcm"
@@ -33,7 +33,7 @@ def test_negotiate_audio_params_pcm_default():
 
 
 def test_negotiate_audio_params_opus():
-    from shuxin.voice.server import _negotiate_audio_params
+    from shuxin.voice.api.ws_session import _negotiate_audio_params
 
     result = _negotiate_audio_params(
         {"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60}

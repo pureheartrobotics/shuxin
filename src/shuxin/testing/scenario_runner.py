@@ -21,7 +21,7 @@ from shuxin.testing.memory_assertions import (
 )
 from shuxin.testing.e2e_helpers import E2E_TEST_TOKEN, apply_demo_llm, mem0_search, merge_device_llm
 from shuxin.testing.mbti_scorer import check_identity_mbti, score_mbti_fidelity
-from shuxin.voice.memory_summary import force_summary_trigger, sync_summary_json, user_summary_json_path
+from shuxin.voice.persistence.memory_summary import force_summary_trigger, sync_summary_json, user_summary_json_path
 
 
 def repo_root() -> Path:

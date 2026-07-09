@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from shuxin.voice.memory_summary import (
+from shuxin.voice.persistence.memory_summary import (
     SUMMARY_WINDOW_DAYS,
     apply_turn_to_summary,
     finalize_summary_after_merge,
@@ -24,9 +24,9 @@ from shuxin.voice.memory_summary import (
     should_merge_summary,
     sync_summary_json,
 )
-from shuxin.voice.audio_files import purge_attachment_file
-from shuxin.voice.config import DeviceConfig
-from shuxin.voice.users import UserSettings, validate_user_id
+from shuxin.voice.audio.audio_files import purge_attachment_file
+from shuxin.voice.config.config import DeviceConfig
+from shuxin.voice.persistence.users import UserSettings, validate_user_id
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2

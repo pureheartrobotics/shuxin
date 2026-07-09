@@ -6,9 +6,9 @@ from pathlib import Path
 
 from shuxin.core.agent import Agent
 from shuxin.voice.providers import create_stt_provider
-from shuxin.voice.tts_config import create_tts_provider_from_device
+from shuxin.voice.config.tts_config import create_tts_provider_from_device
 from shuxin.voice.service import VoiceService
-from shuxin.voice.transport import (
+from shuxin.voice.api.transport import (
     AudioInputTransport,
     AudioOutputTransport,
     DeviceSession,

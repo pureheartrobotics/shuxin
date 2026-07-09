@@ -7,12 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from shuxin.voice.agents import AgentRecord
-from shuxin.voice.config import DeviceConfig, LLMDeviceConfig, ProviderConfig
-from shuxin.voice.server import _VoiceWebSocketSession
-from shuxin.voice.users import UserSettings
-from shuxin.voice.postgres_repository import VoicePostgresRepository
-from shuxin.voice.dmx_client import create_user_token
+from shuxin.voice.persistence.agents import AgentRecord
+from shuxin.voice.config.config import DeviceConfig, LLMDeviceConfig, ProviderConfig
+from shuxin.voice.api.ws_session import _VoiceWebSocketSession
+from shuxin.voice.persistence.users import UserSettings
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
+from shuxin.voice.integrations.dmx_client import create_user_token
 
 def test_device_auth_cache() -> None:
     async def run() -> None:
@@ -40,7 +40,7 @@ def test_device_auth_cache() -> None:
         ])
         
         # Mock verify secret and get_device
-        with patch("shuxin.voice.postgres_repository._verify_device_secret", return_value=True):
+        with patch("shuxin.voice.persistence.postgres_repository._verify_device_secret", return_value=True):
             with patch.object(repo, "ensure_user_dmx_llm", new=AsyncMock()):
                 # 1. First call: Cache miss, queries the database
                 settings_1 = await repo.authenticate_device(device_code, device_secret)
@@ -78,7 +78,7 @@ def test_dmx_balance_query_decoupled() -> None:
         ])
         pool.fetch = AsyncMock(return_value=[db_row]) # select devices
         
-        with patch("shuxin.voice.postgres_repository.get_token_balance", new=AsyncMock()) as mock_balance:
+        with patch("shuxin.voice.persistence.postgres_repository.get_token_balance", new=AsyncMock()) as mock_balance:
             quota = await repo.get_device_quota("SX-device-001", admin_detail=False)
             assert quota["exhausted"] is False
             assert quota["total_minutes_left"] == 51.5 # sub_expires_at is None, so sub_remaining is 0.0, total is 50.0 + 1.5 allowance = 51.5
@@ -101,10 +101,10 @@ def test_create_user_token_unlimited() -> None:
         async_client_mock = MagicMock()
         async_client_mock.return_value.__aenter__.return_value = client_instance
         
-        with patch("shuxin.voice.dmx_client.dmx_admin_configured", return_value=True):
-            with patch("shuxin.voice.dmx_client._admin_headers", return_value={"Authorization": "Bearer test-admin-token"}):
-                with patch("shuxin.voice.dmx_client.httpx.AsyncClient", new=async_client_mock):
-                    with patch("shuxin.voice.dmx_client._fetch_token_key_by_name", new=AsyncMock(return_value="sk-unlimited-token-abc")):
+        with patch("shuxin.voice.integrations.dmx_client.dmx_admin_configured", return_value=True):
+            with patch("shuxin.voice.integrations.dmx_client._admin_headers", return_value={"Authorization": "Bearer test-admin-token"}):
+                with patch("shuxin.voice.integrations.dmx_client.httpx.AsyncClient", new=async_client_mock):
+                    with patch("shuxin.voice.integrations.dmx_client._fetch_token_key_by_name", new=AsyncMock(return_value="sk-unlimited-token-abc")):
                         api_key = await create_user_token(name="test-unlimited", unlimited_quota=True)
                         assert api_key == "sk-unlimited-token-abc"
                         
@@ -131,14 +131,14 @@ def test_create_wechat_session_guards_deleted_user() -> None:
         pool.acquire = MagicMock()
         pool.acquire.return_value.__aenter__.return_value = conn
         
-        with patch("shuxin.voice.postgres_repository._openid_from_wx_code", new=AsyncMock(return_value="openid-test")):
+        with patch("shuxin.voice.persistence.postgres_repository._openid_from_wx_code", new=AsyncMock(return_value="openid-test")):
             with pytest.raises(PermissionError) as exc_info:
                 await repo.create_wechat_session(wx_code="some-wx-code")
             assert str(exc_info.value) == "User account is disabled or deleted"
             
         # Re-mock to return soft-deleted user (deleted_at is not None)
         conn.fetchrow = AsyncMock(return_value={"enabled": True, "deleted_at": "some-timestamp"})
-        with patch("shuxin.voice.postgres_repository._openid_from_wx_code", new=AsyncMock(return_value="openid-test")):
+        with patch("shuxin.voice.persistence.postgres_repository._openid_from_wx_code", new=AsyncMock(return_value="openid-test")):
             with pytest.raises(PermissionError) as exc_info:
                 await repo.create_wechat_session(wx_code="some-wx-code")
             assert str(exc_info.value) == "User account is disabled or deleted"

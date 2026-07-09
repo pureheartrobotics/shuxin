@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def main() -> int:
-    from shuxin.voice import wechat_pay
+    from shuxin.voice.integrations import wechat_pay
 
     print("configured:", wechat_pay.wechat_pay_configured())
     print("public_key_mode:", wechat_pay.uses_wechat_pay_public_key())

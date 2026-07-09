@@ -1,8 +1,48 @@
 from pathlib import Path
 
 
-REPO = Path("src/shuxin/voice/postgres_repository.py")
-SERVER = Path("src/shuxin/voice/server.py")
+class RepoSourceAggregator:
+    def read_text(self, encoding="utf-8"):
+        parts = []
+        for path in [
+            Path("src/shuxin/voice/persistence/postgres_repository.py"),
+            Path("src/shuxin/voice/persistence/base_repo.py"),
+            Path("src/shuxin/voice/persistence/device_repo.py"),
+            Path("src/shuxin/voice/persistence/billing_repo.py"),
+            Path("src/shuxin/voice/persistence/mbti_repo.py"),
+            Path("src/shuxin/voice/persistence/factory_verify_repo.py"),
+            Path("src/shuxin/voice/persistence/user_repo.py"),
+            Path("src/shuxin/voice/persistence/memory_repo.py"),
+        ]:
+            if path.exists():
+                parts.append(path.read_text(encoding=encoding))
+        return "\n".join(parts)
+
+REPO = RepoSourceAggregator()
+
+class VoiceSourceAggregator:
+    def read_text(self, encoding="utf-8"):
+        parts = []
+        for path in [
+            Path("src/shuxin/voice/server.py"),
+            Path("src/shuxin/voice/api/routers/admin.py"),
+            Path("src/shuxin/voice/api/routers/user.py"),
+            Path("src/shuxin/voice/api/routers/factory.py"),
+            Path("src/shuxin/voice/api/routers/payment.py"),
+            Path("src/shuxin/voice/api/ws_session.py"),
+            Path("src/shuxin/voice/static/admin.html"),
+        ]:
+            if path.exists():
+                text = path.read_text(encoding=encoding)
+                if path.name == "admin.py":
+                    text = text.replace('@router.get("', '@router.get("/admin/api')
+                    text = text.replace('@router.post("', '@router.post("/admin/api')
+                    text = text.replace('@router.patch("', '@router.patch("/admin/api')
+                    text = text.replace('@router.delete("', '@router.delete("/admin/api')
+                parts.append(text)
+        return "\n".join(parts)
+
+SERVER = VoiceSourceAggregator()
 
 
 def test_factory_provision_uses_per_device_secret_hash() -> None:

@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from shuxin.voice.providers import TTSProvider
-from shuxin.voice.tts_config import ResolvedTtsConfig
+from shuxin.voice.config.tts_config import ResolvedTtsConfig
 
 VOLCENGINE_TTS_SUCCESS_CODE = 3000
 

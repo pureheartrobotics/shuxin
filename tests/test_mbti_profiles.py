@@ -7,8 +7,8 @@ import pytest
 from shuxin.core.identity import IdentityEngine, load_mbti_profiles
 from shuxin.core.soul import SoulEngine
 from shuxin.plugins.companion import CompanionPlugin
-from shuxin.voice.agents import AgentRecord
-from shuxin.voice.config import DeviceConfig
+from shuxin.voice.persistence.agents import AgentRecord
+from shuxin.voice.config.config import DeviceConfig
 from shuxin.voice.service import VoiceService
 
 SAMPLE_TYPES = ("INFJ", "ENFP", "ISTJ")

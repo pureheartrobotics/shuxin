@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from shuxin.voice.payment_config import DEFAULT_CREDIT_RATIO, compute_payment_credits, normalize_credit_ratio
-from shuxin.voice.postgres_repository import VoicePostgresRepository
+from shuxin.voice.config.payment_config import DEFAULT_CREDIT_RATIO, compute_payment_credits, normalize_credit_ratio
+from shuxin.voice.persistence.postgres_repository import VoicePostgresRepository
 
 
 class FakePool:

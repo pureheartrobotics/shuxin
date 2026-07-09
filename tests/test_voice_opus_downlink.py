@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from shuxin.voice.opus_codec import looks_like_mp3, opus_available
-from shuxin.voice.server import (
+from shuxin.voice.audio.opus_codec import looks_like_mp3, opus_available
+from shuxin.voice.api.ws_session import (
     HARD_WS_DOWNLINK_MAX_BYTES as SERVER_HARD_MAX,
     _VoiceWebSocketSession,
     _negotiate_audio_params,

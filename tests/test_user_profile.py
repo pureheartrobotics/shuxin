@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from shuxin.voice.user_profile import (
+from shuxin.voice.config.user_profile import (
     extract_profile_facts,
     format_profile_context,
     load_profile,

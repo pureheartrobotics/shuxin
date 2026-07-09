@@ -6,14 +6,14 @@ import json
 import pytest
 
 from shuxin.core.config import Config
-from shuxin.voice.memory_summary import (
+from shuxin.voice.persistence.memory_summary import (
     apply_turn_to_summary,
     memory_field_defaults,
     should_merge_summary,
     summary_every_n,
 )
-from shuxin.voice.storage import UserVoiceStorage
-from shuxin.voice.users import UserSettings
+from shuxin.voice.persistence.storage import UserVoiceStorage
+from shuxin.voice.persistence.users import UserSettings
 
 
 def test_memory_field_defaults_present():
@@ -100,7 +100,7 @@ def test_storage_merge_every_five_turns_and_sync_json(tmp_path, monkeypatch):
         return result, summary, synced
 
     monkeypatch.setattr(
-        "shuxin.voice.storage.merge_summary_with_llm",
+        "shuxin.voice.persistence.storage.merge_summary_with_llm",
         lambda **_kwargs: "合并后的七日摘要",
     )
     result, summary, synced = asyncio.run(run())
@@ -133,7 +133,7 @@ def test_storage_force_merge_on_disconnect_path(tmp_path, monkeypatch):
         return await storage.maybe_merge_rolling_summary(None, force=True)
 
     monkeypatch.setattr(
-        "shuxin.voice.storage.merge_summary_with_llm",
+        "shuxin.voice.persistence.storage.merge_summary_with_llm",
         lambda **_kwargs: "断线摘要",
     )
     result = asyncio.run(run())
