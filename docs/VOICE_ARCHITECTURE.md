@@ -115,7 +115,13 @@ http://localhost:8765/voice-demo
 
 - `db.py`：asyncpg 连接池与迁移入口。
 - `migrations/`：voice Postgres SQL 迁移。
-- `postgres_repository.py`：Postgres 用户、设备、绑定、事件和附件仓储。
+- `persistence/`：持久化数据仓储目录：
+  - `postgres_repository.py`：总线 Facade 门面，完全解耦为对各子仓储的转发。
+  - `user_repo.py`：承载用户会话、公告/反馈审计、Agent 及设置 CRUD。
+  - `memory_repo.py`：管理短期对话轮次落库、多媒体附件 purging 与 shared_memory 摘要更新。
+  - `device_repo.py`：设备绑定、限额门控及初始化前置参数匹配。
+  - `billing_repo.py`：账单流水录入、DMX 计费与微信支付套餐订单处理。
+  - `base_repo.py`：基础仓储基类及时间、JSON 等转换工具集。
 - `local_repository.py`：未配置 `DATABASE_URL` 时的 YAML demo fallback。
 - `audio_files.py`：用户音频附件路径、额度和压缩策略。
 - `config.py`：设备级配置，后续可以替换成远程设备配置服务。
