@@ -265,10 +265,13 @@ class Agent:
         return self._system_prompt
 
     def _location_tools_enabled(self, user_input: str) -> bool:
-        provider = self._location_provider or get_location_provider(self.config.map)
+        map_config = getattr(self.config, "map", None)
+        if not map_config:
+            return False
+        provider = getattr(self, "_location_provider", None) or get_location_provider(map_config)
         if not provider.is_available():
             return False
-        return should_attach_location_tools(user_input, self.config.map)
+        return should_attach_location_tools(user_input, map_config)
 
     def _build_llm_messages(self) -> List[LLMMessage]:
         messages = self.memory.build_context(
@@ -863,7 +866,7 @@ class Agent:
     @staticmethod
     def _is_speakable_reply(text: str) -> bool:
         """流式/TTS 是否有可朗读正文（非空且非纯括号动作）。"""
-        from shuxin.voice.text_sanitize import prepare_speakable_text
+        from shuxin.voice.audio.text_sanitize import prepare_speakable_text
 
         return bool(prepare_speakable_text(text or ""))
 
