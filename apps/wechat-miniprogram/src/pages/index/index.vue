@@ -103,6 +103,9 @@ onShow(() => {
     applyScannedCode(tempCode, "device_code");
     uni.removeStorageSync("temp_device_code");
   }
+  if (sessionToken()) {
+    void loadDevices();
+  }
 });
 
 function navigateToBleProvisioning() {

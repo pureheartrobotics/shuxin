@@ -72,6 +72,8 @@ def test_wechat_miniprogram_uses_wx_login_and_device_apis() -> None:
     assert "getFileSystemManager" in page
     assert '"/health"' in page
     assert "[kind]" in page
+    assert "onShow" in page
+    assert "void loadDevices()" in page
 
 
 def test_wechat_miniprogram_profile_page_has_account_controls() -> None:
