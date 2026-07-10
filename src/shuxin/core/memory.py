@@ -116,6 +116,7 @@ class MemoryManager:
         # 搜索结果缓存：{query: (timestamp, results)}，减少重复 embedding API 调用
         self._mem0_search_cache: Dict[str, tuple] = {}
         self._mem0_cache_lock = threading.Lock()
+        self._last_mem0_results: List[str] = []
 
         self._load_facts()
         if self._mem0_enabled():
@@ -240,6 +241,19 @@ class MemoryManager:
         else:
             _MEM0_EXECUTOR.submit(_run)
 
+    def _is_low_semantic_query(self, query: str) -> bool:
+        q = query.strip()
+        if len(q) < 5:
+            # 涉及显式记忆设定的特殊前缀，不进行绕过
+            if any(p.search(q) for p in _SYNC_USER_PATTERNS):
+                return False
+            return True
+        # 长但无实际实体或语义意图的日常语气词
+        fillers = {"我不知道", "你想说什么", "那当然啦", "原来是这样", "没有关系", "没关系啊", "没事的哈"}
+        if q in fillers:
+            return True
+        return False
+
     def _should_sync_mem0_add(self, user_text: str) -> bool:
         text = user_text.strip()
         if not text:
@@ -254,6 +268,11 @@ class MemoryManager:
         if not q:
             return []
 
+        # 低语义/短查询绕过：复用最近一次的有效检索结果，将首字延迟 (TTFT) 降低 1~2s 左右阻碍
+        if self._is_low_semantic_query(q) and self._last_mem0_results:
+            logger.debug("[Mem0-Bypass] 针对低语义/短查询 '%s' 复用上一次有效结果: %s", q, self._last_mem0_results)
+            return self._last_mem0_results
+
         # 缓存命中：相同查询文本 5 分钟内直接复用结果，避免重复调 embedding API
         now = time.monotonic()
         with self._mem0_cache_lock:
@@ -262,6 +281,7 @@ class MemoryManager:
                 ts, results = cached
                 if now - ts < _MEM0_SEARCH_CACHE_TTL:
                     logger.debug("[Mem0] 缓存命中，跳过 embedding 请求")
+                    self._last_mem0_results = results
                     return results
             # 清理过期缓存，防止无限增长
             if len(self._mem0_search_cache) > 32:
@@ -306,9 +326,10 @@ class MemoryManager:
         # 防御性截断：即使 Mem0 端忽略 top_k 也不会超注入上限
         results = lines[: self._mem0_top_k]
 
-        # 写入缓存
+        # 写入缓存与上一次结果状态
         with self._mem0_cache_lock:
             self._mem0_search_cache[q] = (time.monotonic(), results)
+        self._last_mem0_results = results
         return results
 
     def _recent_user_text(self) -> str:
@@ -416,7 +437,17 @@ class MemoryManager:
     def get_facts_summary(self) -> str:
         if self._mem0_enabled():
             query = self._last_user_text or self._recent_user_text()
-            hits = self._search_mem0(query)
+            if not query:
+                hits = []
+            else:
+                from concurrent.futures import TimeoutError
+                future = _MEM0_EXECUTOR.submit(self._search_mem0, query)
+                try:
+                    hits = future.result(timeout=0.8)
+                except TimeoutError:
+                    logger.warning("[Mem0-Timeout] 长期记忆检索超时(>800ms)，降级复用历史记忆以保证 TTFT 体验")
+                    hits = self._last_mem0_results
+
             if hits:
                 lines = ["## 关于用户的记忆（相关）"]
                 for line in hits:

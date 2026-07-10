@@ -91,3 +91,57 @@ def test_get_facts_summary_respects_top_k(tmp_path: Path, monkeypatch: pytest.Mo
     mem.add_message("user", "面试准备")
     summary = mem.get_facts_summary()
     assert summary.count("fact-") == 5
+
+
+def test_low_semantic_query_bypass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(data_dir=str(tmp_path / "users" / "alice" / "memory"))
+
+    search_count = 0
+
+    class _FakeMem0:
+        def search(self, query: str, *, filters=None, top_k=20, **kwargs):
+            nonlocal search_count
+            search_count += 1
+            return {"results": [{"memory": "user likes coffee"}]}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+
+    # 1. First search: substantive query, search_count should increment
+    hits = mem._search_mem0("我最喜欢喝咖啡了")
+    assert hits == ["user likes coffee"]
+    assert search_count == 1
+
+    # 2. Second search: low semantic query ("哈哈"), should bypass search and reuse previous results
+    hits2 = mem._search_mem0("哈哈")
+    assert hits2 == ["user likes coffee"]
+    assert search_count == 1
+
+    # 3. Third search: contains special memory command prefix ("记住我"), should NOT bypass
+    hits3 = mem._search_mem0("记住我")
+    assert hits3 == ["user likes coffee"]
+    assert search_count == 2
+
+
+def test_get_facts_summary_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(data_dir=str(tmp_path / "users" / "alice" / "memory"))
+    mem._last_mem0_results = ["user likes tea"]
+
+    def _slow_search(query):
+        time.sleep(2.0)
+        return ["user likes cookies"]
+
+    mem._search_mem0 = _slow_search
+    mem._last_user_text = "我喜欢吃饼干"
+
+    t0 = time.perf_counter()
+    summary = mem.get_facts_summary()
+    elapsed = time.perf_counter() - t0
+
+    # It should timeout and fallback to _last_mem0_results (likes tea)
+    assert "user likes tea" in summary
+    assert "user likes cookies" not in summary
+    assert elapsed < 1.2
