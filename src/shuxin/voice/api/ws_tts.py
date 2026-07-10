@@ -106,20 +106,38 @@ class TtsSentenceSegmenter:
             )
             return output_path
 
-        sentence_started = time.perf_counter()
-        speech_path = await self.session.tts.synthesize(clean_text, output_path)
-        if self.session._uses_opus_downlink():
-            await self.session._send_opus_downlink_stream(speech_path)
-        else:
-            await self.session._send_downlink_bytes(speech_path.read_bytes())
-        await self.session._send_json(
-            {
-                "type": "tts",
-                "state": "sentence_stop",
-                "text": text,
-                "index": sentence_index,
-                "elapsed_ms": _elapsed_ms(sentence_started),
-                "total_elapsed_ms": _elapsed_ms(turn_started),
-            }
-        )
-        return speech_path
+        try:
+            sentence_started = time.perf_counter()
+            speech_path = await self.session.tts.synthesize(clean_text, output_path)
+            if self.session._uses_opus_downlink():
+                await self.session._send_opus_downlink_stream(speech_path)
+            else:
+                await self.session._send_downlink_bytes(speech_path.read_bytes())
+            await self.session._send_json(
+                {
+                    "type": "tts",
+                    "state": "sentence_stop",
+                    "text": text,
+                    "index": sentence_index,
+                    "elapsed_ms": _elapsed_ms(sentence_started),
+                    "total_elapsed_ms": _elapsed_ms(turn_started),
+                }
+            )
+            return speech_path
+        except Exception as exc:
+            logger.warning("TTS 语音合成失败 (clean_text='%s'): %s", clean_text, exc)
+            try:
+                output_path.write_bytes(b"")
+            except Exception:
+                pass
+            await self.session._send_json(
+                {
+                    "type": "tts",
+                    "state": "sentence_stop",
+                    "text": text,
+                    "index": sentence_index,
+                    "elapsed_ms": 10,
+                    "total_elapsed_ms": _elapsed_ms(turn_started),
+                }
+            )
+            return output_path
