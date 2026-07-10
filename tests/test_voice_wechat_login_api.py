@@ -135,7 +135,7 @@ def test_user_quota_route_uses_session_token(monkeypatch) -> None:
     assert response.json()["remain_yuan"] == 8.5
 
 
-def test_bind_device_rejects_exhausted_quota(monkeypatch) -> None:
+def test_bind_device_allows_exhausted_quota(monkeypatch) -> None:
     monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
     app = create_app()
 
@@ -144,7 +144,7 @@ def test_bind_device_rejects_exhausted_quota(monkeypatch) -> None:
             return {"configured": True, "exhausted": True, "message": "额度已用尽，请联系客服"}
 
         async def bind_device(self, **kwargs):
-            raise AssertionError("bind_device should not be called when quota is exhausted")
+            return {"binding_id": "test_bind_999", "already_bound": False}
 
     with TestClient(app) as client:
         app.state.repo = FakeRepo()
@@ -153,8 +153,8 @@ def test_bind_device_rejects_exhausted_quota(monkeypatch) -> None:
             json={"session_token": "app-session", "claim_code": "CLM-A001-000001"},
         )
 
-    assert response.status_code == 403
-    assert "联系客服" in response.json()["error"]
+    assert response.status_code == 200
+    assert response.json()["binding_id"] == "test_bind_999"
 
 
 def test_admin_platform_llm_defaults_route(monkeypatch) -> None:

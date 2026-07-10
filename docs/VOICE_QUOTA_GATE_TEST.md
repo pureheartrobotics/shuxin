@@ -238,7 +238,34 @@ docker exec -w /app shuxin-voice-demo-pg env PYTHONPATH=src \
 
 ---
 
-## 5. 常见踩坑
+## 5. 首绑礼包验收
+
+绑定**不受**额度门控；礼包按**设备**终身一次（`metadata.activation_gift_applied` + 无历史 binding）。小程序展示的 `remain_yuan` / `total_minutes_left` 为**语音分钟池**，与 DMX 余额无关。
+
+### 单元测试（不依赖 Docker）
+
+```bash
+PYTHONPATH=src pytest tests/test_activation_gift_flow.py tests/test_miniapp_billing.py -q
+```
+
+覆盖：`admin_bind` 首绑 → 额度 ≥120 → 全池清零 `exhausted` → 小程序 `POST /api/devices/bind` 新机恢复额度 → 重绑不重复礼包。
+
+### Docker 一键冒烟
+
+```bash
+# 需 compose 已 up（voice + postgres）
+bash scripts/smoke_activation_gift.sh
+```
+
+脚本行为：创建 `wx_smoke_*` 临时用户 → Admin 绑设备 A → 断言 120 分钟 → 清零用户池 → 注入 session 绑设备 B（200 + 额度恢复）→ 解绑/重绑 A 不重复礼包 → 退出时清理 active 绑定。退出码 `0` 为通过。
+
+可选环境变量：`SHUXIN_ADMIN_TOKEN`、`VOICE_BASE`、`SMOKE_DEVICE_A`、`SMOKE_DEVICE_B`。
+
+自动选设备时要求：`provisioned` 且**从未**出现在 `device_bindings`（有历史记录的解绑机不会再发礼包）。
+
+---
+
+## 6. 常见踩坑
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
@@ -251,7 +278,7 @@ docker exec -w /app shuxin-voice-demo-pg env PYTHONPATH=src \
 
 ---
 
-## 6. 已知差异（follow-up）
+## 7. 已知差异（follow-up）
 
 `listen start` 路径在 `_start_realtime_asr_if_needed()` 内若因额度失败，当前返回：
 
@@ -265,7 +292,7 @@ docker exec -w /app shuxin-voice-demo-pg env PYTHONPATH=src \
 
 ---
 
-## 7. 恢复测试数据
+## 8. 恢复测试数据
 
 测试完成后勿长期留全零额度。任选其一：
 
@@ -287,7 +314,7 @@ WHERE device_id = '<DEVICE_ID>';
 
 ---
 
-## 8. 相关文档
+## 9. 相关文档
 
 | 文档 | 内容 |
 |------|------|
@@ -297,14 +324,16 @@ WHERE device_id = '<DEVICE_ID>';
 | [`VOICE_DEMO_MIN_TEST.md`](VOICE_DEMO_MIN_TEST.md) §17 | Opus WS 冒烟脚本 |
 | [`PRICING_STRATEGY.md`](PRICING_STRATEGY.md) | 订阅 / 加油包 / 低保产品定义 |
 | [`tests/test_voice_quota_gate.py`](../tests/test_voice_quota_gate.py) | 门控单元测试 |
+| [`tests/test_activation_gift_flow.py`](../tests/test_activation_gift_flow.py) | 首绑礼包 + 耗尽绑机全链路 |
+| [`scripts/smoke_activation_gift.sh`](../scripts/smoke_activation_gift.sh) | Docker 首绑礼包冒烟 |
 | [`tests/test_miniapp_billing.py`](../tests/test_miniapp_billing.py) | 扣费与跨月 fuel 测试 |
 
 ---
 
-## 9. 快速检查清单
+## 10. 快速检查清单
 
 - [ ] `device_bindings`：该用户有几台 `active` 设备？
 - [ ] Admin `/admin/api/users/<id>/quota`：`exhausted` 是否为 `true`？
 - [ ] voice-demo / WS：额度耗尽后无 STT/LLM/TTS？
-- [ ] `pytest tests/test_voice_quota_gate.py` 通过？
+- [ ] `bash scripts/smoke_activation_gift.sh` 通过？（首绑礼包）
 - [ ] 硬件：`quota_exhausted` 或额度文案 → 本地 `QUOTA_EXHAUSTED` 提示音？

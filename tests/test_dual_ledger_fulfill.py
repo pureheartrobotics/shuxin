@@ -144,7 +144,7 @@ def test_new_user_display_balance_matches_dmx_gift() -> None:
 
     _, llm_json, metadata_json = pool.executed[0][1]
     metadata = json.loads(metadata_json)
-    assert metadata[DISPLAY_BALANCE_METADATA_KEY] == 10.0
+    assert metadata[DISPLAY_BALANCE_METADATA_KEY] == 0.0
 
 
 class QuotaFakePool:

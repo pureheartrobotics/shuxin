@@ -153,15 +153,16 @@ class UserRepository(BaseRepository):
                     RETURNING user_id
                 ), insert_session AS (
                     INSERT INTO wechat_sessions (
-                        session_token, user_id, client_id, device_id, expires_at
+                        session_token_hash, user_id, expires_at
                     )
-                    VALUES ($2, $1, 'miniapp', 'miniapp', now() + interval '30 days')
+                    VALUES ($3, $1, now() + interval '30 days')
                     RETURNING expires_at
                 )
                 SELECT expires_at FROM insert_session
                 """,
                 user_id,
-                session_token,
+                json.dumps({"identity_provider": "wechat"}, ensure_ascii=False),
+                _hash_secret(session_token),
             )
         await self.audit("create_wechat_session", "session", session_token, {"user_id": user_id})
         return {
@@ -712,7 +713,7 @@ class UserRepository(BaseRepository):
     ) -> None:
         await self.pool.execute(
             """
-            INSERT INTO voice_audit_logs (log_id, action, target_type, target_id, metadata)
+            INSERT INTO admin_audit_logs (audit_id, action, target_type, target_id, metadata)
             VALUES ($1, $2, $3, $4, $5::jsonb)
             """,
             uuid.uuid4().hex,
@@ -733,17 +734,18 @@ class UserRepository(BaseRepository):
     ) -> None:
         await self.pool.execute(
             """
-            INSERT INTO adapter_action_logs (
-                log_id, adapter_id, action, success, error_msg, metadata
+            INSERT INTO adapter_actions (
+                action_id, adapter_name, action, status, request_json, result_json, error
             )
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
             """,
             uuid.uuid4().hex,
             adapter_id,
             action,
-            success,
-            error_msg,
+            "error" if (error_msg or not success) else "ok",
             json.dumps(metadata or {}, ensure_ascii=False),
+            json.dumps({}, ensure_ascii=False),
+            error_msg,
         )
 
     async def get_active_announcements(self) -> list[dict[str, Any]]:

@@ -557,3 +557,140 @@ def test_admin_update_allowance_settings():
     assert args == (3.0, True, "plan-1", 3)
 
 
+def test_old_user_binds_new_device_gets_gift() -> None:
+    class OldUserFakeConnection(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                return {"status": "provisioned", "metadata": "{}"}
+            elif "miniapp_allowance_settings" in query:
+                return {
+                    "gift_subscription_plan_id": "gift_plan_id",
+                    "gift_duration_months": 3
+                }
+            elif "miniapp_subscription_plans" in query:
+                return {"duration_minutes": 100}
+            elif "device_bindings" in query:
+                # No bindings exist
+                return None
+            return None
+
+    conn = OldUserFakeConnection()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        res = await repo._bind_device_for_user(conn, user_id="existing_user", device_id="device_new", event_type="bind_hello")
+        assert res["already_bound"] is False
+
+    asyncio.run(run())
+
+    device_updates = [x for x in conn.executed if "UPDATE devices" in x[0]]
+    assert len(device_updates) == 2
+
+    gift_update = device_updates[1][1]
+    assert gift_update[0] == "device_new"
+    assert gift_update[1] == "gift_plan_id"
+    assert gift_update[2] == 100
+    assert gift_update[3] == 3
+    import json
+    meta = json.loads(gift_update[4]) if isinstance(gift_update[4], str) else gift_update[4]
+    assert meta.get("activation_gift_applied") is True
+
+
+def test_rebound_device_does_not_get_gift() -> None:
+    class ReboundFakeConnection(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                return {"status": "provisioned", "metadata": "{}"}
+            elif "miniapp_allowance_settings" in query:
+                return {
+                    "gift_subscription_plan_id": "gift_plan_id",
+                    "gift_duration_months": 3
+                }
+            elif "miniapp_subscription_plans" in query:
+                return {"duration_minutes": 100}
+            elif "device_bindings" in query:
+                # Simulate that a binding already exists in history (e.g. limit 1 check)
+                if "LIMIT 1" in query:
+                    return {"binding_id": "prev_bind_id", "status": "unbound"}
+                # No active binding
+                return None
+            return None
+
+    conn = ReboundFakeConnection()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        res = await repo._bind_device_for_user(conn, user_id="test_user", device_id="device_rebound", event_type="bind_hello")
+        assert res["already_bound"] is False
+
+    asyncio.run(run())
+
+    # The welcome gift UPDATE should NOT be executed (so only 1 UPDATE to status = 'bound')
+    device_updates = [x for x in conn.executed if "UPDATE devices" in x[0]]
+    assert len(device_updates) == 1
+
+
+def test_bind_device_succeeds_when_quota_exhausted() -> None:
+    from fastapi.testclient import TestClient
+    from shuxin.voice.server import create_app
+    from unittest.mock import AsyncMock, MagicMock
+
+    app = create_app()
+    fake_repo = MagicMock()
+    # Mock bind_device to succeed
+    fake_repo.bind_device = AsyncMock(return_value={"binding_id": "test_bind_123", "already_bound": False})
+    
+    with TestClient(app) as client:
+        app.state.repo = fake_repo
+        
+        # Call POST /api/devices/bind
+        response = client.post(
+            "/api/devices/bind",
+            json={
+                "session_token": "exhausted_user_session_token",
+                "wx_code": "wx_code_123",
+                "claim_code": "claim_123",
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["binding_id"] == "test_bind_123"
+        fake_repo.bind_device.assert_called_once()
+
+
+def test_device_rebind_skipped_by_metadata_flag() -> None:
+    class MetadataReboundFakeConnection(FakeConnection):
+        async def fetchrow(self, query, *args):
+            self.executed.append((query, args))
+            if "devices" in query:
+                # Device is provisioned but metadata already says welcome gift was applied!
+                return {"status": "provisioned", "metadata": '{"activation_gift_applied": true}'}
+            elif "miniapp_allowance_settings" in query:
+                return {
+                    "gift_subscription_plan_id": "gift_plan_id",
+                    "gift_duration_months": 3
+                }
+            elif "miniapp_subscription_plans" in query:
+                return {"duration_minutes": 100}
+            elif "device_bindings" in query:
+                return None
+            return None
+
+    conn = MetadataReboundFakeConnection()
+    repo = VoicePostgresRepository(pool=FakePool(conn))
+
+    async def run():
+        res = await repo._bind_device_for_user(conn, user_id="test_user", device_id="device_meta_rebound", event_type="bind_hello")
+        assert res["already_bound"] is False
+
+    asyncio.run(run())
+
+    # The welcome gift UPDATE should NOT be executed because the metadata flag bypassed the check
+    device_updates = [x for x in conn.executed if "UPDATE devices" in x[0]]
+    assert len(device_updates) == 1
+
+
+
+

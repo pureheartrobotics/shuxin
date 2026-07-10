@@ -485,9 +485,26 @@ class DeviceRepository(BaseRepository):
         
         # Check if the device is being bound/activated for the first time
         is_first_activation = False
-        device_row = await conn.fetchrow("SELECT status FROM devices WHERE device_id = $1", device_id)
+        device_row = await conn.fetchrow("SELECT status, metadata FROM devices WHERE device_id = $1", device_id)
         if device_row and device_row["status"] == "provisioned":
-            is_first_activation = True
+            import json
+            meta = {}
+            raw_metadata = device_row.get("metadata")
+            if raw_metadata:
+                try:
+                    if isinstance(raw_metadata, dict):
+                        meta = raw_metadata
+                    else:
+                        meta = json.loads(raw_metadata)
+                except Exception:
+                    pass
+            if not meta.get("activation_gift_applied"):
+                has_bindings = await conn.fetchrow(
+                    "SELECT 1 FROM device_bindings WHERE device_id = $1 LIMIT 1",
+                    device_id
+                )
+                if not has_bindings:
+                    is_first_activation = True
 
         await conn.execute(
             """
@@ -769,9 +786,26 @@ class DeviceRepository(BaseRepository):
                     }
 
                 is_first_activation = False
-                device_row = await conn.fetchrow("SELECT status FROM devices WHERE device_id = $1", selected_device)
+                device_row = await conn.fetchrow("SELECT status, metadata FROM devices WHERE device_id = $1", selected_device)
                 if device_row and device_row["status"] == "provisioned":
-                    is_first_activation = True
+                    import json
+                    meta = {}
+                    raw_metadata = device_row.get("metadata")
+                    if raw_metadata:
+                        try:
+                            if isinstance(raw_metadata, dict):
+                                meta = raw_metadata
+                            else:
+                                meta = json.loads(raw_metadata)
+                        except Exception:
+                            pass
+                    if not meta.get("activation_gift_applied"):
+                        has_bindings = await conn.fetchrow(
+                            "SELECT 1 FROM device_bindings WHERE device_id = $1 LIMIT 1",
+                            selected_device
+                        )
+                        if not has_bindings:
+                            is_first_activation = True
 
                 binding_id = uuid.uuid4().hex
                 await conn.execute(

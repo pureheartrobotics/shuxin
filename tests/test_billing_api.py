@@ -157,6 +157,7 @@ def test_device_bind_quota_exhausted() -> None:
     with TestClient(app) as client:
         fake_repo = FakeRepo()
         fake_repo.get_user_quota_by_session = AsyncMock(return_value={"exhausted": True})
+        fake_repo.bind_device = AsyncMock(return_value={"binding_id": "bind_999", "already_bound": False})
         app.state.repo = fake_repo
         
         response = client.post(
@@ -167,7 +168,6 @@ def test_device_bind_quota_exhausted() -> None:
                 "device_code": "dev123"
             }
         )
-        assert response.status_code == 403
+        assert response.status_code == 200
         data = response.json()
-        assert data["error_kind"] == "quota_exhausted"
-        assert "额度已用尽" in data["error"]
+        assert data["binding_id"] == "bind_999"

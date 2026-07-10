@@ -81,12 +81,6 @@ async def submit_feedback(request: Request, repo=Depends(get_repo)):
 async def bind_device(request: Request, repo=Depends(get_repo)):
     payload = await request.json()
     session_token = str(payload.get("session_token") or "")
-    if session_token:
-        quota = await repo.get_user_quota_by_session(session_token)
-        if quota.get("exhausted"):
-            # Quota exhausted error fallback
-            msg = quota.get("message") or QUOTA_EXHAUSTED_MESSAGE
-            return JSONResponse({"error": msg, "error_kind": "quota_exhausted"}, status_code=403)
     result = await repo.bind_device(
         wx_code=str(payload.get("wx_code") or ""),
         session_token=session_token,

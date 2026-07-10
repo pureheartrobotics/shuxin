@@ -160,12 +160,20 @@ def test_admin_bind_device_first_activation_gifts_plan() -> None:
         conn.transaction = MagicMock(return_value=tx_mock)
         
         # When conn.fetchrow is called inside admin_bind_device
-        conn.fetchrow = AsyncMock(side_effect=[
-            None, # 1st: SELECT binding_id FROM device_bindings
-            {"status": "provisioned"}, # 2nd: SELECT status FROM devices
-            {"gift_subscription_plan_id": "jichuban", "gift_duration_months": 3}, # 3rd: SELECT gift rules
-            {"duration_minutes": 300}, # 4th: SELECT plan duration
-        ])
+        async def fetchrow_mock(query, *args):
+            if "device_bindings" in query and "LIMIT 1" in query:
+                return None
+            if "device_bindings" in query:
+                return None
+            if "devices" in query:
+                return {"status": "provisioned"}
+            if "miniapp_allowance_settings" in query:
+                return {"gift_subscription_plan_id": "jichuban", "gift_duration_months": 3}
+            if "miniapp_subscription_plans" in query:
+                return {"duration_minutes": 300}
+            return None
+
+        conn.fetchrow = AsyncMock(side_effect=fetchrow_mock)
         
         # Mock fetchval for device/user exist checks
         conn.fetchval = AsyncMock(return_value=True)
@@ -180,19 +188,21 @@ def test_admin_bind_device_first_activation_gifts_plan() -> None:
                 res = await repo.admin_bind_device(user_id="wx_test_123", device_id="SX-000999")
                 assert res["device_id"] == "SX-000999"
                 assert res["user_id"] == "wx_test_123"
-                
-                # Verify that conn.execute was called to update devices with jichuban and 300 minutes
-                # It should be the third execute call
-                called_executes = conn.execute.call_args_list
-                assert len(called_executes) >= 3
-                
-                # Check the third execute call (the update query)
-                update_args = called_executes[2][0]
-                assert "UPDATE devices" in update_args[0]
-                assert update_args[1] == "SX-000999" # device_id
-                assert update_args[2] == "jichuban" # gift_plan_id
-                assert update_args[3] == 300 # duration_minutes
-                assert update_args[4] == 3 # gift_months
+
+                gift_calls = [
+                    call
+                    for call in conn.execute.call_args_list
+                    if "UPDATE devices" in call[0][0] and "subscription_plan_id = $2" in call[0][0]
+                ]
+                assert len(gift_calls) == 1
+                update_args = gift_calls[0][0]
+                assert update_args[1] == "SX-000999"
+                assert update_args[2] == "jichuban"
+                assert update_args[3] == 300
+                assert update_args[4] == 3
+                import json
+                meta = json.loads(update_args[5]) if isinstance(update_args[5], str) else update_args[5]
+                assert meta.get("activation_gift_applied") is True
 
     asyncio.run(run())
 

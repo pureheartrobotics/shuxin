@@ -12,7 +12,7 @@ import httpx
 logger = logging.getLogger("shuxin.voice.dmx")
 
 QUOTA_UNITS_PER_YUAN = 500_000
-DEFAULT_QUOTA_YUAN = 10.0
+DEFAULT_QUOTA_YUAN = 0.0
 MAX_TOP_UP_YUAN = 1000.0
 QUOTA_EXHAUSTED_MESSAGE = "额度已用尽，请充值"
 

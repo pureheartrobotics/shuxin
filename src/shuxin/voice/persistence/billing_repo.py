@@ -1188,6 +1188,21 @@ class BillingRepository(BaseRepository):
             )
             if plan_row:
                 duration_minutes = plan_row["duration_minutes"]
+                
+                # Fetch existing metadata, default to {} if null/empty
+                meta_row = await conn.fetchrow("SELECT metadata FROM devices WHERE device_id = $1", device_id)
+                meta = {}
+                raw_metadata = meta_row.get("metadata") if meta_row else None
+                if raw_metadata:
+                    try:
+                        if isinstance(raw_metadata, dict):
+                            meta = raw_metadata
+                        else:
+                            meta = json.loads(raw_metadata)
+                    except Exception:
+                        pass
+                meta["activation_gift_applied"] = True
+
                 await conn.execute(
                     """
                     UPDATE devices
@@ -1195,6 +1210,7 @@ class BillingRepository(BaseRepository):
                         subscription_minutes_limit = $3,
                         subscription_minutes_used = 0.0000,
                         subscription_expires_at = now() + ($4 * INTERVAL '30 days'),
+                        metadata = $5::jsonb,
                         updated_at = now()
                     WHERE device_id = $1
                     """,
@@ -1202,6 +1218,7 @@ class BillingRepository(BaseRepository):
                     gift_plan_id,
                     duration_minutes,
                     gift_months,
+                    json.dumps(meta, ensure_ascii=False),
                 )
 
     async def admin_get_allowance_settings(self) -> dict[str, Any]:
