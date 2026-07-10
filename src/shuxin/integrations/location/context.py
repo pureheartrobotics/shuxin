@@ -85,7 +85,7 @@ def _parse_ip_location_structured(raw: str) -> Optional[LocationContext]:
             return None
         if _is_plausible_china_location(text):
             return LocationContext(label=text, source="ip", confidence="medium")
-        return None
+        return LocationContext(label=text or "国外", source="foreign", confidence="low")
 
     if not isinstance(data, dict) or data.get("error"):
         return None
@@ -108,7 +108,29 @@ def _parse_ip_location_structured(raw: str) -> Optional[LocationContext]:
     if province and city and province not in label:
         label = f"{province}{city}".replace("省", "省")
 
-    if not label or not _is_plausible_china_location(label):
+    # Check nation/nation_code to see if it's explicitly foreign
+    nation = str(detail.get("nation") or "").strip()
+    nation_code = str(detail.get("nation_code") or "").strip().upper()
+    is_foreign = False
+    if nation or nation_code:
+        china_nations = ("中国", "中国大陆", "香港特别行政区", "香港", "澳门特别行政区", "澳门", "台湾省", "台湾", "China", "Hong Kong", "Macao", "Taiwan")
+        china_codes = ("CHN", "CN", "HK", "HKG", "MO", "MAC", "TW", "TWN")
+        if (nation and nation not in china_nations) or (nation_code and nation_code not in china_codes):
+            is_foreign = True
+
+    if not is_foreign and label:
+        if not _is_plausible_china_location(label):
+            is_foreign = True
+
+    if is_foreign:
+        return LocationContext(
+            label=label or "国外",
+            city=city or "国外城市",
+            source="foreign",
+            confidence="low",
+        )
+
+    if not label:
         return None
 
     lat = 0.0
@@ -145,18 +167,6 @@ def _resolve_from_ip(provider: "LocationToolProvider", ip: Optional[str]) -> Loc
         ctx = _parse_ip_location_structured(raw)
         if ctx and ctx.label:
             return ctx
-        # 海外等不可信结果
-        try:
-            data = json.loads(raw)
-            addr = (
-                (data.get("content") or {}).get("address")
-                if isinstance(data, dict)
-                else None
-            )
-            if addr:
-                logger.info("IP 定位结果非中国大陆，丢弃: %s", addr)
-        except json.JSONDecodeError:
-            pass
     except Exception as exc:
         logger.warning("IP 位置解析失败: %s", exc)
     return LocationContext()
@@ -170,7 +180,7 @@ def resolve_location_context(
     default_region: Optional[str] = None,
 ) -> LocationContext:
     ip_ctx = _resolve_from_ip(provider, ip)
-    if ip_ctx.label:
+    if ip_ctx.label and ip_ctx.source != "foreign":
         return ip_ctx
 
     profile_city = _profile_location(user_home)
@@ -193,12 +203,21 @@ def resolve_location_context(
             confidence="low",
         )
 
+    if ip_ctx.label:
+        return ip_ctx
+
     return LocationContext()
 
 
 def format_location_context_block(ctx: LocationContext) -> str:
     if not ctx.label:
         return ""
+    if ctx.source == "foreign":
+        return (
+            f"【位置上下文】检测到用户 IP 位于中国大陆及港澳台以外的国外地区（{ctx.label}）。\n"
+            f"我们目前没有开通国外地图 API。如果用户向你询问其所在位置、天气或导航信息，"
+            f"请务必真实、明确地告知对方：我们目前没有接入国外（中国大陆及港澳台以外）的地图、定位与天气服务，因此无法为您提供定位或天气查询服务。"
+        )
     if ctx.confidence == "low":
         source_hint = {
             "profile": "用户画像推测",

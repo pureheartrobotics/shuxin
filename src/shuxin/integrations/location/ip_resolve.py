@@ -18,6 +18,8 @@ _EGRESS_IP_URLS = (
 )
 _EGRESS_TIMEOUT_SECONDS = 3.0
 _cached_egress_ip: Optional[str] = None
+_cached_egress_time: float = 0.0
+_EGRESS_CACHE_TTL = 30.0
 _IP_PATTERN = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
@@ -40,10 +42,14 @@ def _parse_ip_text(body: str) -> Optional[str]:
 
 
 def fetch_egress_public_ip() -> Optional[str]:
-    """获取当前环境出口公网 IP（带进程内缓存）。"""
-    global _cached_egress_ip
-    if _cached_egress_ip:
+    """获取当前环境出口公网 IP（带进程内缓存，30秒 TTL）。"""
+    global _cached_egress_ip, _cached_egress_time
+    import time
+
+    now = time.time()
+    if _cached_egress_ip and (now - _cached_egress_time) < _EGRESS_CACHE_TTL:
         return _cached_egress_ip
+
     for url in _EGRESS_IP_URLS:
         try:
             response = httpx.get(url, timeout=_EGRESS_TIMEOUT_SECONDS)
@@ -51,6 +57,7 @@ def fetch_egress_public_ip() -> Optional[str]:
             ip = _parse_ip_text(response.text)
             if ip:
                 _cached_egress_ip = ip
+                _cached_egress_time = now
                 logger.info("出口公网 IP (%s): %s", url, ip)
                 return ip
         except Exception as exc:
@@ -68,5 +75,6 @@ def resolve_effective_ip(client_ip: Optional[str]) -> Optional[str]:
 
 
 def clear_egress_ip_cache() -> None:
-    global _cached_egress_ip
+    global _cached_egress_ip, _cached_egress_time
     _cached_egress_ip = None
+    _cached_egress_time = 0.0

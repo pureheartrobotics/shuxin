@@ -86,7 +86,15 @@ DEFAULT_WS_DOWNLINK_MAX_BYTES = 2048
 HARD_WS_DOWNLINK_MAX_BYTES = 4096
 logger = logging.getLogger("shuxin.voice.server")
 _FACTORY_ACCEPTANCE_DISABLED = "factory acceptance mode: conversation disabled"
-
+def _location_cache_ttl_seconds() -> int:
+    raw = os.environ.get(
+        "SHUXIN_LOCATION_CACHE_TTL_SECONDS",
+        str(DEFAULT_LOCATION_CACHE_TTL_SECONDS),
+    ).strip()
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return DEFAULT_LOCATION_CACHE_TTL_SECONDS
 
 
 def _ws_downlink_max_bytes() -> int:

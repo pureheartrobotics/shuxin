@@ -134,3 +134,32 @@ def test_format_low_confidence_block():
     )
     assert "推测可能" in block
     assert "勿当作用户已确认地址" in block
+
+
+def test_foreign_ip_explicit_mcp_message():
+    class _USProvider(_StubProvider):
+        def call_tool(self, name: str, arguments: dict) -> str:
+            return json.dumps(
+                {
+                    "status": 0,
+                    "content": {
+                        "address": "CaliforniaLos Angeles",
+                        "address_detail": {
+                            "province": "California",
+                            "city": "Los Angeles",
+                            "nation": "United States",
+                            "nation_code": "USA",
+                            "adcode": "0",
+                        },
+                    },
+                }
+            )
+
+    ctx = resolve_location_context(_USProvider(), ip="8.8.8.8", user_home=None)
+    assert "Los Angeles" in ctx.label
+    assert ctx.source == "foreign"
+    assert ctx.confidence == "low"
+
+    block = format_location_context_block(ctx)
+    assert "国外地区" in block
+    assert "没有接入国外" in block
