@@ -39,6 +39,15 @@
           </view>
         </view>
       </view>
+      <!-- 商城暂未开放
+      <view class="row">
+        <view>
+          <view class="label">商城订单</view>
+          <view class="value" style="font-weight: normal; font-size: 26rpx; color: #82786d; margin-top: 6rpx;">查看实体商品购买记录</view>
+        </view>
+        <button class="mini" @tap="openMallOrders">查看</button>
+      </view>
+      -->
       <view class="row">
         <view>
           <view class="label">意见反馈</view>
@@ -62,7 +71,7 @@
             v-for="plan in plans"
             :key="plan.id"
             class="plan-card"
-            @tap="purchasePlan(plan)"
+            @tap="handlePurchasePlan(plan)"
           >
             <view>
               <view class="plan-name">{{ plan.name }}</view>
@@ -79,130 +88,46 @@
 
 <script setup lang="ts">
 import { onShow } from "@dcloudio/uni-app";
-import { computed, ref } from "vue";
+import { computed } from "vue";
+import { isLoggedIn } from "../../core/auth";
+import { useProfile } from "../../modules/account/composables/useProfile";
+import { useQuotaPayment } from "../../modules/account/composables/useQuotaPayment";
 
-type PaymentPlan = {
-  id: string;
-  name: string;
-  description?: string;
-  amount_fen: number;
-  amount_yuan: number;
-  add_yuan: number;
-  duration_days: number;
-};
+const profile = useProfile();
+const quotaPayment = useQuotaPayment();
 
-const apiBase = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
-const loading = ref(false);
-const paying = ref(false);
-const plansLoading = ref(false);
-const message = ref("");
-const userId = ref("");
-const deviceCount = ref(0);
-const factoryQa = ref(false);
-const remainYuan = ref<number | null>(null);
-const quotaConfigured = ref(false);
-const quotaExhausted = ref(false);
-const showPaymentSheet = ref(false);
-const plans = ref<PaymentPlan[]>([]);
-const loggedIn = computed(() => Boolean(sessionToken()));
-const displayUserId = computed(() => userId.value || String(uni.getStorageSync("shuxin_user_id") || "") || "未登录");
-const balanceLabel = computed(() => {
-  if (!quotaConfigured.value) return "—";
-  if (remainYuan.value == null) return "查询失败";
-  return `${remainYuan.value} 分钟`;
-});
+const {
+  loading,
+  deviceCount,
+  factoryQa,
+  quotaExhausted,
+  loggedIn,
+  displayUserId,
+  balanceLabel,
+  loadProfile,
+  logout,
+  copyUserId,
+} = profile;
+
+const {
+  paying,
+  plansLoading,
+  showPaymentSheet,
+  plans,
+  openPaymentSheet,
+  closePaymentSheet,
+  purchasePlan,
+} = quotaPayment;
+
+const message = computed(() => quotaPayment.message.value || profile.message.value);
 
 onShow(() => {
-  loadProfile();
-});
-
-function sessionToken(): string {
-  const token = String(uni.getStorageSync("shuxin_session_token") || "");
-  const expiresAt = String(uni.getStorageSync("shuxin_session_expires_at") || "");
-  if (!token) return "";
-  if (expiresAt && Date.parse(expiresAt) <= Date.now()) return "";
-  return token;
-}
-
-function handleSessionError(errorMsg: string): boolean {
-  if (errorMsg === "session_token is invalid or expired") {
-    uni.removeStorageSync("shuxin_session_token");
-    uni.removeStorageSync("shuxin_session_expires_at");
-    uni.removeStorageSync("shuxin_user_id");
-    uni.redirectTo({ url: "/pages/login/login" });
-    return true;
-  }
-  return false;
-}
-
-function request(path: string, data: Record<string, unknown>): Promise<any> {
-  return new Promise((resolve, reject) => {
-    uni.request({
-      url: `${apiBase}${path}`,
-      method: "POST",
-      data,
-      success: (res) => {
-        if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
-          resolve(res.data);
-        } else {
-          const errorMsg = res.data?.error || `请求失败: ${res.statusCode}`;
-          handleSessionError(errorMsg);
-          reject(new Error(errorMsg));
-        }
-      },
-      fail: (error) => reject(new Error(error.errMsg || "请求失败"))
-    });
-  });
-}
-
-function requestGet(path: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    uni.request({
-      url: `${apiBase}${path}`,
-      method: "GET",
-      success: (res) => {
-        if (res.statusCode >= 200 && res.statusCode < 300 && !res.data?.error) {
-          resolve(res.data);
-        } else {
-          const errorMsg = res.data?.error || `请求失败: ${res.statusCode}`;
-          handleSessionError(errorMsg);
-          reject(new Error(errorMsg));
-        }
-      },
-      fail: (error) => reject(new Error(error.errMsg || "请求失败"))
-    });
-  });
-}
-
-async function loadProfile() {
-  const token = sessionToken();
-  if (!token) {
+  if (!isLoggedIn()) {
     uni.redirectTo({ url: "/pages/login/login" });
     return;
   }
-  loading.value = true;
-  message.value = "";
-  try {
-    const [me, devices] = await Promise.all([
-      request("/api/users/me", { session_token: token }),
-      request("/api/devices/my", { session_token: token })
-    ]);
-    userId.value = me.user_id || String(uni.getStorageSync("shuxin_user_id") || "");
-    factoryQa.value = Boolean(me.roles?.factory_qa);
-    const quota = me.quota || {};
-    deviceCount.value = (devices.items || []).length;
-    quotaConfigured.value = Boolean(quota.configured);
-    quotaExhausted.value = Boolean(quota.exhausted);
-    remainYuan.value = quota.remain_yuan == null ? null : Number(quota.remain_yuan);
-    if (quotaExhausted.value && quota.message) {
-      message.value = quota.message;
-    }
-  } catch (error: any) {
-    message.value = error.message || String(error);
-  } finally {
-    loading.value = false;
-  }
-}
+  loadProfile();
+});
 
 function navigateToFeedback() {
   uni.navigateTo({ url: "/pages/profile/feedback" });
@@ -216,90 +141,16 @@ function openPrivacy() {
   uni.navigateTo({ url: "/pages/legal/privacy" });
 }
 
-async function openPaymentSheet() {
-  showPaymentSheet.value = true;
-  plansLoading.value = true;
-  message.value = "";
-  try {
-    const data = await requestGet("/api/payment/plans");
-    plans.value = Array.isArray(data.items) ? data.items : [];
-  } catch (error: any) {
-    message.value = error.message || String(error);
-    plans.value = [];
-  } finally {
-    plansLoading.value = false;
-  }
-}
-
-function closePaymentSheet() {
-  if (paying.value) return;
-  showPaymentSheet.value = false;
-}
-
-async function purchasePlan(plan: PaymentPlan) {
-  const token = sessionToken();
-  if (!token) {
-    uni.redirectTo({ url: "/pages/login/login" });
-    return;
-  }
-  paying.value = true;
-  message.value = "";
-  try {
-    const result = await request("/api/payment/create-order", {
-      session_token: token,
-      plan_id: plan.id
-    });
-    const params = result.pay_params || {};
-    await new Promise<void>((resolve, reject) => {
-      uni.requestPayment({
-        provider: "wxpay",
-        timeStamp: String(params.timeStamp || ""),
-        nonceStr: String(params.nonceStr || ""),
-        package: String(params.package || ""),
-        signType: String(params.signType || "RSA"),
-        paySign: String(params.paySign || ""),
-        success: () => resolve(),
-        fail: (error) => reject(new Error(error.errMsg || "支付失败"))
-      });
-    });
-    message.value = "支付成功，额度更新中";
-    showPaymentSheet.value = false;
-    await loadProfile();
-  } catch (error: any) {
-    const text = error.message || String(error);
-    if (text.includes("无法重复购买")) {
-      uni.showModal({
-        title: "提示",
-        content: text,
-        showCancel: false,
-        confirmText: "确定"
-      });
-    } else if (!text.includes("cancel")) {
-      message.value = text;
-    }
-  } finally {
-    paying.value = false;
-  }
-}
-
-function logout() {
-  uni.removeStorageSync("shuxin_session_token");
-  uni.removeStorageSync("shuxin_session_expires_at");
-  uni.removeStorageSync("shuxin_user_id");
-  uni.redirectTo({ url: "/pages/login/login" });
-}
-
-function copyUserId() {
-  const value = displayUserId.value;
-  if (!value || value === "未登录") return;
-  uni.setClipboardData({
-    data: value,
-    success: () => uni.showToast({ title: "已复制", icon: "success" })
-  });
-}
+// function openMallOrders() {
+//   uni.navigateTo({ url: "/modules/mall/pages/order/list" });
+// }
 
 function openFactoryVerify() {
   uni.navigateTo({ url: "/pages/factory/verify" });
+}
+
+async function handlePurchasePlan(plan: Parameters<typeof purchasePlan>[0]) {
+  await purchasePlan(plan, loadProfile);
 }
 </script>
 

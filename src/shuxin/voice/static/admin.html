@@ -176,6 +176,7 @@
         <button id="tabBindings" onclick="showTab('bindings')">绑定</button>
         <button id="tabAdapters" onclick="showTab('adapters')">适配器</button>
         <button id="tabBilling" onclick="showTab('billing')">消费账单</button>
+        <button id="tabMall" onclick="showTab('mall')">商城</button>
       </div>
       <div id="devices" class="stack">
         <div class="panel">
@@ -390,6 +391,34 @@
           </div>
         </div>
       </div>
+      <div id="mall" class="stack" style="display:none">
+        <div class="panel">
+          <h2>新增/更新商品</h2>
+          <div class="form-row compact">
+            <label><span class="hint">商品 ID</span><input id="mallProductId" placeholder="留空自动生成" /></label>
+            <label><span class="hint">名称</span><input id="mallProductName" placeholder="商品名称" /></label>
+            <label><span class="hint">价格(分)</span><input id="mallPriceFen" type="number" placeholder="9900" /></label>
+            <label><span class="hint">库存</span><input id="mallStock" type="number" placeholder="100" /></label>
+            <label><span class="hint">封面 URL</span><input id="mallCoverUrl" placeholder="https://..." /></label>
+          </div>
+          <label style="display:block; margin-top:12px;"><span class="hint">描述</span><textarea id="mallDescription" style="min-height:72px; font-family:var(--font);"></textarea></label>
+          <div class="toolbar" style="margin-top:12px"><button onclick="saveMallProduct()">保存商品</button></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>商品列表</h2>
+            <button class="secondary" onclick="loadMallProducts()">刷新</button>
+          </div>
+          <div id="mallProductList" class="table"></div>
+        </div>
+        <div class="panel">
+          <div class="toolbar" style="justify-content:space-between">
+            <h2>商城订单</h2>
+            <button class="secondary" onclick="loadMallOrders()">刷新</button>
+          </div>
+          <div id="mallOrderList" class="table"></div>
+        </div>
+      </div>
     </section>
   </main>
   <div id="adminModal" class="modal-backdrop" onclick="if(event.target===this)closeAdminModal()">
@@ -428,11 +457,11 @@
       bindDevices: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
       billing: {cursor:'', nextCursor:'', stack:[], q:'', limit:20},
     };
-    const TAB_PANELS = ['devices', 'users', 'agents', 'bindings', 'adapters', 'billing'];
-    const TAB_BUTTONS = ['tabDevices', 'tabUsers', 'tabAgents', 'tabBindings', 'tabAdapters', 'tabBilling'];
+    const TAB_PANELS = ['devices', 'users', 'agents', 'bindings', 'adapters', 'billing', 'mall'];
+    const TAB_BUTTONS = ['tabDevices', 'tabUsers', 'tabAgents', 'tabBindings', 'tabAdapters', 'tabBilling', 'tabMall'];
     const TAB_BUTTON_BY_PANEL = {
       devices: 'tabDevices', users: 'tabUsers', agents: 'tabAgents',
-      bindings: 'tabBindings', adapters: 'tabAdapters', billing: 'tabBilling',
+      bindings: 'tabBindings', adapters: 'tabAdapters', billing: 'tabBilling', mall: 'tabMall',
     };
     const headers = () => ({'Content-Type': 'application/json'});
     function $(id) { return document.getElementById(id); }
@@ -650,6 +679,7 @@
         loadBindDevices();
       }
       if (name === 'billing' && authenticated) loadBillingCenter();
+      if (name === 'mall' && authenticated) { loadMallProducts(); loadMallOrders(); }
     }
     function listUrl(name, path) {
       const state = listState[name];
@@ -702,8 +732,77 @@
     async function loadAll() {
       await Promise.all([
         loadMbtiTypes(), loadDevices(), loadUsers(), loadAgents(), loadPaymentPlans(), loadBindings(), loadAdapters(),
-        loadBindUsers(), loadBindDevices(),
+        loadBindUsers(), loadBindDevices(), loadMallProducts(), loadMallOrders(),
       ]);
+    }
+    async function loadMallProducts() {
+      const res = await fetch('/admin/api/mall/products', {headers: headers(), credentials: 'same-origin'});
+      const data = await res.json();
+      const list = $('mallProductList');
+      if (!list) return;
+      if (!res.ok) { list.innerHTML = `<p class="hint">${esc(data.error || '加载失败')}</p>`; return; }
+      const items = data.items || [];
+      if (!items.length) { list.innerHTML = '<p class="hint">暂无商品</p>'; return; }
+      list.innerHTML = items.map(item => `
+        <div class="table-row" style="grid-template-columns:1fr 120px 90px;">
+          <div><strong>${esc(item.name)}</strong><div class="meta">${esc(item.product_id)} · ${esc(item.status || '')}</div></div>
+          <div class="meta">${esc(item.cover_url || '—')}</div>
+          <div class="meta">${esc(item.description || '')}</div>
+        </div>`).join('');
+    }
+    async function saveMallProduct() {
+      const payload = {
+        product_id: $('mallProductId').value.trim(),
+        name: $('mallProductName').value.trim(),
+        description: $('mallDescription').value.trim(),
+        cover_url: $('mallCoverUrl').value.trim(),
+        price_fen: Number($('mallPriceFen').value || 0),
+        stock: Number($('mallStock').value || 0),
+        status: 'on_sale',
+      };
+      const res = await fetch('/admin/api/mall/products', {
+        method: 'POST', headers: headers(), credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        openAdminModal({title: '保存商品失败', bodyHtml: `<p class="hint">${esc(data.error || data.detail || '操作失败')}</p>`});
+        return;
+      }
+      $('mallProductId').value = data.product_id || '';
+      await loadMallProducts();
+      openAdminModal({title: '商品已保存', bodyHtml: `<p class="hint">${esc(data.name || '')}</p>`});
+    }
+    async function loadMallOrders() {
+      const res = await fetch('/admin/api/mall/orders', {headers: headers(), credentials: 'same-origin'});
+      const data = await res.json();
+      const list = $('mallOrderList');
+      if (!list) return;
+      if (!res.ok) { list.innerHTML = `<p class="hint">${esc(data.error || '加载失败')}</p>`; return; }
+      const items = data.items || [];
+      if (!items.length) { list.innerHTML = '<p class="hint">暂无订单</p>'; return; }
+      list.innerHTML = items.map(item => `
+        <div class="table-row" style="grid-template-columns:minmax(160px,1fr) 90px 100px minmax(200px,1fr) auto;">
+          <div><strong>${esc(item.out_trade_no || item.order_id)}</strong><div class="meta">${esc(item.user_id || '')}</div></div>
+          <div>${esc(item.status || '')}</div>
+          <div>¥${esc(item.total_yuan ?? (item.total_fen / 100))}</div>
+          <div class="meta">${esc(item.shipping_no || '未发货')}</div>
+          <button class="ghost" onclick='shipMallOrder(${JSON.stringify(item.order_id)})'>发货</button>
+        </div>`).join('');
+    }
+    async function shipMallOrder(orderId) {
+      const shippingNo = prompt('输入物流单号');
+      if (!shippingNo) return;
+      const res = await fetch('/admin/api/mall/orders/ship', {
+        method: 'POST', headers: headers(), credentials: 'same-origin',
+        body: JSON.stringify({order_id: orderId, shipping_no: shippingNo}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        openAdminModal({title: '发货失败', bodyHtml: `<p class="hint">${esc(data.error || data.detail || '操作失败')}</p>`});
+        return;
+      }
+      await loadMallOrders();
     }
     async function loadMbtiTypes() {
       const res = await fetch('/admin/api/mbti/types', {headers: headers(), credentials: 'same-origin'});

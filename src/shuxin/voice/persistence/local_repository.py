@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from shuxin.voice.persistence.mall_local_repo import MallLocalRepository
 from shuxin.voice.persistence.time_display import format_beijing_iso
 from shuxin.voice.persistence.memory_summary import should_merge_summary
 from shuxin.voice.persistence.storage import UserVoiceStorage
@@ -29,6 +30,7 @@ class VoiceLocalRepository:
         self.shuxin_home = shuxin_home
         self.out_dir = out_dir
         self.wechat_sessions: dict[str, dict[str, str]] = {}
+        self.mall = MallLocalRepository(parent=self)
 
     async def create_wechat_session(self, *, wx_code: str) -> dict[str, Any]:
         code = str(wx_code or "").strip()

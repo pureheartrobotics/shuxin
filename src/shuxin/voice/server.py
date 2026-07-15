@@ -52,6 +52,8 @@ from shuxin.voice.api.miniapp_admin import miniapp_admin_router
 from shuxin.voice.api.routers.exception_handlers import register_exception_handlers
 from shuxin.voice.api.routers.user import router as user_router
 from shuxin.voice.api.routers.payment import router as payment_router
+from shuxin.voice.api.routers.mall import router as mall_router
+from shuxin.voice.api.routers.mall_admin import router as mall_admin_router
 from shuxin.voice.api.routers.factory import router as factory_router
 from shuxin.voice.api.routers.admin import router as admin_router
 from shuxin.voice.service import VoiceService
@@ -200,6 +202,7 @@ def create_app(
     try:
         from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
         from fastapi.responses import HTMLResponse, JSONResponse, Response
+        from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
         raise RuntimeError(
             "FastAPI is not installed. Add voice web dependencies and rebuild Docker."
@@ -209,9 +212,17 @@ def create_app(
 
     app = FastAPI(title="ChuXin Voice Demo")
     register_exception_handlers(app)
+    _voice_static_dir = Path(__file__).resolve().parent / "static"
+    app.mount(
+        "/voice-static",
+        StaticFiles(directory=str(_voice_static_dir)),
+        name="voice_static",
+    )
     app.include_router(miniapp_admin_router, prefix="/miniapp-admin", tags=["Miniapp Admin"])
     app.include_router(user_router)
     app.include_router(payment_router)
+    app.include_router(mall_router)
+    app.include_router(mall_admin_router)
     app.include_router(factory_router)
     app.include_router(admin_router)
     device_provider = DeviceConfigProvider(device_config)

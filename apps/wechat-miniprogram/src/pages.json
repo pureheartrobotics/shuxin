@@ -65,6 +65,53 @@
       }
     }
   ],
+  "subPackages": [
+    {
+      "root": "modules/mall/pages",
+      "pages": [
+        {
+          "path": "goods/detail",
+          "style": {
+            "navigationBarTitleText": "商品详情",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "cart/index",
+          "style": {
+            "navigationBarTitleText": "购物车",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "order/list",
+          "style": {
+            "navigationBarTitleText": "商城订单",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "order/confirm",
+          "style": {
+            "navigationBarTitleText": "确认订单",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "address/list",
+          "style": {
+            "navigationBarTitleText": "收货地址",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        }
+      ]
+    }
+  ],
   "globalStyle": {
     "backgroundColor": "#f5f1ea",
     "navigationBarBackgroundColor": "#f5f1ea",
@@ -78,11 +125,11 @@
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "绑定"
+        "text": "设备"
       },
       {
         "pagePath": "pages/profile/profile",
-        "text": "个人中心"
+        "text": "我的"
       }
     ]
   }

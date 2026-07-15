@@ -15,7 +15,7 @@ def _admin_html(authenticated: bool = False) -> str:
     return content.replace("{{AUTHENTICATED}}", "true" if authenticated else "false")
 
 
-TAB_PANELS = ["devices", "users", "agents", "bindings", "adapters", "billing"]
+TAB_PANELS = ["devices", "users", "agents", "bindings", "adapters", "billing", "mall"]
 TAB_BUTTONS = [
     "tabDevices",
     "tabUsers",
@@ -23,6 +23,7 @@ TAB_BUTTONS = [
     "tabBindings",
     "tabAdapters",
     "tabBilling",
+    "tabMall",
 ]
 
 
