@@ -22,12 +22,21 @@
     .hint { color: #657080; font-size: 13px; }
     .llm-warn { color: #b8453f; font-weight: 600; }
     select { font: inherit; }
+    #callPanel { display: none; border-color: #1b6ef3; }
+    #callPanel.active { display: block; }
+    #callPanel .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    #callPanel button.reject { background: #d63847; }
+    #callPanel button.end { background: #5a6572; }
+    .brtc-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    #brtcSdkBanner { display: none; margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; background: #fde8e6; color: #8a1f1a; font-size: 14px; font-weight: 600; }
+    #brtcSdkBanner.show { display: block; }
   </style>
 </head>
 <body>
   <main>
     <h1>ChuXin 语音测试台</h1>
-    <p class="hint" style="margin:0 0 12px;color:#657080;font-size:14px">测试用户 API：在 /admin「用户」Tab 点击<strong>配置 LLM</strong>（微信 wx_ 用户也需单独配置）→ 绑定设备 → 本页 Admin Token → 加载设备 → 连接。</p>
+    <div id="brtcSdkBanner" role="alert">百度 BRTC Web SDK 未加载：通话接通后也不会有声音。请 Ctrl+Shift+R 硬刷新，或检查网络能否访问 baidu CDN /voice-static。</div>
+    <p class="hint" style="margin:0 0 12px;color:#657080;font-size:14px">测试用户 API：在 /admin「用户」Tab 点击<strong>配置 LLM</strong>（微信 wx_ 用户也需单独配置）→ 绑定设备 → 本页 Admin Token → 加载设备 → 连接。<strong>当前真人通话主路径为 Web↔Web</strong>：用 <code>http://127.0.0.1:8765/voice-demo</code>（localhost 才能开麦）；两窗分别连 CALLER / CALLEE，主叫说「打电话给小明」，被叫接听；同机请戴耳机。语音走<strong>百度 RTC</strong>（不经舒心带宽）；通话中请保持 WS，挂断用「挂断」按钮。日志应有 <code>BRTC joined</code>；stub 则 Ctrl+Shift+R。步骤见仓库 <code>docs/RTC_WEB_CALL_LAB.md</code>。</p>
     <div class="toolbar">
       <input id="adminToken" type="password" placeholder="Admin Token" aria-label="admin token" />
       <button id="loadTargets" type="button">加载设备</button>
@@ -42,6 +51,20 @@
       <button id="connect">连接</button>
       <button id="record" disabled>按住说话</button>
     </div>
+    <div class="panel" id="callPanel">
+      <div class="row"><div class="label">通话状态</div><div id="callStatus">空闲</div></div>
+      <div class="row"><div class="label">对端</div><div id="callPeer">-</div></div>
+      <div class="row"><div class="label">媒体</div><div id="callMedia">待接通（需百度 Web SDK）</div></div>
+      <div class="actions">
+        <button type="button" id="callAccept" disabled>接听</button>
+        <button type="button" id="callReject" class="reject" disabled>拒绝</button>
+        <button type="button" id="callEnd" class="end" disabled>挂断</button>
+      </div>
+    </div>
+    <div class="brtc-hidden" aria-hidden="true">
+      <video id="brtc-local" playsinline autoplay muted></video>
+      <video id="brtc-remote" playsinline autoplay></video>
+    </div>
     <div class="panel">
       <div class="row"><div class="label">连接状态</div><div id="status">未连接</div></div>
       <div class="row"><div class="label">绑定用户</div><div id="boundUser">-</div></div>
@@ -52,6 +75,17 @@
     </div>
     <div class="panel"><div id="log"></div></div>
   </main>
+  <!-- CDN + local cache-bust：旧占位 stub 不会被浏览器死缓存；任一源成功即可 -->
+  <script
+    src="https://brtc-sdk.cdn.bcebos.com/npm/baidurtc@1.2.22/baidu.rtc.sdk.js"
+    onerror="window.__brtcCdnFailed=true;console.error('[BRTC] CDN SDK failed to load');"
+  ></script>
+  <script
+    src="/voice-static/js/baidu.rtc.sdk.js?v=1.2.22"
+    onerror="window.__brtcLocalFailed=true;console.error('[BRTC] local SDK failed to load');"
+  ></script>
+  <script src="/voice-static/js/brtc_web_adapter.js?v=1.2.22"></script>
+  <script src="/voice-static/js/call_signaling.js?v=1.2.22"></script>
   <script>
     const statusEl = document.getElementById('status');
     const sttEl = document.getElementById('stt');
@@ -68,6 +102,13 @@
     const deviceInput = document.getElementById('deviceCode');
     const secretInput = document.getElementById('deviceSecret');
     const clientInput = document.getElementById('clientId');
+    const callPanel = document.getElementById('callPanel');
+    const callStatusEl = document.getElementById('callStatus');
+    const callPeerEl = document.getElementById('callPeer');
+    const callAcceptBtn = document.getElementById('callAccept');
+    const callRejectBtn = document.getElementById('callReject');
+    const callEndBtn = document.getElementById('callEnd');
+    const callMediaEl = document.getElementById('callMedia');
     let demoTargets = [];
     let ws, audioContext, source, processor, stream;
     let recording = false;
@@ -75,11 +116,96 @@
     let startingRecording = false;
     let audioQueue = [];
     let audioPlaying = false;
+    let callClient = null;
 
     function log(line) {
       logEl.textContent += `${new Date().toLocaleTimeString()} ${line}\n`;
       logEl.scrollTop = logEl.scrollHeight;
     }
+    window.shuxinCallLog = log;
+
+    function brtcSdkReady() {
+      return typeof window.BRTC_Start === 'function' ||
+        (window.baidu && window.baidu.rtc && typeof window.baidu.rtc.BRTC_Start === 'function');
+    }
+    const brtcSdkBanner = document.getElementById('brtcSdkBanner');
+    if (brtcSdkReady()) {
+      log('Baidu BRTC Web SDK loaded (BRTC_Start ok)');
+      if (window.__brtcCdnFailed) log('Note: CDN failed; using local /voice-static SDK');
+      callMediaEl.textContent = 'SDK 已加载，待接通';
+      if (brtcSdkBanner) brtcSdkBanner.classList.remove('show');
+    } else {
+      log('Baidu BRTC Web SDK MISSING — calls will be stub (no audio). Hard-refresh (Ctrl+Shift+R).');
+      if (window.__brtcCdnFailed) log('CDN load failed');
+      if (window.__brtcLocalFailed) log('Local SDK load failed');
+      callMediaEl.textContent = 'SDK 未加载（stub）— 接通也无声';
+      if (brtcSdkBanner) brtcSdkBanner.classList.add('show');
+    }
+
+    function updateCallUi(ev) {
+      const kind = ev && ev.kind;
+      callPanel.classList.toggle('active', kind && kind !== 'idle');
+      if (kind === 'incoming') {
+        callStatusEl.textContent = '来电振铃';
+        callPeerEl.textContent = ev.callerHandle || ev.callerDeviceId || '-';
+        callMediaEl.textContent = brtcSdkReady() ? '接听后进百度 RTC 房' : 'SDK 未加载 → 将走 stub（无声音）';
+        callAcceptBtn.disabled = false;
+        callRejectBtn.disabled = false;
+        callEndBtn.disabled = true;
+      } else if (kind === 'outgoing') {
+        callStatusEl.textContent = '正在呼叫';
+        callPeerEl.textContent = ev.handle || '-';
+        callMediaEl.textContent = brtcSdkReady() ? '等待对方接听后进房' : 'SDK 未加载 → 将走 stub（无声音）';
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = false;
+      } else if (kind === 'connected') {
+        callStatusEl.textContent = ev.stub ? '通话中（媒体 stub）' : '通话中（真媒体）';
+        callPeerEl.textContent = ev.peerDeviceId || callPeerEl.textContent || '-';
+        callMediaEl.textContent = ev.stub
+          ? '!!! stub：只有信令，听不到对方。红条：硬刷新 Ctrl+Shift+R；仍失败则看 Console CDN/local SDK'
+          : '百度 RTC 已进房；请说话（同机建议戴耳机）';
+        if (ev.stub && brtcSdkBanner) brtcSdkBanner.classList.add('show');
+        if (!ev.stub && brtcSdkBanner) brtcSdkBanner.classList.remove('show');
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = false;
+        const remote = document.getElementById('brtc-remote');
+        if (remote && typeof remote.play === 'function') {
+          remote.play().catch(function () {});
+        }
+      } else {
+        callStatusEl.textContent = '空闲' + (ev && ev.reason ? ` (${ev.reason})` : '');
+        callPeerEl.textContent = '-';
+        callMediaEl.textContent = brtcSdkReady() ? 'SDK 已加载，待接通' : 'SDK 未加载（stub）';
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = true;
+        callPanel.classList.remove('active');
+      }
+      if (callClient && callClient.isAiSuspended()) {
+        recordBtn.disabled = true;
+      } else {
+        restoreReadyState();
+      }
+    }
+
+    function ensureCallClient() {
+      if (callClient) return callClient;
+      callClient = new CallSignaling({
+        sendJson: (obj) => {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+        },
+        onUi: updateCallUi,
+        log,
+        media: new BrtcWebAdapter(),
+      });
+      return callClient;
+    }
+
+    callAcceptBtn.onclick = () => ensureCallClient().accept();
+    callRejectBtn.onclick = () => ensureCallClient().reject();
+    callEndBtn.onclick = () => ensureCallClient().end();
 
     const savedAdminToken = localStorage.getItem('shuxin_voice_demo_admin') || '';
     if (savedAdminToken) adminTokenInput.value = savedAdminToken;
@@ -168,6 +294,9 @@
     }
 
     function enqueueAudio(data) {
+      if (callClient && callClient.isAiSuspended()) {
+        return;
+      }
       audioQueue.push(data);
       playNextAudio();
     }
@@ -219,6 +348,7 @@
         recording = false;
         startingRecording = false;
         recordingRequested = false;
+        if (callClient) callClient.onWsClosed();
         await cleanupAudio();
         restoreReadyState();
         connectBtn.disabled = false;
@@ -228,6 +358,7 @@
         recording = false;
         startingRecording = false;
         recordingRequested = false;
+        if (callClient) callClient.onWsClosed();
         await cleanupAudio();
         restoreReadyState();
         connectBtn.disabled = false;
@@ -238,6 +369,10 @@
           return;
         }
         const msg = JSON.parse(event.data);
+        if (ensureCallClient().handleMessage(msg)) {
+          log(JSON.stringify(msg));
+          return;
+        }
         log(JSON.stringify(msg));
         if (msg.type === 'factory_verify') {
           ws.send(JSON.stringify({
@@ -287,6 +422,10 @@
     };
 
     async function startRecording() {
+      if (callClient && callClient.isAiSuspended()) {
+        log('通话中，已暂停 AI 录音');
+        return;
+      }
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         log('请先点击连接');
         return;

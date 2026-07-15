@@ -38,6 +38,18 @@ def get_active_session(device_id: str) -> Any | None:
     return _active_sessions.get(selected)
 
 
+def list_sessions_for_user(user_id: str) -> list[Any]:
+    """Return currently registered WS sessions for a user_id (online discovery)."""
+    selected = str(user_id or "").strip()
+    if not selected:
+        return []
+    sessions: list[Any] = []
+    for session in _active_sessions.values():
+        if str(getattr(session, "user_id", "") or "").strip() == selected:
+            sessions.append(session)
+    return sessions
+
+
 def intro_lock(device_id: str) -> asyncio.Lock:
     selected = str(device_id or "").strip()
     if selected not in _intro_locks:

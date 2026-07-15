@@ -279,6 +279,12 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "error", "message": _FACTORY_ACCEPTANCE_DISABLED})
             return
 
+        if isinstance(message_type, str) and message_type.startswith("call/"):
+            from shuxin.integrations.voice_call.dispatch import handle_device_call_message
+
+            await handle_device_call_message(self, data)
+            return
+
         handler = self.handlers.get(message_type)
         if handler:
             await handler(data)
@@ -503,6 +509,48 @@ class _VoiceWebSocketSession:
             await self._send_json(
                 {"type": "stt", "state": "final", "text": text, "elapsed_ms": stt_ms}
             )
+
+            from shuxin.integrations.voice_call.dispatch import try_dispatch_call_intent
+
+            handled, call_reply = await try_dispatch_call_intent(self, text)
+            if handled:
+                await self._send_json(
+                    {"type": "agent", "state": "reply", "text": call_reply, "elapsed_ms": 0}
+                )
+                await self._send_json({"type": "tts", "state": "start"})
+                speech_path = await self.tts_pipeline.synthesize_and_send(
+                    call_reply,
+                    paths.reply_mp3,
+                    1,
+                    started,
+                )
+                tts_total_ms = _elapsed_ms(started)
+                await self._send_json({"type": "tts", "state": "stop"})
+                if speech_path is None:
+                    speech_path = paths.reply_mp3
+                    speech_path.write_bytes(b"")
+                await self.repo.record_turn(
+                    user_settings=self.user_settings,
+                    device_id=self.device_id,
+                    client_id=self.client_id,
+                    session_id=self.session_id,
+                    turn_id=paths.turn_id,
+                    user_text=text,
+                    reply_text=call_reply,
+                    input_audio=paths.input_wav,
+                    reply_audio=speech_path,
+                    timings={
+                        "stt_ms": stt_ms,
+                        "agent_ms": 0,
+                        "tts_ms": tts_total_ms,
+                        "location_ms": 0,
+                        "map_tool_ms": 0,
+                        "llm_ttft_ms": 0,
+                        "first_agent_delta_ms": 0,
+                        "first_tts_audio_ms": tts_total_ms,
+                    },
+                )
+                return
 
             agent_started = time.perf_counter()
             reply_parts: list[str] = []
@@ -1155,9 +1203,28 @@ class _VoiceWebSocketSession:
         else:
             self.agent.context.metadata.pop("location_context", None)
 
-    async def _send_json(self, data: dict) -> None:
-        """以 UTF-8 JSON 文本消息下发状态，保留中文错误和回复内容。"""
-        await self.websocket.send_text(json.dumps(data, ensure_ascii=False))
+    async def _send_json(self, data: dict) -> bool:
+        """以 UTF-8 JSON 文本消息下发状态，保留中文错误和回复内容。
+
+        对已关闭/失效的 WebSocket 吞掉异常并从在线登记表移除，避免 call/ring
+        等广播路径触发 ASGI ``websocket.send`` after ``websocket.close``。
+        返回 True 表示发送成功。
+        """
+        try:
+            await self.websocket.send_text(json.dumps(data, ensure_ascii=False))
+            return True
+        except Exception as exc:
+            msg_type = data.get("type") if isinstance(data, dict) else None
+            logger.warning(
+                "websocket send failed device_id=%s type=%s: %s",
+                self.device_id,
+                msg_type,
+                exc,
+            )
+            if self.device_id:
+                vsr.unregister(self.device_id, self)
+            return False
+
 
 
 def _elapsed_ms(started: float) -> int:

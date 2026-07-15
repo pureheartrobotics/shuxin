@@ -361,3 +361,35 @@ async def admin_call_adapter(request: Request, adapter_name: str, action: str, r
             pass
         raise
     return JSONResponse({"result": result})
+
+
+@router.post("/call-test/seed")
+async def admin_seed_call_test(request: Request):
+    """Seed in-memory shuxin_handle / contacts for RTC call lab (process-local)."""
+    from shuxin.voice.persistence import call_memory
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    handles = payload.get("handles") or []
+    contacts = payload.get("contacts") or []
+    for item in handles:
+        user_id = str((item or {}).get("user_id") or "").strip()
+        handle = str((item or {}).get("handle") or "").strip()
+        if user_id and handle:
+            call_memory.seed_user_handle(user_id, handle)
+    for item in contacts:
+        owner = str((item or {}).get("owner_user_id") or "").strip()
+        nickname = str((item or {}).get("nickname") or "").strip()
+        target = str((item or {}).get("target_handle") or "").strip()
+        if owner and nickname and target:
+            call_memory.seed_contact(owner, nickname, target)
+    return JSONResponse(
+        {
+            "ok": True,
+            "handles": len(handles),
+            "contacts": len(contacts),
+            "note": "In-memory only; restart clears. Prefer Postgres when wired.",
+        }
+    )
