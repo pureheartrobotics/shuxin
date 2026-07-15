@@ -41,7 +41,7 @@ class PostgresDatabase:
         """执行幂等 SQL 迁移。"""
         if self.pool is None:
             raise RuntimeError("database pool is not connected")
-        migrations_dir = Path(__file__).with_name("migrations")
+        migrations_dir = Path(__file__).resolve().parent.parent / "migrations"
         async with self.pool.acquire() as conn:
             for path in sorted(migrations_dir.glob("*.sql")):
                 await conn.execute(path.read_text(encoding="utf-8"))

@@ -1108,6 +1108,20 @@ class DeviceRepository(BaseRepository):
 
     async def upsert_device(self, payload: dict[str, Any]) -> dict[str, Any]:
         device_id = validate_user_id(str(payload.get("device_id") or ""))
+        raw_stt = payload.get("stt_config")
+        raw_tts = payload.get("tts_config")
+        # Empty {} must not wipe existing configs (lab seed used to do this →
+        # ProviderConfig default type=volcengine-clone broke create_stt_provider).
+        has_stt = isinstance(raw_stt, dict) and bool(raw_stt)
+        has_tts = isinstance(raw_tts, dict) and bool(raw_tts)
+        stt_config = json.dumps(
+            raw_stt if has_stt else default_tencent_stt_config(),
+            ensure_ascii=False,
+        )
+        tts_config = json.dumps(
+            raw_tts if has_tts else default_device_tts_config(),
+            ensure_ascii=False,
+        )
         await self.pool.execute(
             """
             INSERT INTO devices (
@@ -1115,8 +1129,8 @@ class DeviceRepository(BaseRepository):
             )
             VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5, $6, $7::jsonb, now())
             ON CONFLICT (device_id) DO UPDATE SET
-                stt_config = excluded.stt_config,
-                tts_config = excluded.tts_config,
+                stt_config = CASE WHEN $8::boolean THEN excluded.stt_config ELSE devices.stt_config END,
+                tts_config = CASE WHEN $9::boolean THEN excluded.tts_config ELSE devices.tts_config END,
                 llm_config = excluded.llm_config,
                 enabled = excluded.enabled,
                 note = excluded.note,
@@ -1125,12 +1139,14 @@ class DeviceRepository(BaseRepository):
                 deleted_at = NULL
             """,
             device_id,
-            json.dumps(payload.get("stt_config") or {}, ensure_ascii=False),
-            json.dumps(payload.get("tts_config") or {}, ensure_ascii=False),
+            stt_config,
+            tts_config,
             json.dumps(payload.get("llm_config") or {}, ensure_ascii=False),
             bool(payload.get("enabled", True)),
             str(payload.get("note") or ""),
             json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+            has_stt,
+            has_tts,
         )
         await self.pool.execute(
             "INSERT INTO device_status (device_id) VALUES ($1) ON CONFLICT (device_id) DO NOTHING",
