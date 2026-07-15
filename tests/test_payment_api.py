@@ -77,11 +77,11 @@ def test_payment_create_order_uses_db_plan_snapshot(monkeypatch) -> None:
 
     with TestClient(app) as client:
         client.app.state.repo = FakeRepo()
-        with patch("shuxin.voice.integrations.wechat_pay.wechat_pay_configured", return_value=True), patch(
-            "shuxin.voice.integrations.wechat_pay.wechat_pay_mock_mode",
+        with patch("shuxin.voice.services.payment.wechat_pay_gateway.wechat_pay_configured", return_value=True), patch(
+            "shuxin.voice.services.payment.wechat_pay_gateway.wechat_pay_mock_mode",
             return_value=False,
         ), patch(
-            "shuxin.voice.integrations.wechat_pay.create_jsapi_payment",
+            "shuxin.voice.services.payment.wechat_pay_gateway.create_jsapi_payment",
             return_value={
                 "prepay_id": "wx_prepay",
                 "pay_params": {"timeStamp": "1", "nonceStr": "n", "package": "p"},
