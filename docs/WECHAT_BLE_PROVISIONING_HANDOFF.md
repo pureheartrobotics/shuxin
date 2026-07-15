@@ -108,20 +108,24 @@ sequenceDiagram
 
 | Endpoint 名 | 短 UUID | 用途 |
 |-------------|---------|------|
+| `prov-scan` | `ff50` | （可选）扫描 AP |
 | `prov-session` | `ff51` | Security1 会话握手 |
 | `prov-config` | `ff52` | Wi-Fi 配置与状态 |
-| `prov-scan` | `ff53` | （可选）扫描 AP |
-| `proto-ver` | `ff54` | 协议版本 |
+| `proto-ver` | `ff53` | 协议版本（明文 JSON） |
 
-特征值 UUID 推导规则与 ESP-IDF `esp_prov` 工具一致：在 Service UUID 基础上**替换末尾 4 个十六进制字符**（小端 byte[0..1]）：
+量产固件在 `1775244D-...` 服务下可能还有额外特征值（如 `ff4f`），小程序不使用。微信 BLE **不支持** `getBLEDeviceDescriptors`，endpoint 靠上表 UUID 匹配。
+
+特征值 UUID 推导规则与 ESP-IDF `esp_prov` 工具一致：在 Service UUID 基础上**替换末尾 4 个十六进制字符**（小端 byte[14..15]）：
 
 ```
 Service UUID:       1775244D-6B43-439B-877C-060F2D9BED07
+prov-scan   (ff50): 1775244D-6B43-439B-877C-060F2D9BFF50
 prov-session(ff51): 1775244D-6B43-439B-877C-060F2D9BFF51
 prov-config (ff52): 1775244D-6B43-439B-877C-060F2D9BFF52
+proto-ver   (ff53): 1775244D-6B43-439B-877C-060F2D9BFF53
 ```
 
-小程序通过 GATT **User Description** 描述符（`0x2901`）读取 endpoint 名称；读失败时按上表 fallback。
+乐鑫文档中的 `ff53`/`ff54` 分配适用于其他 service UUID 或自定义 endpoint 场景；**勿**与上表混用。
 
 ---
 
@@ -160,14 +164,47 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | `2` Disconnected | 未连接 | 继续轮询 |
 | `3` ConnectionFailed | 失败 | 见下表 |
 
-### 失败原因（`WifiConnectFailedReason`）
+### 失败原因（`WifiConnectFailedReason`，field 10）
 
 | 值 | 含义 | 用户提示 |
 |----|------|----------|
-| `0` AuthError | 密码错误 | Wi-Fi 密码错误 |
+| `0` AuthError | 密码错误 | Wi-Fi 密码错误（**仅当 field 10 显式出现在报文中**；proto3 缺省 0 不会序列化） |
 | `1` NetworkNotFound | SSID 不存在 | 找不到指定的 Wi-Fi |
 
-轮询间隔约 2 秒，最长约 60 秒超时。
+### 中间重试（`WifiAttemptFailed`，field 12，ESP-IDF v5+）
+
+设备在 `wifi_conn_attempts > 1` 时，单次连路由器失败但仍有剩余重试次数，会返回：
+
+- `sta_state = Connecting (1)`
+- `attempt_failed.attempts_remaining > 0`（field 12）
+
+小程序**必须**将此视为「连接中」并继续轮询，**不得**立即报错。
+
+### 轮询策略（小程序）
+
+- `ApplyConfig` 后首次 `GetStatus` 等待 **3s**，之后每 **2s** 轮询
+- 连续 **2 次**终态失败（`failed_auth` / `failed_not_found` / `failed`）才向用户报错
+- **`ConnectionFailed` 且 wire 上无 field 10**：不得默认当作 `AuthError`；继续轮询直至 `Connected` 或超时
+- 最长约 60 秒超时
+
+回归测试：`node tests/test_wifi_config_proto.mjs`
+
+---
+
+## 6.1 Wi-Fi 扫描（prov-scan）
+
+小程序**不调用**手机端 `wx.getWifiList`（iOS 会跳转系统设置且体验差），而是通过已连接的 BLE 设备扫描附近 AP：
+
+| 步骤 | 消息 | 说明 |
+|------|------|------|
+| 1 | `CmdScanStart`（blocking） | 经 `prov-scan` 端点下发，设备开始扫描 |
+| 2 | `CmdScanStatus` | 轮询直至 `scan_finished=true` |
+| 3 | `CmdScanResult` | 拉取 `entries[].ssid` + `rssi`，小程序弹窗供用户选择 |
+| 4 | `CmdSetConfig` | 用户手动输入密码后，走 §6 下发凭据 |
+
+实现：[`wifi-scan-proto.ts`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/wifi-scan-proto.ts)、[`provision-client.ts`](../apps/wechat-miniprogram/src/pages/prov/esp-idf-prov/provision-client.ts) 的 `scanNearbyWifi()`。
+
+固件须保留标准 `wifi_prov_mgr` 的 `prov-scan` endpoint（量产固件短 UUID `ff50`）。列表反映**设备天线位置**能收到的 2.4GHz AP，与手机列表可能略有差异。
 
 ---
 
@@ -186,6 +223,8 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 - [ ] 列表仅显示 `SX` 开头设备
 - [ ] 点击设备后 Security1 握手成功
 - [ ] 正确 Wi-Fi 配网成功，绑定页预填广播名
+- [ ] 「扫描附近」弹出设备扫描到的 Wi-Fi 列表（iOS 不跳转系统设置）
+- [ ] 手动输入 SSID + 密码可直接发送配置
 - [ ] 错误密码有明确提示
 
 ### 联调步骤
@@ -205,7 +244,8 @@ PoP 校验失败时，小程序提示「设备 PoP 校验失败，请确认选�
 | Security1 / PoP 失败 | 小程序误用广播名作 PoP；当前固件 PoP 须为 `shuxin` |
 | SetConfig 失败 | 会话未建立；Service UUID 不一致 |
 | 一直 Connecting | 信号弱、5GHz SSID、路由器拒绝 |
-| 密码错误 | `ConnectionFailed` + `AuthError` |
+| 密码错误 | `ConnectionFailed` + `AuthError`（field 10 显式为 1 时 NetworkNotFound；AuthError=0 常不序列化，以超时或连续终态失败为准） |
+| 首次「密码错误」、重试同密码成功 | 客户端过早将 `GetStatus` 判为终态；检查 `wifi-config-proto.ts` 是否解析 field 12、是否对缺省 `fail_reason` 误判 |
 
 ---
 

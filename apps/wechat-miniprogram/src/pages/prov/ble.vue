@@ -4,7 +4,7 @@
       <view class="privacy-card" @tap.stop>
         <view class="privacy-title">隐私保护提示</view>
         <view class="privacy-desc">
-          蓝牙配网需要使用蓝牙连接设备，并可能读取附近 Wi-Fi 列表。请阅读并同意
+          蓝牙配网需要使用蓝牙连接设备，并通过设备扫描附近 Wi-Fi 网络。请阅读并同意
           <text class="privacy-link" @tap="onOpenPrivacyContract">{{ privacyContractName }}</text>
           后继续。
         </view>
@@ -120,7 +120,7 @@
       <view v-if="errorMsg" class="message error">{{ errorMsg }}</view>
 
       <!-- 折叠调试日志 -->
-      <view class="dev-log-section">
+      <view v-if="SHOW_PROVISION_DEV_LOGS" class="dev-log-section">
         <view class="dev-log-header" @tap="showConsoleLogs = !showConsoleLogs">
           <text class="dev-log-title">🛠️ 开发者调试日志</text>
           <text class="dev-log-arrow">{{ showConsoleLogs ? '收起 ▴' : '展开 ▾' }}</text>
@@ -140,18 +140,21 @@
         <view class="label">Wi-Fi 名称 (SSID)</view>
         <view class="wifi-input-row">
           <input class="input" v-model="wifiSsid" placeholder="请输入或选择 Wi-Fi 名称" />
-          <button class="mini get-wifi" @tap="scanLocalWifi">扫描附近</button>
+          <button class="mini get-wifi" :disabled="wifiScanning" @tap="scanLocalWifi">
+            {{ wifiScanning ? '扫描中...' : '扫描附近' }}
+          </button>
         </view>
 
         <view class="label" style="margin-top: 30rpx;">Wi-Fi 密码</view>
         <view class="password-input-row">
           <input
             class="input"
-            :type="showPassword ? 'text' : 'password'"
+            type="text"
+            :password="!showPassword"
             v-model="wifiPassword"
             placeholder="请输入 Wi-Fi 密码"
           />
-          <view class="eye-icon" @tap="togglePasswordVisible">
+          <view class="eye-icon" @tap.stop="togglePasswordVisible">
             {{ showPassword ? '👁️' : '🔒' }}
           </view>
         </view>
@@ -159,12 +162,21 @@
 
       <view class="actions">
         <button class="ghost" @tap="backToStep1">重新搜索</button>
-        <button class="primary" :disabled="!wifiSsid || sendingConfig" @tap="sendWifiCredentials">
-          {{ sendingConfig ? '正在发送...' : '发送配置 ➔' }}
+        <button class="primary" :disabled="!wifiSsid.trim() || sendingConfig" @tap="sendWifiCredentials">
+          {{ sendingConfig ? '正在连接...' : '连接 ➔' }}
         </button>
       </view>
 
       <view v-if="errorMsg" class="message error">{{ errorMsg }}</view>
+
+      <!-- 折叠调试日志（Wi-Fi 扫描与 BLE 会话） -->
+      <view v-if="SHOW_PROVISION_DEV_LOGS" class="dev-log-section">
+        <view class="dev-log-header" @tap="showConsoleLogs = !showConsoleLogs">
+          <text class="dev-log-title">🛠️ 开发者调试日志</text>
+          <text class="dev-log-arrow">{{ showConsoleLogs ? '收起 ▴' : '展开 ▾' }}</text>
+        </view>
+        <view v-if="showConsoleLogs && debugErr" class="message debug">{{ debugErr }}</view>
+      </view>
     </view>
 
     <!-- 第三步：查看配网连接状态 -->
@@ -175,7 +187,7 @@
       </view>
 
       <!-- 折叠调试日志 -->
-      <view class="dev-log-section" style="margin-bottom: 20rpx;">
+      <view v-if="SHOW_PROVISION_DEV_LOGS" class="dev-log-section" style="margin-bottom: 20rpx;">
         <view class="dev-log-header" @tap="showConsoleLogs = !showConsoleLogs">
           <text class="dev-log-title">🛠️ 开发者调试日志</text>
           <text class="dev-log-arrow">{{ showConsoleLogs ? '收起 ▴' : '展开 ▾' }}</text>
@@ -287,6 +299,9 @@ const scanNoDeviceTimeoutError = BLE_FILTER_SX_PREFIX_ONLY
 
 const scanFoundDebugLabel = BLE_FILTER_SX_PREFIX_ONLY ? "台初心设备" : "台蓝牙设备（调试）";
 
+/** 量产 false；本地 BLE/Wi-Fi 排障时改 true */
+const SHOW_PROVISION_DEV_LOGS = false;
+
 // 状态管理
 const currentStep = ref(1);
 const isScanning = ref(false);
@@ -306,6 +321,7 @@ const wifiSsid = ref("");
 const wifiPassword = ref("");
 const showPassword = ref(false);
 const sendingConfig = ref(false);
+const wifiScanning = ref(false);
 
 // 状态监控日志
 const logs = ref<{ time: string; text: string; type: 'info' | 'success' | 'error' }[]>([]);
@@ -353,8 +369,14 @@ onUnmounted(() => {
   clearScanTimeout();
 });
 
-// 退出或隐藏时清理资源（onHide 不关闭 adapter，避免二次进入失败）
+// 退出或隐藏时清理资源（Step2/3 保持 BLE 会话，避免 iOS 跳转系统页后连接被断开）
 onHide(() => {
+  if (currentStep.value >= 2 && connectedDeviceId.value) {
+    if (isScanning.value) {
+      finishScanning();
+    }
+    return;
+  }
   stopBluetoothOperations(false);
 });
 
@@ -366,6 +388,10 @@ function addLog(text: string, type: 'info' | 'success' | 'error' = 'info') {
   const now = new Date();
   const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
   logs.value.push({ time: timeStr, text, type });
+}
+
+function appendProvisionDebug(msg: string) {
+  debugErr.value = debugErr.value ? `${debugErr.value}\n${msg}` : msg;
 }
 
 function clearScanTimeout() {
@@ -402,7 +428,7 @@ function startScanTimeout() {
   }, BLE_SCAN_DURATION_MS) as unknown as number;
 }
 
-function stopBluetoothOperations(closeAdapter = false) {
+function stopBluetoothOperations(closeAdapter = false, preserveBleSession = false) {
   clearScanTimeout();
   if (isScanning.value) {
     finishScanning();
@@ -411,11 +437,14 @@ function stopBluetoothOperations(closeAdapter = false) {
     void stopBluetoothDiscovery();
   }
   uni.offBluetoothDeviceFound();
-  if (connectedDeviceId.value) {
-    uni.closeBLEConnection({
-      deviceId: connectedDeviceId.value
-    });
-    connectedDeviceId.value = "";
+  if (!preserveBleSession) {
+    if (connectedDeviceId.value) {
+      uni.closeBLEConnection({
+        deviceId: connectedDeviceId.value,
+      });
+      connectedDeviceId.value = "";
+    }
+    provisionClient = null;
   }
   if (closeAdapter) {
     closeBleAdapter();
@@ -424,7 +453,6 @@ function stopBluetoothOperations(closeAdapter = false) {
     clearTimeout(timeoutTimer);
     timeoutTimer = null;
   }
-  provisionClient = null;
 }
 
 // === 步骤 1: 扫描蓝牙与连接 ===
@@ -525,16 +553,19 @@ function listenBluetoothDevices() {
         .replace(/-/g, "");
       const hasProvService = serviceUuids.includes(targetServiceUuid);
 
-      // 如果既不符合普通的过滤条件，也没有广播我们的配网服务，则丢弃
-      if (!shouldIncludeBleDevice(device) && !hasProvService) {
+      if (BLE_FILTER_SX_PREFIX_ONLY) {
+        if (!shouldIncludeBleDevice(device)) {
+          return;
+        }
+      } else if (!shouldIncludeBleDevice(device) && !hasProvService) {
         return;
       }
 
       const rawName = getBleAdvertisedName(device);
       let listName = getBleDeviceListName(device);
 
-      // 如果设备确定是我们的配网设备，但因为各种原因没有广播名字，自动重命名以方便连接
-      if (!rawName && hasProvService) {
+      // 调试模式：无广播名但有配网服务时，自动重命名以方便连接
+      if (!BLE_FILTER_SX_PREFIX_ONLY && !rawName && hasProvService) {
         const id = String(device.deviceId || "").trim();
         const suffix = id.length > 8 ? id.slice(-8) : id;
         listName = `初心设备 (无广播名 · ${suffix})`;
@@ -594,7 +625,7 @@ async function connectDevice(device: BleDeviceItem) {
             undefined,
             (msg) => {
               addLog(msg, "info");
-              debugErr.value += "\n" + msg;
+              appendProvisionDebug(msg);
             }
           );
           await provisionClient.establishSession();
@@ -642,42 +673,61 @@ function backToStep1() {
 }
 
 function scanLocalWifi() {
-  uni.startWifi({
-    success: () => {
-      uni.getWifiList({
-        success: () => {
-          uni.onGetWifiList((res) => {
-            if (res.wifiList && res.wifiList.length > 0) {
-              // 选取信号最好的前几个 Wi-Fi 弹窗供用户选择
-              const list = res.wifiList
-                .filter(x => x.SSID)
-                .slice(0, 8)
-                .map(x => x.SSID);
-              
-              uni.showActionSheet({
-                itemList: list,
-                success: (sheetRes) => {
-                  wifiSsid.value = list[sheetRes.tapIndex];
-                }
-              });
-            } else {
-              uni.showToast({ title: "未获取到 Wi-Fi，请手动输入", icon: "none" });
-            }
-          });
+  if (wifiScanning.value) {
+    return;
+  }
+  if (!provisionClient) {
+    uni.showToast({ title: "蓝牙连接已断开，请重新搜索设备", icon: "none" });
+    return;
+  }
+  if (!provisionClient.supportsWifiScan()) {
+    uni.showToast({ title: "设备不支持扫描，请手动输入 Wi-Fi 名称", icon: "none" });
+    return;
+  }
+
+  wifiScanning.value = true;
+  errorMsg.value = "";
+  appendProvisionDebug("--- Wi-Fi 扫描开始 ---");
+  void provisionClient
+    .scanNearbyWifi()
+    .then((entries) => {
+      if (entries.length === 0) {
+        appendProvisionDebug("Wi-Fi 扫描完成：未发现可用网络");
+        uni.showToast({ title: "未扫描到附近 Wi-Fi，请手动输入", icon: "none" });
+        return;
+      }
+      const list = entries.slice(0, 8).map((entry) => entry.ssid);
+      uni.showActionSheet({
+        itemList: list,
+        success: (sheetRes) => {
+          wifiSsid.value = list[sheetRes.tapIndex];
         },
-        fail: () => {
-          uni.showToast({ title: "扫描 Wi-Fi 列表失败", icon: "none" });
-        }
       });
-    },
-    fail: (err) => {
-      uni.showToast({ title: "请先开启手机 Wi-Fi 开关", icon: "none" });
-    }
-  });
+    })
+    .catch((err: Error) => {
+      const message = err.message || "Wi-Fi 扫描失败，请手动输入网络名称";
+      const detail = err.stack ? `${message}\n${err.stack}` : message;
+      appendProvisionDebug(`Wi-Fi 扫描失败: ${detail}`);
+      showConsoleLogs.value = true;
+      errorMsg.value = message;
+      uni.showToast({ title: message, icon: "none" });
+    })
+    .finally(() => {
+      wifiScanning.value = false;
+    });
 }
 
 function sendWifiCredentials() {
-  if (!wifiSsid.value || !provisionClient) return;
+  const ssid = wifiSsid.value.trim();
+  if (!ssid) {
+    uni.showToast({ title: "请输入 Wi-Fi 名称", icon: "none" });
+    return;
+  }
+  if (!provisionClient) {
+    uni.showToast({ title: "蓝牙连接已断开，请重新搜索设备", icon: "none" });
+    return;
+  }
+  wifiSsid.value = ssid;
   sendingConfig.value = true;
   errorMsg.value = "";
 

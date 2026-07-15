@@ -77,10 +77,15 @@ function readDescriptor(
   });
 }
 
+function supportsBleDescriptors(): boolean {
+  return typeof uni.getBLEDeviceDescriptors === "function";
+}
+
 export class BleTransport {
   private readonly deviceId: string;
   private serviceUuid: string;
   private readonly endpoints: Record<string, string> = {};
+  private readonly verifiedEndpoints = new Set<string>();
   private readonly properties: Record<string, UniNamespace.BLECharacteristicProperties> = {};
   private readonly log: (msg: string) => void;
 
@@ -92,6 +97,20 @@ export class BleTransport {
 
   getServiceUuid(): string {
     return this.serviceUuid;
+  }
+
+  hasEndpoint(endpointName: string): boolean {
+    return this.verifiedEndpoints.has(endpointName);
+  }
+
+  getEndpointCharacteristicId(endpointName: string): string | null {
+    return this.endpoints[endpointName] ?? null;
+  }
+
+  private registerEndpoint(name: string, characteristicId: string, source: string): void {
+    this.endpoints[name] = characteristicId;
+    this.verifiedEndpoints.add(name);
+    this.log(`endpoint[${name}] verified (${source}) → ${characteristicId}`);
   }
 
   async discoverEndpoints(): Promise<void> {
@@ -119,35 +138,73 @@ export class BleTransport {
     this.log(`✓ 找到配网服务: ${this.serviceUuid}`);
 
     const characteristics = await getCharacteristics(this.deviceId, this.serviceUuid);
-    const charList = (characteristics.characteristics || []).map(c => c.uuid);
-    this.log(`特征值列表(${charList.length}): ${charList.join(' | ')}`);
+    const charList = (characteristics.characteristics || []).map((c) => c.uuid);
+    this.log(`特征值列表(${charList.length}): ${charList.join(" | ")}`);
 
-    // 建立「推导 UUID → 微信原始 UUID」映射表
     const wechatUuidMap: Record<string, string> = {};
+
     for (const characteristic of characteristics.characteristics || []) {
       const props = characteristic.properties || {};
-      this.log(`特征[${characteristic.uuid.slice(4, 8)}] 属性: R=${props.read}, W=${props.write}, N=${props.notify}, I=${props.indicate}`);
+      this.log(
+        `特征[${characteristic.uuid.slice(4, 8)}] 属性: R=${props.read}, W=${props.write}, N=${props.notify}, I=${props.indicate}`,
+      );
 
-      // 建立映射：把所有可能的 endpoint 推导 UUID 与微信原始 UUID 对应起来
       for (const shortUuid of Object.values(DEFAULT_ENDPOINT_SHORT_UUID)) {
         const derived = deriveEndpointCharacteristicUuid(this.serviceUuid, shortUuid);
         if (bluetoothUuidMatches(characteristic.uuid, derived)) {
-          const rawUuid = characteristic.uuid;
-          wechatUuidMap[derived.toLowerCase()] = rawUuid;
-          this.properties[rawUuid.toLowerCase()] = props;
+          wechatUuidMap[derived.toLowerCase()] = characteristic.uuid;
+          this.properties[characteristic.uuid.toLowerCase()] = props;
         }
+      }
+
+      if (!supportsBleDescriptors()) {
+        continue;
+      }
+
+      try {
+        const descriptorResult = await getDescriptors(this.deviceId, this.serviceUuid, characteristic.uuid);
+        const userDesc = (descriptorResult.descriptors || []).find((item) =>
+          bluetoothUuidMatches(item.uuid, USER_DESCRIPTION_DESCRIPTOR_UUID),
+        );
+        if (!userDesc) {
+          continue;
+        }
+        const value = await readDescriptor(
+          this.deviceId,
+          this.serviceUuid,
+          characteristic.uuid,
+          userDesc.uuid,
+        );
+        const endpointName = utf8Decode(arrayBufferToUint8Array(value))
+          .replace(/\0/g, "")
+          .trim();
+        if (!endpointName || !(endpointName in DEFAULT_ENDPOINT_SHORT_UUID)) {
+          continue;
+        }
+        if (!this.verifiedEndpoints.has(endpointName)) {
+          this.registerEndpoint(endpointName, characteristic.uuid, "描述符");
+          this.properties[characteristic.uuid.toLowerCase()] = props;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.log(`特征[${characteristic.uuid.slice(4, 8)}] 读描述符失败: ${message}`);
       }
     }
 
-    // fallback：优先用微信原始 UUID，取不到才用推导值（兜底）
+    if (!supportsBleDescriptors()) {
+      this.log("描述符 API 不可用，使用 UUID 匹配");
+    }
+
     for (const [name, shortUuid] of Object.entries(DEFAULT_ENDPOINT_SHORT_UUID)) {
-      if (!this.endpoints[name]) {
-        const derived = deriveEndpointCharacteristicUuid(this.serviceUuid, shortUuid);
-        const resolved = wechatUuidMap[derived.toLowerCase()] ?? derived;
-        this.endpoints[name] = resolved;
-        this.log(`endpoint[${name}] fallback → ${resolved}${wechatUuidMap[derived.toLowerCase()] ? ' (微信原始)' : ' (推导，未在特征值中找到匹配)'}`);
+      if (this.verifiedEndpoints.has(name)) {
+        continue;
+      }
+      const derived = deriveEndpointCharacteristicUuid(this.serviceUuid, shortUuid);
+      const resolved = wechatUuidMap[derived.toLowerCase()];
+      if (resolved) {
+        this.registerEndpoint(name, resolved, "UUID 匹配");
       } else {
-        this.log(`endpoint[${name}] 描述符 → ${this.endpoints[name]}`);
+        this.log(`endpoint[${name}] missing (未在设备上发现)`);
       }
     }
 

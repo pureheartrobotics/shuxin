@@ -13,7 +13,7 @@
     "__usePrivacyCheck__": true,
     "permission": {
       "scope.userLocation": {
-        "desc": "用于搜索附近的蓝牙设备和 Wi-Fi 网络"
+        "desc": "用于在 Android 上搜索附近蓝牙设备以完成配网"
       }
     }
   }

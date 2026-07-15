@@ -2,7 +2,8 @@
 
 **受众**：小程序开发者、提审运营、固件联调  
 **代码目录**：`apps/wechat-miniprogram/`  
-**开发指南**（编译、Mock、工厂 QA）：[`apps/wechat-miniprogram/README.md`](../apps/wechat-miniprogram/README.md)
+**开发指南**（编译、Mock、工厂 QA）：[`apps/wechat-miniprogram/README.md`](../apps/wechat-miniprogram/README.md)  
+**易错清单（必读）**：[`WECHAT_PITFALLS.md`](WECHAT_PITFALLS.md) · Obsidian：`knowledge/shuxin/微信小程序/易错清单.md`
 
 ---
 
@@ -82,24 +83,47 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 | 信息类型 | 推荐用途说明 |
 |----------|--------------|
 | **蓝牙** | 通过低功耗蓝牙（BLE）连接处于配网模式的设备，并向设备发送 Wi-Fi 账号密码以完成网络配置 |
-| **位置信息** | 在 Android 系统上扫描附近蓝牙设备需申请位置权限；本小程序不采集、不上传 GPS 坐标 |
-| **Wi-Fi** | 读取当前连接的 Wi-Fi 名称（SSID），用于向设备发送 2.4GHz 配网信息 |
+| **位置信息** | 见下方「位置信息」专用文案（勿写「获取用户当前位置」） |
 | **摄像头** | 扫描设备外壳条形码以识别设备码并完成绑定 |
 
-后台勾选：**蓝牙**、**Wi-Fi**（若使用）、**摄像头**（扫码绑定）、**位置信息**（Android BLE 扫描）。提审「用户隐私收集」与后台一致。
+**禁止**把位置用途写成「获取用户当前位置信息」——代码从不调用 `wx.getLocation`，仅 Android BLE 扫描需系统位置权限；该表述会因场景不符被驳回。
+
+### 位置信息（后台「用途说明」可直接粘贴）
+
+> 因 Android 系统机制，搜索附近低功耗蓝牙（BLE）设备需授权位置权限。本小程序仅在「设备蓝牙配网」流程中使用该权限以搜索并连接初心设备，不调用定位接口，不采集、不上传、不存储用户的 GPS 坐标或具体位置信息。
+
+短版：`用于 Android 系统搜索附近蓝牙设备以完成设备配网；不采集、不上传 GPS 坐标。`
+
+`manifest` / `manifest.example.json` 的 `scope.userLocation.desc` 须与上一致（勿再写「Wi-Fi 网络」）。
+
+后台勾选：**蓝牙**、**摄像头**（扫码绑定）、**位置信息**（Android BLE 扫描）。Wi-Fi 由设备端 `prov-scan` 完成，**无需**勾选手机 Wi-Fi 接口。提审「用户隐私收集」与后台一致。
 
 ---
 
-## 6. 真机验收清单
+## 6. 量产 UI 开关（入口关闭 ≠ 代码删除）
+
+| 功能 | 现状 | 恢复 |
+|------|------|------|
+| 配网「开发者调试日志」 | `ble.vue` 中 `SHOW_PROVISION_DEV_LOGS = false` | 改为 `true` |
+| 商城 Tab / 主包页 | TabBar 仅「设备」「我的」；未注册 `pages/mall/index` | 加回主包页 + Tab；见 [`MALL_MODULE_ARCHITECTURE.md`](MALL_MODULE_ARCHITECTURE.md) |
+| 个人中心「商城订单」 | 已 HTML 注释 | 取消 `profile.vue` 注释 |
+
+`modules/mall/` 分包与 `/api/mall/*` 保留。构建校验页列表见 `scripts/wechat_miniprogram_dev.sh` 的 `check_page_outputs`（不含 mall 主包页）。
+
+---
+
+## 7. 真机验收清单
 
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
-2. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
-3. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
-4. 点击设备后 ESP-IDF Security1 握手（PoP=`shuxin`）→ 填 Wi-Fi → 配网成功 → 绑定页预填设备码  
+2. 底部 Tab 仅「设备」「我的」；配网页无开发者调试日志区；个人中心无商城订单  
+3. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
+4. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
+5. 点击设备后 ESP-IDF Security1 握手（PoP=`shuxin`）→ 点「扫描附近」由设备列出 Wi-Fi（iOS 不跳转系统设置）→ 选择 SSID、输入密码 → **首次配网应成功**（勿对缺省 `fail_reason` 误报密码错误；见配网 handoff §6）  
+6. Step2 期间切后台再返回，「连接」仍可用（BLE 会话保持）  
 
 ---
 
-## 7. 关键文件索引
+## 8. 关键文件索引
 
 ```
 apps/wechat-miniprogram/src/

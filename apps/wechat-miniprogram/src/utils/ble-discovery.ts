@@ -2,8 +2,8 @@
 
 export const PROVISION_SERVICE_UUID = "1775244D-6B43-439B-877C-060F2D9BED07";
 
-/** 调试：false = 展示所有 BLE 设备；量产改回 true */
-export const BLE_FILTER_SX_PREFIX_ONLY = false;
+/** 调试：临时改 false 可展示所有 BLE 设备；量产须为 true */
+export const BLE_FILTER_SX_PREFIX_ONLY = true;
 
 /** 单次扫描最长持续时间（毫秒） */
 export const BLE_SCAN_DURATION_MS = 12000;

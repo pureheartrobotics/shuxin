@@ -122,4 +122,16 @@ assert(
   `prov-session endpoint UUID should match protocomm layout, got ${provSession}`,
 );
 
+const provScan = deriveEndpoint(V5_PROV_UUID, 0xff50);
+assert(
+  matches(provScan, "1775FF50-6B43-439B-877C-060F2D9BED07"),
+  `prov-scan endpoint UUID should match production firmware, got ${provScan}`,
+);
+
+const protoVer = deriveEndpoint(V5_PROV_UUID, 0xff53);
+assert(
+  matches(protoVer, "1775FF53-6B43-439B-877C-060F2D9BED07"),
+  `proto-ver endpoint UUID should match production firmware, got ${protoVer}`,
+);
+
 console.log("test_bluetooth_uuid: OK");

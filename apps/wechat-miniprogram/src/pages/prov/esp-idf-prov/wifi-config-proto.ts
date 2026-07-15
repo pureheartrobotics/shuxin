@@ -5,6 +5,7 @@ import {
   encodeVarintField,
   getBytesField,
   getVarintField,
+  type ProtoField,
   utf8Encode,
 } from "./protobuf-wire";
 
@@ -79,6 +80,18 @@ export function parseApplyConfigResponse(decrypted: Uint8Array): number {
   return status ?? 0;
 }
 
+export function parseWifiAttemptRemaining(respFields: ProtoField[]): number | null {
+  const attemptFailedBytes = getBytesField(respFields, 12);
+  if (!attemptFailedBytes) {
+    return null;
+  }
+  return getVarintField(decodeFields(attemptFailedBytes), 1);
+}
+
+export function isTerminalWifiProvisionFailure(status: WifiProvisionStatus): boolean {
+  return status === "failed_auth" || status === "failed_not_found" || status === "failed";
+}
+
 export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStatus {
   const fields = decodeFields(decrypted);
   const msgType = getVarintField(fields, 1);
@@ -90,6 +103,12 @@ export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStat
     throw new Error("缺少 GetStatus 响应体");
   }
   const respFields = decodeFields(resp);
+
+  const attemptsRemaining = parseWifiAttemptRemaining(respFields);
+  if (attemptsRemaining !== null && attemptsRemaining > 0) {
+    return "connecting";
+  }
+
   // 在 proto3 中，WifiStationState 的 Connected (0) 不会被序列化，未找到时视作 0 (connected)
   const staState = getVarintField(respFields, 2) ?? 0;
   if (staState === 0) {
@@ -102,8 +121,11 @@ export function parseGetStatusResponse(decrypted: Uint8Array): WifiProvisionStat
     return "disconnected";
   }
   if (staState === 3) {
-    // WifiConnectFailedReason 的 AuthError (0) 不会被序列化，未找到时视作 0 (failed_auth)
-    const failReason = getVarintField(respFields, 10) ?? 0;
+    const failReason = getVarintField(respFields, 10);
+    if (failReason === null) {
+      // proto3 缺省 fail_reason 不得当作 AuthError；继续轮询等待设备重试
+      return "connecting";
+    }
     if (failReason === 0) {
       return "failed_auth";
     }

@@ -74,7 +74,7 @@ bash scripts/wechat_miniprogram_dev.sh build
 
 登录隐私、BLE 授权、扫描过滤、微信后台「用户隐私保护指引」文案、固件广播名约定见项目根文档：
 
-**[`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md)** · 硬件对接：**[`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](../../docs/WECHAT_BLE_PROVISIONING_HANDOFF.md)**
+**[`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md)** · 易错清单：**[`docs/WECHAT_PITFALLS.md`](../../docs/WECHAT_PITFALLS.md)** · 硬件对接：**[`docs/WECHAT_BLE_PROVISIONING_HANDOFF.md`](../../docs/WECHAT_BLE_PROVISIONING_HANDOFF.md)**
 
 ---
 
@@ -114,7 +114,10 @@ SHUXIN_WECHAT_MOCK=1
 
 **微信小程序后台**（代码 + 后台双侧缺一不可）：
 
-- 「设置 → 服务内容声明 → 用户隐私保护指引」中勾选 **蓝牙**（使用 Wi-Fi 扫描时还需勾选 Wi-Fi 相关信息）
-- 提审时「用户隐私收集」须与后台指引一致
+- 「设置 → 服务内容声明 → 用户隐私保护指引」中勾选 **蓝牙**、**位置信息**（Android BLE）、**摄像头**；Wi-Fi 由设备端 `prov-scan`，无需勾选手机 Wi-Fi 接口
+- **位置用途**勿写「获取用户当前位置」——见 [`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md) §5 可粘贴文案
+- 提审「用户隐私收集」须与后台指引一致
 - 蓝牙**不要**写入 `app.json` 的 `requiredPrivateInfos`（该字段仅支持地理位置类接口）
-- Android 扫描 BLE 还需 `manifest.json` 中 `permission.scope.userLocation` 并引导用户授权
+- Android 扫描 BLE 还需 `manifest` 中 `permission.scope.userLocation`（desc 仅写配网搜蓝牙）并引导用户授权
+
+**量产 UI**：TabBar 仅「设备」「我的」；商城入口关闭（代码保留）；配网开发者调试日志默认关闭（`SHOW_PROVISION_DEV_LOGS`）。
