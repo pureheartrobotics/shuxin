@@ -16,17 +16,28 @@ miniapp_admin_router = APIRouter()
 
 
 def _get_miniapp_admin_token() -> str:
-    """获取小程序管理后台 Token。"""
-    token = os.environ.get("SHUXIN_MINIAPP_ADMIN_TOKEN")
+    """获取小程序管理后台 Token。
+
+    读取 SHUXIN_MINIAPP_ADMIN_TOKEN，未设时回退 SHUXIN_ADMIN_TOKEN。
+    二者皆空则返回空字符串（禁止硬编码默认值，避免未配置即可登录）。
+    """
+    token = (os.environ.get("SHUXIN_MINIAPP_ADMIN_TOKEN") or "").strip()
     if not token:
-        token = os.environ.get("SHUXIN_ADMIN_TOKEN")
-    return token or "dev-miniapp-admin-token"
+        token = (os.environ.get("SHUXIN_ADMIN_TOKEN") or "").strip()
+    return token
 
 
 def require_miniapp_admin(request: Request) -> None:
     """验证小程序管理后台登录状态。"""
     token = _get_miniapp_admin_token()
-    provided = request.headers.get("X-Miniapp-Admin-Token") or request.cookies.get("shuxin_miniapp_admin")
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: configure SHUXIN_MINIAPP_ADMIN_TOKEN or SHUXIN_ADMIN_TOKEN",
+        )
+    provided = request.headers.get("X-Miniapp-Admin-Token") or request.cookies.get(
+        "shuxin_miniapp_admin"
+    )
     if not provided or provided != token:
         raise HTTPException(status_code=401, detail="Unauthorized: invalid admin token")
 
@@ -80,6 +91,13 @@ class AllowanceSettingsPayload(BaseModel):
 @miniapp_admin_router.post("/api/login")
 async def admin_login(payload: LoginPayload, response: Response):
     token = _get_miniapp_admin_token()
+    if not token:
+        return JSONResponse(
+            {
+                "error": "admin token not configured; set SHUXIN_MINIAPP_ADMIN_TOKEN or SHUXIN_ADMIN_TOKEN",
+            },
+            status_code=403,
+        )
     if payload.token != token:
         return JSONResponse({"error": "invalid admin token"}, status_code=403)
 
@@ -251,14 +269,89 @@ async def update_allowance_settings(request: Request, payload: AllowanceSettings
     return result
 
 
+# ---- Mall (ops) ----
+
+class MallProductPayload(BaseModel):
+    product_id: Optional[str] = None
+    name: str
+    description: Optional[str] = ""
+    cover_url: Optional[str] = ""
+    status: Optional[str] = "on_sale"
+    sort_order: Optional[int] = 0
+    skus: Optional[list] = None
+    price_fen: Optional[int] = None
+    stock: Optional[int] = None
+    sku_id: Optional[str] = None
+    sku_name: Optional[str] = None
+
+
+class MallSkuPayload(BaseModel):
+    product_id: str
+    sku_id: Optional[str] = None
+    name: Optional[str] = "默认"
+    price_fen: int
+    stock: Optional[int] = 0
+    attrs: Optional[dict] = None
+    status: Optional[str] = "active"
+
+
+class MallShipPayload(BaseModel):
+    order_id: str
+    shipping_no: str
+    shipping_carrier: Optional[str] = ""
+
+
+@miniapp_admin_router.get("/api/mall/products")
+async def miniapp_mall_products(request: Request, limit: int = 50):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.mall.admin_list_products(limit=limit)
+
+
+@miniapp_admin_router.post("/api/mall/products")
+async def miniapp_mall_upsert_product(request: Request, payload: MallProductPayload):
+    require_miniapp_admin(request)
+    data = payload.model_dump(exclude_none=True)
+    return await request.app.state.repo.mall.admin_upsert_product(data)
+
+
+@miniapp_admin_router.post("/api/mall/skus")
+async def miniapp_mall_upsert_sku(request: Request, payload: MallSkuPayload):
+    require_miniapp_admin(request)
+    data = payload.model_dump(exclude_none=True)
+    return await request.app.state.repo.mall.admin_upsert_sku(data)
+
+
+@miniapp_admin_router.get("/api/mall/orders")
+async def miniapp_mall_orders(request: Request, limit: int = 50):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.mall.admin_list_orders(limit=limit)
+
+
+@miniapp_admin_router.post("/api/mall/orders/ship")
+async def miniapp_mall_ship(request: Request, payload: MallShipPayload):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.mall.admin_ship_order(
+        order_id=payload.order_id,
+        shipping_no=payload.shipping_no,
+        shipping_carrier=payload.shipping_carrier or "",
+    )
+
+
 @miniapp_admin_router.get("", response_class=HTMLResponse)
 async def admin_portal(request: Request):
     """渲染精美的小程序专属后台管理界面。"""
     token = _get_miniapp_admin_token()
-    provided = request.headers.get("X-Miniapp-Admin-Token") or request.cookies.get("shuxin_miniapp_admin")
-    authenticated = (provided == token)
+    provided = request.headers.get("X-Miniapp-Admin-Token") or request.cookies.get(
+        "shuxin_miniapp_admin"
+    )
+    authenticated = bool(token) and provided == token
 
     static_file = Path(__file__).resolve().parent.parent / "static" / "miniapp_admin.html"
     html_content = static_file.read_text(encoding="utf-8")
-    html_content = html_content.replace("{{authenticated}}", "true" if authenticated else "false")
+    html_content = html_content.replace(
+        "{{authenticated}}", "true" if authenticated else "false"
+    )
+    html_content = html_content.replace(
+        "{{token_configured}}", "true" if bool(token) else "false"
+    )
     return HTMLResponse(content=html_content)

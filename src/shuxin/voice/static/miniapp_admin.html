@@ -109,6 +109,7 @@
                             placeholder="请输入运营管理 Token"
                             class="w-full px-4 py-3 rounded-xl bg-gray-900/80 border border-gray-800 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition duration-200">
                     </div>
+                    <p v-if="!tokenConfigured" class="text-amber-700 text-sm text-center">未配置管理密钥。请在 .env 设置 SHUXIN_MINIAPP_ADMIN_TOKEN 或 SHUXIN_ADMIN_TOKEN 后重启服务。</p>
                     <button type="submit" :disabled="loading"
                         class="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition duration-200 disabled:opacity-50">
                         {{ loading ? '登录中...' : '进入控制台' }}
@@ -154,6 +155,14 @@
                         </svg>
                         套餐定价设置
                     </button>
+                    <button @click="currentTab = 'mall'; loadMallData()" 
+                        :class="currentTab === 'mall' ? 'bg-indigo-600/10 text-indigo-400 border-l-4 border-indigo-500' : 'text-gray-400 hover:bg-gray-850 hover:text-gray-200'"
+                        class="w-full flex items-center px-4 py-3 rounded-xl font-medium text-left transition duration-150">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                        </svg>
+                        商城管理
+                    </button>
                 </nav>
                 <div class="p-4 border-t border-gray-800">
                     <button @click="handleLogout" 
@@ -169,10 +178,10 @@
                 <header class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
                         <h2 class="text-3xl font-bold tracking-tight">
-                            {{ currentTab === 'announcements' ? '公告管理' : currentTab === 'feedbacks' ? '用户意见反馈' : '套餐与低保设置' }}
+                            {{ currentTab === 'announcements' ? '公告管理' : currentTab === 'feedbacks' ? '用户意见反馈' : currentTab === 'mall' ? '商城管理' : '套餐与低保设置' }}
                         </h2>
                         <p class="text-gray-400 text-sm mt-1">
-                            {{ currentTab === 'announcements' ? '发布小程序端顶部通知横幅或紧急大屏弹窗' : currentTab === 'feedbacks' ? '查看小程序用户的意见反馈和客服跟进' : '动态调整包月订阅套餐、充值加油包及每日低保额度' }}
+                            {{ currentTab === 'announcements' ? '发布小程序端顶部通知横幅或紧急大屏弹窗' : currentTab === 'feedbacks' ? '查看小程序用户的意见反馈和客服跟进' : currentTab === 'mall' ? '商品多规格、库存与订单发货' : '动态调整包月订阅套餐、充值加油包及每日低保额度' }}
                         </p>
                     </div>
                     <div v-if="currentTab === 'announcements'">
@@ -451,6 +460,97 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- 商城管理 -->
+                <div v-if="currentTab === 'mall'" class="space-y-6">
+                    <div class="flex space-x-2">
+                        <button @click="mallSubTab = 'products'"
+                            :class="mallSubTab === 'products' ? 'bg-indigo-600 text-white' : 'bg-gray-900/30 text-gray-400 hover:text-white'"
+                            class="px-4 py-2 rounded-xl text-sm font-medium transition">商品</button>
+                        <button @click="mallSubTab = 'orders'"
+                            :class="mallSubTab === 'orders' ? 'bg-indigo-600 text-white' : 'bg-gray-900/30 text-gray-400 hover:text-white'"
+                            class="px-4 py-2 rounded-xl text-sm font-medium transition">订单</button>
+                    </div>
+
+                    <div v-if="mallSubTab === 'products'" class="glass rounded-2xl overflow-hidden shadow-xl border border-gray-800 p-6 space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-bold text-white">商品列表</h3>
+                            <button @click="openAddProductModal"
+                                class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 px-4 rounded-xl text-sm transition">
+                                新建/编辑商品
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/30 border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider font-semibold">
+                                        <th class="py-3 px-4">名称</th>
+                                        <th class="py-3 px-4">状态</th>
+                                        <th class="py-3 px-4">SKU 数</th>
+                                        <th class="py-3 px-4">最低价</th>
+                                        <th class="py-3 px-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-800 text-sm">
+                                    <tr v-if="!mallProducts.length" class="text-gray-500 text-center">
+                                        <td colspan="5" class="py-8">暂无商品</td>
+                                    </tr>
+                                    <tr v-for="p in mallProducts" :key="p.product_id" class="hover:bg-gray-900/10">
+                                        <td class="py-3 px-4 font-semibold text-white">{{ p.name }}</td>
+                                        <td class="py-3 px-4">
+                                            <span :class="p.status === 'on_sale' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-500'"
+                                                class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border border-current">
+                                                {{ p.status === 'on_sale' ? '在售' : '下架' }}
+                                            </span>
+                                        </td>
+                                        <td class="py-3 px-4">{{ (p.skus || []).length }}</td>
+                                        <td class="py-3 px-4">{{ mallProductMinPrice(p) }}</td>
+                                        <td class="py-3 px-4 text-right">
+                                            <button @click="editProduct(p)" class="text-indigo-400 hover:text-indigo-300">编辑</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div v-if="mallSubTab === 'orders'" class="glass rounded-2xl overflow-hidden shadow-xl border border-gray-800 p-6 space-y-4">
+                        <h3 class="text-lg font-bold text-white">订单列表</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/30 border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider font-semibold">
+                                        <th class="py-3 px-4">订单号</th>
+                                        <th class="py-3 px-4">状态</th>
+                                        <th class="py-3 px-4">金额</th>
+                                        <th class="py-3 px-4">用户</th>
+                                        <th class="py-3 px-4">物流公司</th>
+                                        <th class="py-3 px-4">运单号</th>
+                                        <th class="py-3 px-4 text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-800 text-sm">
+                                    <tr v-if="!mallOrders.length" class="text-gray-500 text-center">
+                                        <td colspan="7" class="py-8">暂无订单</td>
+                                    </tr>
+                                    <tr v-for="o in mallOrders" :key="o.order_id" class="hover:bg-gray-900/10">
+                                        <td class="py-3 px-4 font-mono text-xs text-gray-400">{{ o.out_trade_no }}</td>
+                                        <td class="py-3 px-4">{{ o.status }}</td>
+                                        <td class="py-3 px-4">¥{{ o.total_yuan }}</td>
+                                        <td class="py-3 px-4 font-mono text-xs text-gray-400">{{ o.user_id }}</td>
+                                        <td class="py-3 px-4">{{ o.shipping_carrier || '—' }}</td>
+                                        <td class="py-3 px-4">{{ o.shipping_no || '—' }}</td>
+                                        <td class="py-3 px-4 text-right">
+                                            <button v-if="o.status === 'paid' || o.status === 'shipped'"
+                                                @click="openShipModal(o)"
+                                                class="text-indigo-400 hover:text-indigo-300">发货</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </main>
         </div>
 
@@ -693,6 +793,121 @@
                 </form>
             </div>
         </div>
+
+        <!-- 商城商品 Modal -->
+        <div v-if="showProductModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div class="glass w-full max-w-2xl p-8 rounded-2xl shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+                <div class="flex justify-between items-center pb-4 border-b border-gray-850">
+                    <h3 class="text-xl font-bold text-white">{{ productForm.product_id ? '编辑商品' : '新建商品' }}</h3>
+                    <button @click="showProductModal = false" class="text-gray-400 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form @submit.prevent="submitProduct" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">商品名称</label>
+                        <input type="text" v-model="productForm.name" required placeholder="商品名称"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">描述</label>
+                        <textarea v-model="productForm.description" rows="2" placeholder="商品描述"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"></textarea>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">封面 URL</label>
+                            <input type="text" v-model="productForm.cover_url" placeholder="https://..."
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">排序</label>
+                            <input type="number" v-model="productForm.sort_order"
+                                class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">状态</label>
+                        <select v-model="productForm.status"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            <option value="on_sale">在售 (on_sale)</option>
+                            <option value="off_sale">下架 (off_sale)</option>
+                        </select>
+                    </div>
+                    <div class="space-y-3 pt-2 border-t border-gray-850">
+                        <div class="flex justify-between items-center">
+                            <label class="text-sm font-medium text-gray-300">SKU 规格</label>
+                            <button type="button" @click="addSkuRow" class="text-indigo-400 text-sm hover:text-indigo-300">+ 添加 SKU</button>
+                        </div>
+                        <div v-for="(row, idx) in skuRows" :key="idx" class="p-3 rounded-xl bg-gray-900/30 border border-gray-850 space-y-2">
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="text" v-model="row.name" placeholder="规格名" required
+                                    class="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                                <select v-model="row.status"
+                                    class="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                                    <option value="active">active</option>
+                                    <option value="inactive">inactive</option>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="number" v-model="row.price_fen" placeholder="价格(分)" required min="1"
+                                    class="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                                <input type="number" v-model="row.stock" placeholder="库存" min="0"
+                                    class="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            </div>
+                            <input type="text" v-model="row.attrs_text" placeholder='attrs JSON 可选，如 {"color":"红"}'
+                                class="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            <button type="button" v-if="skuRows.length > 1" @click="removeSkuRow(idx)"
+                                class="text-rose-400 text-xs hover:text-rose-300">移除</button>
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-850">
+                        <button type="button" @click="showProductModal = false"
+                            class="px-5 py-2.5 rounded-xl border border-gray-800 text-gray-400 hover:text-white transition">取消</button>
+                        <button type="submit" :disabled="loading"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl transition">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 发货 Modal -->
+        <div v-if="showShipModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div class="glass w-full max-w-md p-8 rounded-2xl shadow-2xl space-y-6">
+                <div class="flex justify-between items-center pb-4 border-b border-gray-850">
+                    <h3 class="text-xl font-bold text-white">订单发货</h3>
+                    <button @click="showShipModal = false" class="text-gray-400 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <form @submit.prevent="submitShip" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">物流公司</label>
+                        <input type="text" v-model="shipForm.shipping_carrier" placeholder="如 顺丰 / 中通"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">运单号</label>
+                        <input type="text" v-model="shipForm.shipping_no" required placeholder="物流单号"
+                            class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4 border-t border-gray-850">
+                        <button type="button" @click="showShipModal = false"
+                            class="px-5 py-2.5 rounded-xl border border-gray-800 text-gray-400 hover:text-white transition">取消</button>
+                        <button type="submit" :disabled="loading"
+                            class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl transition">
+                            确认发货
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -701,6 +916,7 @@
         createApp({
             setup() {
                 const authenticated = ref({{authenticated}});
+                const tokenConfigured = ref({{token_configured}});
                 const loginToken = ref('');
                 const loading = ref(false);
                 const errorMsg = ref('');
@@ -764,6 +980,35 @@
                     is_edit: false
                 });
 
+                // 商城
+                const mallSubTab = ref('products');
+                const mallProducts = ref([]);
+                const mallOrders = ref([]);
+                const showProductModal = ref(false);
+                const productForm = ref({
+                    product_id: null,
+                    name: '',
+                    description: '',
+                    cover_url: '',
+                    status: 'on_sale',
+                    sort_order: 0
+                });
+                const emptySkuRow = () => ({
+                    sku_id: null,
+                    name: '默认',
+                    price_fen: 100,
+                    stock: 0,
+                    attrs_text: '',
+                    status: 'active'
+                });
+                const skuRows = ref([emptySkuRow()]);
+                const showShipModal = ref(false);
+                const shipForm = ref({
+                    order_id: '',
+                    shipping_carrier: '',
+                    shipping_no: ''
+                });
+
                 const filteredFeedbacks = computed(() => {
                     if (feedbackFilter.value === 'all') return feedbacks.value;
                     return feedbacks.value.filter(fb => fb.status === feedbackFilter.value);
@@ -808,6 +1053,22 @@
                     }
                 };
 
+                const loadMallData = async () => {
+                    if (!authenticated.value) return;
+                    try {
+                        const [prodRes, orderRes] = await Promise.all([
+                            apiRequest('/api/mall/products').catch(() => ({ items: [] })),
+                            apiRequest('/api/mall/orders').catch(() => ({ items: [] }))
+                        ]);
+                        mallProducts.value = prodRes.items || [];
+                        mallOrders.value = orderRes.items || [];
+                    } catch (err) {
+                        console.error('加载商城数据失败:', err);
+                        mallProducts.value = [];
+                        mallOrders.value = [];
+                    }
+                };
+
                 const loadData = async () => {
                     if (!authenticated.value) return;
                     try {
@@ -828,6 +1089,7 @@
                             allowanceForm.value.gift_subscription_plan_id = allowanceRes.data.gift_subscription_plan_id;
                             allowanceForm.value.gift_duration_months = allowanceRes.data.gift_duration_months;
                         }
+                        await loadMallData();
                     } catch (err) {
                         console.error('加载数据失败:', err);
                     }
@@ -1051,12 +1313,141 @@
                     }
                 };
 
+                // === 商城 ===
+                const mallProductMinPrice = (p) => {
+                    const skus = p.skus || [];
+                    if (!skus.length) return '—';
+                    const min = Math.min(...skus.map(s => Number(s.price_fen) || 0));
+                    return '¥' + (min / 100).toFixed(2);
+                };
+
+                const openAddProductModal = () => {
+                    productForm.value = {
+                        product_id: null,
+                        name: '',
+                        description: '',
+                        cover_url: '',
+                        status: 'on_sale',
+                        sort_order: 0
+                    };
+                    skuRows.value = [emptySkuRow()];
+                    showProductModal.value = true;
+                };
+
+                const editProduct = (p) => {
+                    productForm.value = {
+                        product_id: p.product_id,
+                        name: p.name || '',
+                        description: p.description || '',
+                        cover_url: p.cover_url || '',
+                        status: p.status || 'on_sale',
+                        sort_order: p.sort_order || 0
+                    };
+                    const skus = p.skus || [];
+                    skuRows.value = skus.length
+                        ? skus.map(s => ({
+                            sku_id: s.sku_id || null,
+                            name: s.name || '默认',
+                            price_fen: s.price_fen || 0,
+                            stock: s.stock || 0,
+                            attrs_text: s.attrs && Object.keys(s.attrs).length
+                                ? JSON.stringify(s.attrs)
+                                : '',
+                            status: s.status || 'active'
+                        }))
+                        : [emptySkuRow()];
+                    showProductModal.value = true;
+                };
+
+                const addSkuRow = () => {
+                    skuRows.value.push(emptySkuRow());
+                };
+
+                const removeSkuRow = (idx) => {
+                    if (skuRows.value.length <= 1) return;
+                    skuRows.value.splice(idx, 1);
+                };
+
+                const submitProduct = async () => {
+                    loading.value = true;
+                    try {
+                        const skus = [];
+                        for (const row of skuRows.value) {
+                            let attrs = {};
+                            if (row.attrs_text && String(row.attrs_text).trim()) {
+                                try {
+                                    attrs = JSON.parse(row.attrs_text);
+                                    if (typeof attrs !== 'object' || Array.isArray(attrs)) {
+                                        throw new Error('attrs 须为 JSON 对象');
+                                    }
+                                } catch (e) {
+                                    throw new Error('SKU attrs JSON 无效: ' + (e.message || e));
+                                }
+                            }
+                            const sku = {
+                                name: row.name,
+                                price_fen: Number(row.price_fen),
+                                stock: Number(row.stock) || 0,
+                                attrs,
+                                status: row.status || 'active'
+                            };
+                            if (row.sku_id) sku.sku_id = row.sku_id;
+                            skus.push(sku);
+                        }
+                        const payload = {
+                            name: productForm.value.name,
+                            description: productForm.value.description || '',
+                            cover_url: productForm.value.cover_url || '',
+                            status: productForm.value.status || 'on_sale',
+                            sort_order: Number(productForm.value.sort_order) || 0,
+                            skus
+                        };
+                        if (productForm.value.product_id) {
+                            payload.product_id = productForm.value.product_id;
+                        }
+                        await apiRequest('/api/mall/products', 'POST', payload);
+                        showProductModal.value = false;
+                        await loadMallData();
+                    } catch (err) {
+                        alert(err.message);
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const openShipModal = (o) => {
+                    shipForm.value = {
+                        order_id: o.order_id,
+                        shipping_carrier: o.shipping_carrier || '',
+                        shipping_no: o.shipping_no || ''
+                    };
+                    showShipModal.value = true;
+                };
+
+                const submitShip = async () => {
+                    loading.value = true;
+                    try {
+                        await apiRequest('/api/mall/orders/ship', 'POST', {
+                            order_id: shipForm.value.order_id,
+                            shipping_carrier: shipForm.value.shipping_carrier || '',
+                            shipping_no: shipForm.value.shipping_no
+                        });
+                        showShipModal.value = false;
+                        await loadMallData();
+                    } catch (err) {
+                        alert(err.message);
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
                 onMounted(() => {
                     loadData();
                 });
 
                 return {
                     authenticated,
+                    tokenConfigured,
                     loginToken,
                     loading,
                     errorMsg,
@@ -1094,7 +1485,24 @@
                     openAddFuelPackModal,
                     editFuelPack,
                     submitFuelPack,
-                    deleteFuelPack
+                    deleteFuelPack,
+                    mallSubTab,
+                    mallProducts,
+                    mallOrders,
+                    loadMallData,
+                    mallProductMinPrice,
+                    showProductModal,
+                    productForm,
+                    skuRows,
+                    openAddProductModal,
+                    editProduct,
+                    addSkuRow,
+                    removeSkuRow,
+                    submitProduct,
+                    showShipModal,
+                    shipForm,
+                    openShipModal,
+                    submitShip
                 };
             }
         }).mount('#app');
