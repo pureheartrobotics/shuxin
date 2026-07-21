@@ -34,3 +34,14 @@ def test_local_repo_exposes_mall_stub() -> None:
 
     repo = MallLocalRepository(parent=object())
     assert hasattr(repo, "list_products")
+    assert hasattr(repo, "cancel_order")
+    assert hasattr(repo, "admin_upsert_sku")
+
+
+def test_miniapp_admin_html_has_mall_tab() -> None:
+    from pathlib import Path
+
+    text = Path("src/shuxin/voice/static/miniapp_admin.html").read_text(encoding="utf-8")
+    assert "商城管理" in text
+    assert "loadMallData" in text
+    assert "tokenConfigured" in text

@@ -36,6 +36,24 @@ class MallLocalRepository:
     async def create_address(self, *, session_token: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for mall addresses")
 
+    async def update_address(
+        self,
+        *,
+        session_token: str,
+        address_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for mall addresses")
+
+    async def delete_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for mall addresses")
+
+    async def set_default_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for mall addresses")
+
+    async def cancel_order(self, *, session_token: str, order_id: str) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for mall orders")
+
     async def list_orders_by_session(self, *, session_token: str, limit: int = 20) -> dict[str, Any]:
         return {"items": []}
 
@@ -65,8 +83,17 @@ class MallLocalRepository:
     async def admin_upsert_product(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for mall admin")
 
+    async def admin_upsert_sku(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("DATABASE_URL is required for mall admin")
+
     async def admin_list_orders(self, *, limit: int = 50) -> dict[str, Any]:
         return {"items": []}
 
-    async def admin_ship_order(self, *, order_id: str, shipping_no: str) -> dict[str, Any]:
+    async def admin_ship_order(
+        self,
+        *,
+        order_id: str,
+        shipping_no: str,
+        shipping_carrier: str = "",
+    ) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for mall admin")

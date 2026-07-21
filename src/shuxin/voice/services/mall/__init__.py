@@ -61,6 +61,31 @@ class MallAddressService:
             payload=payload,
         )
 
+    async def update_address(
+        self,
+        *,
+        session_token: str,
+        address_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self.repo.mall.update_address(
+            session_token=_require_session(session_token),
+            address_id=address_id,
+            payload=payload,
+        )
+
+    async def delete_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        return await self.repo.mall.delete_address(
+            session_token=_require_session(session_token),
+            address_id=address_id,
+        )
+
+    async def set_default_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        return await self.repo.mall.set_default_address(
+            session_token=_require_session(session_token),
+            address_id=address_id,
+        )
+
 
 class MallOrderService:
     def __init__(self, repo: Any) -> None:
@@ -70,4 +95,10 @@ class MallOrderService:
         return await self.repo.mall.list_orders_by_session(
             session_token=_require_session(session_token),
             limit=limit,
+        )
+
+    async def cancel_order(self, *, session_token: str, order_id: str) -> dict[str, Any]:
+        return await self.repo.mall.cancel_order(
+            session_token=_require_session(session_token),
+            order_id=order_id,
         )

@@ -27,6 +27,12 @@ async def admin_mall_upsert_product(request: Request, repo=Depends(get_repo)):
     return JSONResponse(await repo.mall.admin_upsert_product(payload))
 
 
+@router.post("/skus")
+async def admin_mall_upsert_sku(request: Request, repo=Depends(get_repo)):
+    payload = await request.json()
+    return JSONResponse(await repo.mall.admin_upsert_sku(payload))
+
+
 @router.get("/orders")
 async def admin_mall_orders(limit: int = 50, repo=Depends(get_repo)):
     return JSONResponse(await repo.mall.admin_list_orders(limit=limit))
@@ -39,5 +45,6 @@ async def admin_mall_ship_order(request: Request, repo=Depends(get_repo)):
         await repo.mall.admin_ship_order(
             order_id=str(payload.get("order_id") or ""),
             shipping_no=str(payload.get("shipping_no") or ""),
+            shipping_carrier=str(payload.get("shipping_carrier") or ""),
         )
     )

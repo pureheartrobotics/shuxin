@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any, Optional
 
@@ -77,6 +78,7 @@ def _order_item(row: Any, items: list[dict[str, Any]] | None = None) -> dict[str
         "total_fen": int(row.get("total_fen") or 0),
         "total_yuan": round(int(row.get("total_fen") or 0) / 100.0, 2),
         "address_snapshot": _json_obj(row.get("address_snapshot")),
+        "shipping_carrier": str(row.get("shipping_carrier") or ""),
         "shipping_no": str(row.get("shipping_no") or ""),
         "items": items or [],
         "created_at": _dt_iso(row.get("created_at")),
@@ -295,6 +297,219 @@ class MallRepository(BaseRepository):
                 )
         return await self.list_addresses(session_token=session_token)
 
+    async def update_address(
+        self,
+        *,
+        session_token: str,
+        address_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        selected = str(address_id or "").strip()
+        if not selected:
+            raise ValueError("address_id is required")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                user_id = await self._user_id_from_session(conn, session_token)
+                is_default = bool(payload.get("is_default"))
+                if is_default:
+                    await conn.execute(
+                        "UPDATE mall_addresses SET is_default = false WHERE user_id = $1",
+                        user_id,
+                    )
+                row = await conn.fetchrow(
+                    """
+                    UPDATE mall_addresses SET
+                        receiver_name = $3,
+                        receiver_phone = $4,
+                        province = $5,
+                        city = $6,
+                        district = $7,
+                        detail = $8,
+                        is_default = $9,
+                        updated_at = now()
+                    WHERE address_id = $1 AND user_id = $2
+                    RETURNING address_id
+                    """,
+                    selected,
+                    user_id,
+                    str(payload.get("receiver_name") or "").strip(),
+                    str(payload.get("receiver_phone") or "").strip(),
+                    str(payload.get("province") or "").strip(),
+                    str(payload.get("city") or "").strip(),
+                    str(payload.get("district") or "").strip(),
+                    str(payload.get("detail") or "").strip(),
+                    is_default,
+                )
+                if row is None:
+                    raise ValueError("address not found")
+        return await self.list_addresses(session_token=session_token)
+
+    async def delete_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        selected = str(address_id or "").strip()
+        if not selected:
+            raise ValueError("address_id is required")
+        async with self.pool.acquire() as conn:
+            user_id = await self._user_id_from_session(conn, session_token)
+            await conn.execute(
+                "DELETE FROM mall_addresses WHERE address_id = $1 AND user_id = $2",
+                selected,
+                user_id,
+            )
+        return await self.list_addresses(session_token=session_token)
+
+    async def set_default_address(self, *, session_token: str, address_id: str) -> dict[str, Any]:
+        selected = str(address_id or "").strip()
+        if not selected:
+            raise ValueError("address_id is required")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                user_id = await self._user_id_from_session(conn, session_token)
+                owned = await conn.fetchval(
+                    "SELECT 1 FROM mall_addresses WHERE address_id = $1 AND user_id = $2",
+                    selected,
+                    user_id,
+                )
+                if not owned:
+                    raise ValueError("address not found")
+                await conn.execute(
+                    "UPDATE mall_addresses SET is_default = false WHERE user_id = $1",
+                    user_id,
+                )
+                await conn.execute(
+                    """
+                    UPDATE mall_addresses
+                    SET is_default = true, updated_at = now()
+                    WHERE address_id = $1 AND user_id = $2
+                    """,
+                    selected,
+                    user_id,
+                )
+        return await self.list_addresses(session_token=session_token)
+
+    def _pending_expire_minutes(self) -> int:
+        try:
+            return max(5, int(os.environ.get("SHUXIN_MALL_PENDING_EXPIRE_MINUTES") or 30))
+        except ValueError:
+            return 30
+
+    async def expire_pending_orders(self, conn=None) -> int:
+        """Cancel stale pending orders and restore reserved stock. Returns cancelled count."""
+        minutes = self._pending_expire_minutes()
+
+        async def _run(c) -> int:
+            rows = await c.fetch(
+                """
+                SELECT order_id
+                FROM mall_orders
+                WHERE status = 'pending'
+                  AND created_at < now() - make_interval(mins => $1)
+                FOR UPDATE SKIP LOCKED
+                """,
+                minutes,
+            )
+            cancelled = 0
+            for row in rows:
+                await self._cancel_order_locked(c, order_id=str(row["order_id"]), user_id=None)
+                cancelled += 1
+            return cancelled
+
+        if conn is not None:
+            return await _run(conn)
+        async with self.pool.acquire() as acquired:
+            async with acquired.transaction():
+                return await _run(acquired)
+
+    async def _cancel_order_locked(
+        self,
+        conn,
+        *,
+        order_id: str,
+        user_id: Optional[str],
+    ) -> dict[str, Any]:
+        if user_id:
+            row = await conn.fetchrow(
+                """
+                SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
+                       shipping_carrier, shipping_no, created_at, paid_at, shipped_at
+                FROM mall_orders
+                WHERE order_id = $1 AND user_id = $2
+                FOR UPDATE
+                """,
+                order_id,
+                user_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
+                       shipping_carrier, shipping_no, created_at, paid_at, shipped_at
+                FROM mall_orders
+                WHERE order_id = $1
+                FOR UPDATE
+                """,
+                order_id,
+            )
+        if row is None:
+            raise ValueError("order not found")
+        if str(row["status"]) != "pending":
+            raise ValueError("only pending orders can be cancelled")
+        item_rows = await conn.fetch(
+            """
+            SELECT sku_id, quantity
+            FROM mall_order_items
+            WHERE order_id = $1
+            """,
+            order_id,
+        )
+        for item in item_rows:
+            await conn.execute(
+                """
+                UPDATE mall_skus
+                SET stock = stock + $1, updated_at = now()
+                WHERE sku_id = $2
+                """,
+                int(item["quantity"]),
+                str(item["sku_id"]),
+            )
+        updated = await conn.fetchrow(
+            """
+            UPDATE mall_orders
+            SET status = 'cancelled', updated_at = now()
+            WHERE order_id = $1
+            RETURNING order_id, out_trade_no, status, total_fen, address_snapshot,
+                      shipping_carrier, shipping_no, created_at, paid_at, shipped_at
+            """,
+            order_id,
+        )
+        detail_items = await conn.fetch(
+            """
+            SELECT product_id, sku_id, product_name, sku_name, price_fen, quantity
+            FROM mall_order_items WHERE order_id = $1
+            """,
+            order_id,
+        )
+        items = [
+            {
+                "product_id": str(r["product_id"]),
+                "sku_id": str(r["sku_id"]),
+                "product_name": str(r["product_name"]),
+                "sku_name": str(r["sku_name"]),
+                "price_fen": int(r["price_fen"]),
+                "quantity": int(r["quantity"]),
+            }
+            for r in detail_items
+        ]
+        return {"order": _order_item(updated, items)}
+
+    async def cancel_order(self, *, session_token: str, order_id: str) -> dict[str, Any]:
+        selected = str(order_id or "").strip()
+        if not selected:
+            raise ValueError("order_id is required")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                user_id = await self._user_id_from_session(conn, session_token)
+                return await self._cancel_order_locked(conn, order_id=selected, user_id=user_id)
+
     async def create_order_from_cart(
         self,
         *,
@@ -306,6 +521,7 @@ class MallRepository(BaseRepository):
             raise ValueError("address_id is required")
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                await self.expire_pending_orders(conn)
                 user_id = await self._user_id_from_session(conn, session_token)
                 address = await conn.fetchrow(
                     """
@@ -328,7 +544,7 @@ class MallRepository(BaseRepository):
                     JOIN mall_skus s ON s.sku_id = c.sku_id
                     JOIN mall_products p ON p.product_id = s.product_id
                     WHERE c.user_id = $1
-                    FOR UPDATE
+                    FOR UPDATE OF c, s
                     """,
                     user_id,
                 )
@@ -355,7 +571,7 @@ class MallRepository(BaseRepository):
                         order_id, user_id, out_trade_no, status, total_fen, address_snapshot
                     ) VALUES ($1, $2, $3, 'pending', $4, $5::jsonb)
                     RETURNING order_id, out_trade_no, status, total_fen, address_snapshot,
-                              shipping_no, created_at, paid_at, shipped_at
+                              shipping_carrier, shipping_no, created_at, paid_at, shipped_at
                     """,
                     order_id,
                     user_id,
@@ -430,42 +646,44 @@ class MallRepository(BaseRepository):
 
     async def list_orders_by_session(self, *, session_token: str, limit: int = 20) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
-            user_id = await self._user_id_from_session(conn, session_token)
-            rows = await conn.fetch(
-                """
-                SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
-                       shipping_no, created_at, paid_at, shipped_at
-                FROM mall_orders
-                WHERE user_id = $1
-                ORDER BY created_at DESC
-                LIMIT $2
-                """,
-                user_id,
-                max(1, min(int(limit or 20), 50)),
-            )
-            items = []
-            for row in rows:
-                item_rows = await conn.fetch(
+            async with conn.transaction():
+                await self.expire_pending_orders(conn)
+                user_id = await self._user_id_from_session(conn, session_token)
+                rows = await conn.fetch(
                     """
-                    SELECT product_id, sku_id, product_name, sku_name, price_fen, quantity
-                    FROM mall_order_items
-                    WHERE order_id = $1
+                    SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
+                           shipping_carrier, shipping_no, created_at, paid_at, shipped_at
+                    FROM mall_orders
+                    WHERE user_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
                     """,
-                    row["order_id"],
+                    user_id,
+                    max(1, min(int(limit or 20), 50)),
                 )
-                order_items = [
-                    {
-                        "product_id": str(r["product_id"]),
-                        "sku_id": str(r["sku_id"]),
-                        "product_name": str(r["product_name"]),
-                        "sku_name": str(r["sku_name"]),
-                        "price_fen": int(r["price_fen"]),
-                        "quantity": int(r["quantity"]),
-                    }
-                    for r in item_rows
-                ]
-                items.append(_order_item(row, order_items))
-            return {"items": items}
+                items = []
+                for row in rows:
+                    item_rows = await conn.fetch(
+                        """
+                        SELECT product_id, sku_id, product_name, sku_name, price_fen, quantity
+                        FROM mall_order_items
+                        WHERE order_id = $1
+                        """,
+                        row["order_id"],
+                    )
+                    order_items = [
+                        {
+                            "product_id": str(r["product_id"]),
+                            "sku_id": str(r["sku_id"]),
+                            "product_name": str(r["product_name"]),
+                            "sku_name": str(r["sku_name"]),
+                            "price_fen": int(r["price_fen"]),
+                            "quantity": int(r["quantity"]),
+                        }
+                        for r in item_rows
+                    ]
+                    items.append(_order_item(row, order_items))
+                return {"items": items}
 
     async def fulfill_mall_order(
         self,
@@ -482,7 +700,7 @@ class MallRepository(BaseRepository):
                 row = await conn.fetchrow(
                     """
                     SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
-                           shipping_no, created_at, paid_at, shipped_at
+                           shipping_carrier, shipping_no, created_at, paid_at, shipped_at
                     FROM mall_orders
                     WHERE out_trade_no = $1
                     FOR UPDATE
@@ -511,6 +729,8 @@ class MallRepository(BaseRepository):
                         for r in item_rows
                     ]
                     return {"order": _order_item(row, items), "already_fulfilled": True}
+                if str(row["status"]) != "pending":
+                    raise ValueError(f"mall order not payable: status={row['status']}")
                 updated = await conn.fetchrow(
                     """
                     UPDATE mall_orders
@@ -521,7 +741,7 @@ class MallRepository(BaseRepository):
                         updated_at = now()
                     WHERE out_trade_no = $1
                     RETURNING order_id, out_trade_no, status, total_fen, address_snapshot,
-                              shipping_no, created_at, paid_at, shipped_at
+                              shipping_carrier, shipping_no, created_at, paid_at, shipped_at
                     """,
                     selected,
                     str(wx_transaction_id or ""),
@@ -559,94 +779,206 @@ class MallRepository(BaseRepository):
                 """,
                 max(1, min(limit, 200)),
             )
-            return {"items": [_product_item(r) for r in rows]}
+            items = []
+            for row in rows:
+                sku_rows = await conn.fetch(
+                    """
+                    SELECT sku_id, product_id, name, price_fen, stock, attrs, status
+                    FROM mall_skus
+                    WHERE product_id = $1
+                    ORDER BY created_at ASC
+                    """,
+                    row["product_id"],
+                )
+                items.append(_product_item(row, [_sku_item(s) for s in sku_rows]))
+            return {"items": items}
 
     async def admin_upsert_product(self, payload: dict[str, Any]) -> dict[str, Any]:
         product_id = str(payload.get("product_id") or f"mp_{uuid.uuid4().hex[:24]}").strip()
         name = str(payload.get("name") or "").strip()
         if not name:
             raise ValueError("name is required")
+        status = str(payload.get("status") or "on_sale").strip()
+        if status not in ("on_sale", "off_sale"):
+            raise ValueError("invalid product status")
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO mall_products (
-                    product_id, name, description, cover_url, status, sort_order
-                ) VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (product_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    description = EXCLUDED.description,
-                    cover_url = EXCLUDED.cover_url,
-                    status = EXCLUDED.status,
-                    sort_order = EXCLUDED.sort_order,
-                    updated_at = now()
-                RETURNING product_id, name, description, cover_url, status, sort_order,
-                          created_at, updated_at
-                """,
-                product_id,
-                name,
-                str(payload.get("description") or ""),
-                str(payload.get("cover_url") or ""),
-                str(payload.get("status") or "on_sale"),
-                int(payload.get("sort_order") or 0),
-            )
-            price_fen = int(payload.get("price_fen") or 0)
-            stock = int(payload.get("stock") or 0)
-            if price_fen > 0:
-                sku_id = str(payload.get("sku_id") or f"ms_{uuid.uuid4().hex[:24]}")
-                await conn.execute(
+            async with conn.transaction():
+                row = await conn.fetchrow(
                     """
-                    INSERT INTO mall_skus (sku_id, product_id, name, price_fen, stock, status)
-                    VALUES ($1, $2, $3, $4, $5, 'active')
-                    ON CONFLICT (sku_id) DO UPDATE SET
-                        price_fen = EXCLUDED.price_fen,
-                        stock = EXCLUDED.stock,
+                    INSERT INTO mall_products (
+                        product_id, name, description, cover_url, status, sort_order
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (product_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        cover_url = EXCLUDED.cover_url,
+                        status = EXCLUDED.status,
+                        sort_order = EXCLUDED.sort_order,
                         updated_at = now()
+                    RETURNING product_id, name, description, cover_url, status, sort_order,
+                              created_at, updated_at
+                    """,
+                    product_id,
+                    name,
+                    str(payload.get("description") or ""),
+                    str(payload.get("cover_url") or ""),
+                    status,
+                    int(payload.get("sort_order") or 0),
+                )
+                skus_payload = payload.get("skus")
+                if isinstance(skus_payload, list):
+                    for sku in skus_payload:
+                        if not isinstance(sku, dict):
+                            continue
+                        await self._upsert_sku_conn(conn, product_id=product_id, payload=sku)
+                else:
+                    price_fen = int(payload.get("price_fen") or 0)
+                    stock = int(payload.get("stock") or 0)
+                    if price_fen > 0:
+                        await self._upsert_sku_conn(
+                            conn,
+                            product_id=product_id,
+                            payload={
+                                "sku_id": payload.get("sku_id"),
+                                "name": payload.get("sku_name") or "默认",
+                                "price_fen": price_fen,
+                                "stock": stock,
+                                "attrs": payload.get("attrs") or {},
+                                "status": "active",
+                            },
+                        )
+                sku_rows = await conn.fetch(
+                    """
+                    SELECT sku_id, product_id, name, price_fen, stock, attrs, status
+                    FROM mall_skus WHERE product_id = $1 ORDER BY created_at ASC
+                    """,
+                    product_id,
+                )
+                return _product_item(row, [_sku_item(s) for s in sku_rows])
+
+    async def _upsert_sku_conn(self, conn, *, product_id: str, payload: dict[str, Any]) -> str:
+        sku_id = str(payload.get("sku_id") or f"ms_{uuid.uuid4().hex[:24]}").strip()
+        price_fen = int(payload.get("price_fen") or 0)
+        if price_fen <= 0:
+            raise ValueError("sku price_fen must be positive")
+        status = str(payload.get("status") or "active").strip()
+        if status not in ("active", "inactive"):
+            raise ValueError("invalid sku status")
+        attrs = payload.get("attrs") if isinstance(payload.get("attrs"), dict) else {}
+        await conn.execute(
+            """
+            INSERT INTO mall_skus (
+                sku_id, product_id, name, price_fen, stock, attrs, status
+            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+            ON CONFLICT (sku_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                price_fen = EXCLUDED.price_fen,
+                stock = EXCLUDED.stock,
+                attrs = EXCLUDED.attrs,
+                status = EXCLUDED.status,
+                updated_at = now()
+            """,
+            sku_id,
+            product_id,
+            str(payload.get("name") or "").strip() or "默认",
+            price_fen,
+            max(0, int(payload.get("stock") or 0)),
+            json.dumps(attrs, ensure_ascii=False),
+            status,
+        )
+        return sku_id
+
+    async def admin_upsert_sku(self, payload: dict[str, Any]) -> dict[str, Any]:
+        product_id = str(payload.get("product_id") or "").strip()
+        if not product_id:
+            raise ValueError("product_id is required")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM mall_products WHERE product_id = $1",
+                    product_id,
+                )
+                if not exists:
+                    raise ValueError("product not found")
+                sku_id = await self._upsert_sku_conn(conn, product_id=product_id, payload=payload)
+                row = await conn.fetchrow(
+                    """
+                    SELECT sku_id, product_id, name, price_fen, stock, attrs, status
+                    FROM mall_skus WHERE sku_id = $1
                     """,
                     sku_id,
-                    product_id,
-                    str(payload.get("sku_name") or "默认"),
-                    price_fen,
-                    max(0, stock),
                 )
-            return _product_item(row)
+                return {"sku": _sku_item(row)}
 
     async def admin_list_orders(self, *, limit: int = 50) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
-                       shipping_no, created_at, paid_at, shipped_at, user_id
-                FROM mall_orders
-                ORDER BY created_at DESC
-                LIMIT $1
-                """,
-                max(1, min(limit, 200)),
-            )
-            items = []
-            for row in rows:
-                item = _order_item(row)
-                item["user_id"] = str(row["user_id"])
-                items.append(item)
-            return {"items": items}
+            async with conn.transaction():
+                await self.expire_pending_orders(conn)
+                rows = await conn.fetch(
+                    """
+                    SELECT order_id, out_trade_no, status, total_fen, address_snapshot,
+                           shipping_carrier, shipping_no, created_at, paid_at, shipped_at, user_id
+                    FROM mall_orders
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                    """,
+                    max(1, min(limit, 200)),
+                )
+                items = []
+                for row in rows:
+                    item_rows = await conn.fetch(
+                        """
+                        SELECT product_id, sku_id, product_name, sku_name, price_fen, quantity
+                        FROM mall_order_items WHERE order_id = $1
+                        """,
+                        row["order_id"],
+                    )
+                    order_items = [
+                        {
+                            "product_id": str(r["product_id"]),
+                            "sku_id": str(r["sku_id"]),
+                            "product_name": str(r["product_name"]),
+                            "sku_name": str(r["sku_name"]),
+                            "price_fen": int(r["price_fen"]),
+                            "quantity": int(r["quantity"]),
+                        }
+                        for r in item_rows
+                    ]
+                    item = _order_item(row, order_items)
+                    item["user_id"] = str(row["user_id"])
+                    items.append(item)
+                return {"items": items}
 
-    async def admin_ship_order(self, *, order_id: str, shipping_no: str) -> dict[str, Any]:
+    async def admin_ship_order(
+        self,
+        *,
+        order_id: str,
+        shipping_no: str,
+        shipping_carrier: str = "",
+    ) -> dict[str, Any]:
         selected = str(order_id or "").strip()
         if not selected:
             raise ValueError("order_id is required")
+        carrier = str(shipping_carrier or "").strip()
+        tracking = str(shipping_no or "").strip()
+        if not tracking:
+            raise ValueError("shipping_no is required")
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
                 UPDATE mall_orders
                 SET status = 'shipped',
-                    shipping_no = $2,
+                    shipping_carrier = $2,
+                    shipping_no = $3,
                     shipped_at = now(),
                     updated_at = now()
                 WHERE order_id = $1 AND status IN ('paid', 'shipped')
                 RETURNING order_id, out_trade_no, status, total_fen, address_snapshot,
-                          shipping_no, created_at, paid_at, shipped_at
+                          shipping_carrier, shipping_no, created_at, paid_at, shipped_at
                 """,
                 selected,
-                str(shipping_no or "").strip(),
+                carrier,
+                tracking,
             )
             if row is None:
                 raise ValueError("order not found or not shippable")

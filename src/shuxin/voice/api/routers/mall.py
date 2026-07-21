@@ -103,6 +103,51 @@ async def mall_addresses_create(request: Request, service: MallAddressService = 
     return JSONResponse(await service.create_address(session_token=session_token, payload=body))
 
 
+@router.post("/api/mall/addresses/update")
+async def mall_addresses_update(request: Request, service: MallAddressService = Depends(_addresses)):
+    payload = await request.json()
+    body = {
+        "receiver_name": payload.get("receiver_name"),
+        "receiver_phone": payload.get("receiver_phone"),
+        "province": payload.get("province"),
+        "city": payload.get("city"),
+        "district": payload.get("district"),
+        "detail": payload.get("detail"),
+        "is_default": payload.get("is_default"),
+    }
+    return JSONResponse(
+        await service.update_address(
+            session_token=str(payload.get("session_token") or ""),
+            address_id=str(payload.get("address_id") or ""),
+            payload=body,
+        )
+    )
+
+
+@router.post("/api/mall/addresses/delete")
+async def mall_addresses_delete(request: Request, service: MallAddressService = Depends(_addresses)):
+    payload = await request.json()
+    return JSONResponse(
+        await service.delete_address(
+            session_token=str(payload.get("session_token") or ""),
+            address_id=str(payload.get("address_id") or ""),
+        )
+    )
+
+
+@router.post("/api/mall/addresses/set-default")
+async def mall_addresses_set_default(
+    request: Request, service: MallAddressService = Depends(_addresses)
+):
+    payload = await request.json()
+    return JSONResponse(
+        await service.set_default_address(
+            session_token=str(payload.get("session_token") or ""),
+            address_id=str(payload.get("address_id") or ""),
+        )
+    )
+
+
 @router.post("/api/mall/orders")
 async def mall_orders_list(request: Request, service: MallOrderService = Depends(_orders)):
     payload = await request.json()
@@ -110,6 +155,17 @@ async def mall_orders_list(request: Request, service: MallOrderService = Depends
         await service.list_orders(
             session_token=str(payload.get("session_token") or ""),
             limit=int(payload.get("limit") or 20),
+        )
+    )
+
+
+@router.post("/api/mall/orders/cancel")
+async def mall_orders_cancel(request: Request, service: MallOrderService = Depends(_orders)):
+    payload = await request.json()
+    return JSONResponse(
+        await service.cancel_order(
+            session_token=str(payload.get("session_token") or ""),
+            order_id=str(payload.get("order_id") or ""),
         )
     )
 
