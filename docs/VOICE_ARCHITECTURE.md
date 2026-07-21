@@ -280,6 +280,17 @@ DeviceSession
 
 不要为了接硬件重写初心 Agent/STT/TTS 主链路。
 
+## 4.1 设备真人通话（Pure RTC 切面）
+
+舒心只做拨号信令与 token（`call/*`，`BAIDU_RTC_*`）；**通话语音不经本服务中转**。
+
+| 路径 | 能力 |
+|------|------|
+| Web↔Web（`/voice-demo` + `baidu.rtc.sdk.js`） | 当前真听声主路径 |
+| Web↔硬件 / 硬件↔硬件 | 信令与振铃可验；ESP32-C3 无公开 Pure RTC 库前无互听 |
+
+详见 [RTC_DEVICE_CALL_SPEC.md](RTC_DEVICE_CALL_SPEC.md)、验收 [RTC_WEB_CALL_LAB.md](RTC_WEB_CALL_LAB.md)、硬件振铃 [RTC_HARDWARE_CALLEE_LAB.md](RTC_HARDWARE_CALLEE_LAB.md)。
+
 ## 5. 未来硬件协议形态
 
 未来 WebSocket 硬件接口可以参考小智的消息形态。
