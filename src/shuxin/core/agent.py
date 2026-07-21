@@ -212,7 +212,8 @@ class Agent:
             # 5. 构建系统提示
             self._build_system_prompt()
 
-            # 5b. 地图 provider（无 AK 时 is_available() 为 False）
+            # 5b. 地图 provider（默认因成本关闭；需 SHUXIN_MAP_TOOLS_ENABLED=1 + AK）
+            # 无 AK 或 enabled=False 时 is_available() 为 False，不发起 MCP。
             self._location_provider = get_location_provider(self.config.map)
 
             # 6. 触发会话开始 Hook

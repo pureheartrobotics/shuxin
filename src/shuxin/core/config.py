@@ -156,9 +156,13 @@ class SoulConfig:
 
 @dataclass
 class MapConfig:
-    """百度地图 MCP 配置（平台托管 AK）。"""
+    """百度地图 MCP 配置（平台托管 AK）。
 
-    enabled: bool = True
+    因 MCP 调用成本过高，默认关闭（enabled=False）。
+    恢复：设环境变量 SHUXIN_MAP_TOOLS_ENABLED=1 并配置 SHUXIN_BAIDU_MAP_AK。
+    """
+
+    enabled: bool = False
     api_key: str = ""
     mcp_url: str = "https://mcp.map.baidu.com/mcp"
     timeout_seconds: float = 3.0

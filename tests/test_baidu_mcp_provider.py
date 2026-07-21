@@ -58,3 +58,8 @@ def test_is_available_requires_api_key():
     assert not BaiduMcpLocationProvider(MapConfig(api_key="")).is_available()
     assert BaiduMcpLocationProvider(MapConfig(api_key="ak", enabled=True)).is_available()
     assert not BaiduMcpLocationProvider(MapConfig(api_key="ak", enabled=False)).is_available()
+
+
+def test_is_available_false_when_enabled_defaults_off():
+    """MapConfig.enabled defaults to False (cost); AK alone must not enable MCP."""
+    assert not BaiduMcpLocationProvider(MapConfig(api_key="ak")).is_available()
