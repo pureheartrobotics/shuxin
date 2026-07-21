@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/wechat-miniprogram"
 MODE="${1:-dev}"
-DEFAULT_API_BASE="https://shuxinzzx.com.cn"
+# DEFAULT_API_BASE="https://shuxinzzx.com.cn"
 DEFAULT_APPID="wxda3acb8842b5c9f4"
-# DEFAULT_API_BASE="http://localhost:8765"
+DEFAULT_API_BASE="http://localhost:8765"
 
 read_env_var() {
   local key="$1"
@@ -65,7 +65,7 @@ clean_dev_output() {
 check_page_outputs() {
   local out_dir="$1"
   local missing=0
-  for page in pages/index/index pages/profile/profile pages/login/login pages/prov/ble; do
+  for page in pages/index/index pages/mall/index pages/profile/profile pages/login/login pages/prov/ble; do
     for ext in wxml js json wxss; do
       if [ ! -f "$out_dir/$page.$ext" ]; then
         echo "Build output is missing $page.$ext in $out_dir"

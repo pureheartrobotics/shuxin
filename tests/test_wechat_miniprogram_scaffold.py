@@ -12,13 +12,16 @@ def test_wechat_miniprogram_scaffold_uses_uni_app() -> None:
     assert package["scripts"]["dev:mp-weixin"] == "uni -p mp-weixin"
     assert "@dcloudio/uni-mp-weixin" in package["dependencies"]
     assert pages["pages"][0]["path"] == "pages/index/index"
-    assert pages["pages"][1]["path"] == "pages/profile/profile"
-    assert pages["pages"][2]["path"] == "pages/login/login"
+    assert pages["pages"][1]["path"] == "pages/mall/index"
+    assert pages["pages"][2]["path"] == "pages/profile/profile"
+    assert pages["pages"][3]["path"] == "pages/login/login"
     assert pages["tabBar"]["list"][0]["text"] == "设备"
-    assert pages["tabBar"]["list"][1]["text"] == "我的"
+    assert pages["tabBar"]["list"][1]["text"] == "商城"
+    assert pages["tabBar"]["list"][2]["text"] == "我的"
     assert pages["tabBar"]["list"][0]["pagePath"] == "pages/index/index"
-    assert pages["tabBar"]["list"][1]["pagePath"] == "pages/profile/profile"
-    assert len(pages["tabBar"]["list"]) == 2
+    assert pages["tabBar"]["list"][1]["pagePath"] == "pages/mall/index"
+    assert pages["tabBar"]["list"][2]["pagePath"] == "pages/profile/profile"
+    assert len(pages["tabBar"]["list"]) == 3
     assert "subPackages" in pages
     assert (APP_DIR / "src/pages/mall/index.vue").exists()
     assert (APP_DIR / "src/modules/mall/components/MallHome.vue").exists()
@@ -90,8 +93,8 @@ def test_wechat_miniprogram_profile_page_has_account_controls() -> None:
     assert "useProfile" in page
     assert "useQuotaPayment" in page
     assert "绑定设备" in page
-    assert "商城订单" in page  # 保留注释块，便于恢复
-    assert "商城暂未开放" in page
+    assert "商城订单" in page
+    assert "openMallOrders" in page
     assert "退出登录" in page
     assert "uni.redirectTo" in page
 
@@ -118,7 +121,7 @@ def test_wechat_dev_script_cleans_and_validates_page_outputs() -> None:
     assert "clean_dev_output" in script
     assert "rm -rf \"$APP_DIR/dist/dev/mp-weixin\"" in script
     assert "check_page_outputs" in script
-    assert "pages/index/index pages/profile/profile pages/login/login pages/prov/ble" in script
+    assert "pages/index/index pages/mall/index pages/profile/profile pages/login/login pages/prov/ble" in script
     assert "for ext in wxml js json wxss" in script
 
 

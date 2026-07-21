@@ -100,26 +100,28 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 
 ---
 
-## 6. 量产 UI 开关（入口关闭 ≠ 代码删除）
+## 6. 量产 UI 开关
 
-| 功能 | 现状 | 恢复 |
+| 功能 | 现状 | 说明 |
 |------|------|------|
-| 配网「开发者调试日志」 | `ble.vue` 中 `SHOW_PROVISION_DEV_LOGS = false` | 改为 `true` |
-| 商城 Tab / 主包页 | TabBar 仅「设备」「我的」；未注册 `pages/mall/index` | 加回主包页 + Tab；见 [`MALL_MODULE_ARCHITECTURE.md`](MALL_MODULE_ARCHITECTURE.md) |
-| 个人中心「商城订单」 | 已 HTML 注释 | 取消 `profile.vue` 注释 |
+| 配网「开发者调试日志」 | `ble.vue` 中 `SHOW_PROVISION_DEV_LOGS = false` | 排障改为 `true` |
+| 商城 Tab / 主包页 | TabBar **设备 \| 商城 \| 我的**；主包 `pages/mall/index` | 架构见 [`MALL_MODULE_ARCHITECTURE.md`](MALL_MODULE_ARCHITECTURE.md) |
+| 个人中心「商城订单」 | 已开放，跳转订单列表 | — |
+| 运营后台商城 | `/miniapp-admin`「商城管理」 | 需配置 `SHUXIN_ADMIN_TOKEN` / `SHUXIN_MINIAPP_ADMIN_TOKEN` |
 
-`modules/mall/` 分包与 `/api/mall/*` 保留。构建校验页列表见 `scripts/wechat_miniprogram_dev.sh` 的 `check_page_outputs`（不含 mall 主包页）。
+构建校验页列表见 `scripts/wechat_miniprogram_dev.sh` 的 `check_page_outputs`（含 mall 主包页）。
 
 ---
 
 ## 7. 真机验收清单
 
 1. 登录页：未勾选时无法登录；勾选后可登录；协议页可打开  
-2. 底部 Tab 仅「设备」「我的」；配网页无开发者调试日志区；个人中心无商城订单  
+2. 底部 Tab「设备 | 商城 | 我的」；配网页无开发者调试日志区；个人中心可进商城订单  
 3. 蓝牙配网：隐私门控「同意并继续」后可扫描；12s 自动停扫  
 4. 列表仅出现广播名以 `SX` 开头（大小写不限）的设备  
 5. 点击设备后 ESP-IDF Security1 握手（PoP=`shuxin`）→ 点「扫描附近」由设备列出 Wi-Fi（iOS 不跳转系统设置）→ 选择 SSID、输入密码 → **首次配网应成功**（勿对缺省 `fail_reason` 误报密码错误；见配网 handoff §6）  
 6. Step2 期间切后台再返回，「连接」仍可用（BLE 会话保持）  
+7. 商城：浏览商品 → 选规格加购 → 地址 → 下单（支付需真实微信支付配置）  
 
 ---
 

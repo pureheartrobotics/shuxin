@@ -16,7 +16,7 @@
 | 微信工具导入源码目录直接改 | `bash scripts/wechat_miniprogram_dev.sh build` 后导入 `dist/dev/mp-weixin` 或 `dist/build/mp-weixin` |
 | build 后不重编 / 不清缓存 | DevTools：**清缓存 → 重新编译 → 真机预览** |
 | 用 `import()` 动态加载 ESP-IDF 客户端 | 顶层 `import`；模块放 `pages/prov/esp-idf-prov/`（勿放 `utils/`） |
-| `check_page_outputs` 仍要求 `pages/mall/index` | 量产已关商城主包页；校验列表不含 mall |
+| `check_page_outputs` 漏掉 `pages/mall/index` | 商城已开放；校验列表须含 mall 主包页 |
 
 ---
 
@@ -24,11 +24,11 @@
 
 | 项 | 现状 | 勿做 |
 |----|------|------|
-| TabBar | 仅 **设备 \| 我的** | 不要假定还有「商城」Tab |
-| 商城 | `modules/mall` + `/api/mall/*` **保留**；主包/Tab/个人中心入口关闭 | 勿直接删 `modules/mall` |
+| TabBar | **设备 \| 商城 \| 我的** | 勿擅自关掉商城入口而不改文档 |
+| 商城 | `modules/mall` + `/api/mall/*` + 主包 Tab；运营在 `/miniapp-admin` | 勿直接删 `modules/mall`；勿无无 Token 的运营台 |
 | 配网调试面板 | `SHOW_PROVISION_DEV_LOGS = false`（`ble.vue`） | 排障时改 `true`，量产勿默认打开 |
 
-恢复路径见 [`WECHAT_MINIPROGRAM.md`](WECHAT_MINIPROGRAM.md) §6、[`MALL_MODULE_ARCHITECTURE.md`](MALL_MODULE_ARCHITECTURE.md)。
+架构见 [`MALL_MODULE_ARCHITECTURE.md`](MALL_MODULE_ARCHITECTURE.md)、[`WECHAT_MINIPROGRAM.md`](WECHAT_MINIPROGRAM.md) §6。
 
 ---
 

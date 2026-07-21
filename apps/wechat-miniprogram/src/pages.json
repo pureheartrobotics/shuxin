@@ -9,6 +9,14 @@
       }
     },
     {
+      "path": "pages/mall/index",
+      "style": {
+        "navigationBarTitleText": "初心商城",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
       "path": "pages/profile/profile",
       "style": {
         "navigationBarTitleText": "个人中心",
@@ -126,6 +134,10 @@
       {
         "pagePath": "pages/index/index",
         "text": "设备"
+      },
+      {
+        "pagePath": "pages/mall/index",
+        "text": "商城"
       },
       {
         "pagePath": "pages/profile/profile",

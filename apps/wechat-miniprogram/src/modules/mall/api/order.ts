@@ -10,6 +10,14 @@ export async function fetchOrders(limit = 20) {
   });
 }
 
+export async function cancelMallOrder(orderId: string) {
+  const session_token = requireSession();
+  return request("/api/mall/orders/cancel", {
+    method: "POST",
+    data: { session_token, order_id: orderId },
+  });
+}
+
 export async function createMallOrder(addressId: string) {
   const session_token = requireSession();
   const result: any = await request("/api/mall/orders/create", {

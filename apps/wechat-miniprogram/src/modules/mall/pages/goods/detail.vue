@@ -13,8 +13,18 @@
           :class="{ active: selectedSkuId === sku.sku_id }"
           @tap="selectedSkuId = sku.sku_id"
         >
-          <text>{{ sku.name }} · ¥{{ sku.price_yuan }}</text>
+          <view>
+            <text>{{ skuLabel(sku) }} · ¥{{ sku.price_yuan }}</text>
+          </view>
           <text class="stock">库存 {{ sku.stock }}</text>
+        </view>
+      </view>
+      <view class="qty-row">
+        <text>数量</text>
+        <view class="qty">
+          <button class="qty-btn" @tap="changeQty(-1)">-</button>
+          <text class="qty-num">{{ quantity }}</text>
+          <button class="qty-btn" @tap="changeQty(1)">+</button>
         </view>
       </view>
       <button class="primary" :disabled="!selectedSkuId || adding" @tap="addToCart">加入购物车</button>
@@ -35,12 +45,25 @@ const adding = ref(false);
 const message = ref("");
 const product = ref<any>(null);
 const selectedSkuId = ref("");
+const quantity = ref(1);
 let productId = "";
 
 onLoad((query) => {
   productId = String(query?.product_id || "");
   loadDetail();
 });
+
+function skuLabel(sku: any) {
+  const attrs = sku?.attrs && typeof sku.attrs === "object" ? sku.attrs : {};
+  const parts = Object.values(attrs).filter(Boolean);
+  if (parts.length) return parts.join(" / ");
+  return sku?.name || "规格";
+}
+
+function changeQty(delta: number) {
+  const next = quantity.value + delta;
+  quantity.value = Math.max(1, Math.min(99, next));
+}
 
 async function loadDetail() {
   loading.value = true;
@@ -60,7 +83,7 @@ async function addToCart() {
   if (!selectedSkuId.value) return;
   adding.value = true;
   try {
-    await upsertCartItem(selectedSkuId.value, 1);
+    await upsertCartItem(selectedSkuId.value, quantity.value);
     uni.showToast({ title: "已加入购物车", icon: "success" });
   } catch (error: any) {
     message.value = error.message || String(error);
@@ -88,6 +111,16 @@ function goCart() {
 }
 .sku.active { border-color: #2f604f; background: #e4eee8; }
 .stock { color: #82786d; font-size: 24rpx; }
+.qty-row {
+  margin-top: 24rpx; display: flex; justify-content: space-between; align-items: center;
+  color: #24211c; font-size: 28rpx;
+}
+.qty { display: flex; align-items: center; gap: 16rpx; }
+.qty-btn {
+  width: 56rpx; height: 56rpx; line-height: 56rpx; padding: 0;
+  background: #ece7df; color: #2f604f; font-size: 32rpx;
+}
+.qty-num { min-width: 40rpx; text-align: center; }
 .primary, .secondary { margin-top: 20rpx; }
 .primary { background: #2f604f; color: #fffaf3; }
 .secondary { background: #ece7df; color: #4a5d52; }

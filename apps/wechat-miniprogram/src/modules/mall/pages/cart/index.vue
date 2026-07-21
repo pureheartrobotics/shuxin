@@ -6,7 +6,12 @@
       <view v-for="item in items" :key="item.cart_item_id" class="row">
         <view class="info">
           <view class="name">{{ item.product_name }}</view>
-          <view class="sku">{{ item.sku_name }} · ¥{{ item.price_yuan }} × {{ item.quantity }}</view>
+          <view class="sku">{{ item.sku_name }} · ¥{{ item.price_yuan }}</view>
+          <view class="qty">
+            <button class="qty-btn" @tap="setQty(item, item.quantity - 1)">-</button>
+            <text class="qty-num">{{ item.quantity }}</text>
+            <button class="qty-btn" @tap="setQty(item, item.quantity + 1)">+</button>
+          </view>
         </view>
         <button class="mini" @tap="remove(item.cart_item_id)">删除</button>
       </view>
@@ -20,7 +25,7 @@
 <script setup lang="ts">
 import { onShow } from "@dcloudio/uni-app";
 import { ref } from "vue";
-import { fetchCart, removeCartItem } from "../../api/cart";
+import { fetchCart, removeCartItem, upsertCartItem } from "../../api/cart";
 
 const loading = ref(false);
 const message = ref("");
@@ -40,6 +45,20 @@ async function loadCart() {
     message.value = error.message || String(error);
   } finally {
     loading.value = false;
+  }
+}
+
+async function setQty(item: any, qty: number) {
+  if (qty <= 0) {
+    await remove(item.cart_item_id);
+    return;
+  }
+  try {
+    const data = await upsertCartItem(item.sku_id, qty);
+    items.value = data.items || [];
+    totalYuan.value = data.total_yuan || 0;
+  } catch (error: any) {
+    message.value = error.message || String(error);
   }
 }
 
@@ -67,6 +86,12 @@ function goConfirm() {
 }
 .name { font-size: 30rpx; font-weight: 700; color: #24211c; }
 .sku { font-size: 24rpx; color: #82786d; margin-top: 8rpx; }
+.qty { display: flex; align-items: center; gap: 12rpx; margin-top: 12rpx; }
+.qty-btn {
+  width: 48rpx; height: 48rpx; line-height: 48rpx; padding: 0;
+  background: #ece7df; color: #2f604f; font-size: 28rpx;
+}
+.qty-num { min-width: 36rpx; text-align: center; }
 .mini { font-size: 24rpx; background: #f3ded9; color: #9e3b35; }
 .total { text-align: right; font-size: 34rpx; font-weight: 700; color: #2f604f; margin: 28rpx 0; }
 .primary { background: #2f604f; color: #fffaf3; }

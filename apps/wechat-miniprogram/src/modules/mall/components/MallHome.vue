@@ -4,6 +4,7 @@
       <view class="eyebrow">CHUXIN MALL</view>
       <view class="title">初心商城</view>
       <view class="subtitle">精选好物，安心购买</view>
+      <button class="cart-link" @tap="goCart">购物车</button>
     </view>
 
     <view v-if="loading" class="hint">加载中...</view>
@@ -57,6 +58,10 @@ async function loadProducts() {
 function openDetail(productId: string) {
   uni.navigateTo({ url: `/modules/mall/pages/goods/detail?product_id=${productId}` });
 }
+
+function goCart() {
+  uni.navigateTo({ url: "/modules/mall/pages/cart/index" });
+}
 </script>
 
 <style scoped>
@@ -66,6 +71,10 @@ function openDetail(productId: string) {
   background: linear-gradient(180deg, #f8f1e7 0%, #ece7df 100%);
 }
 .hero { margin-bottom: 28rpx; }
+.cart-link {
+  margin-top: 16rpx; display: inline-block; padding: 8rpx 20rpx;
+  font-size: 24rpx; background: #2f604f; color: #fffaf3; border-radius: 999rpx;
+}
 .eyebrow { color: #9b6146; font-size: 22rpx; letter-spacing: 2rpx; }
 .title { color: #24211c; font-size: 48rpx; font-weight: 700; margin-top: 10rpx; }
 .subtitle { color: #6f665b; font-size: 26rpx; margin-top: 10rpx; }

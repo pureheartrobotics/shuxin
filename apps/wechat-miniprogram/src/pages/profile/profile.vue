@@ -39,7 +39,6 @@
           </view>
         </view>
       </view>
-      <!-- 商城暂未开放
       <view class="row">
         <view>
           <view class="label">商城订单</view>
@@ -47,7 +46,6 @@
         </view>
         <button class="mini" @tap="openMallOrders">查看</button>
       </view>
-      -->
       <view class="row">
         <view>
           <view class="label">意见反馈</view>
@@ -141,9 +139,9 @@ function openPrivacy() {
   uni.navigateTo({ url: "/pages/legal/privacy" });
 }
 
-// function openMallOrders() {
-//   uni.navigateTo({ url: "/modules/mall/pages/order/list" });
-// }
+function openMallOrders() {
+  uni.navigateTo({ url: "/modules/mall/pages/order/list" });
+}
 
 function openFactoryVerify() {
   uni.navigateTo({ url: "/pages/factory/verify" });
