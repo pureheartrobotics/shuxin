@@ -43,5 +43,7 @@ def test_miniapp_admin_html_has_mall_tab() -> None:
 
     text = Path("src/shuxin/voice/static/miniapp_admin.html").read_text(encoding="utf-8")
     assert "商城管理" in text
+    assert "投资人数据" in text
+    assert "/api/investor/metrics" in text or "loadInvestorData" in text
     assert "loadMallData" in text
     assert "tokenConfigured" in text

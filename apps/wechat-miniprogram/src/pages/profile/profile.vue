@@ -27,7 +27,7 @@
           <view class="label">绑定设备</view>
           <view class="value">{{ deviceCount }} 台</view>
         </view>
-        <button class="mini" :disabled="loading" @tap="loadProfile">刷新</button>
+        <button class="mini" :disabled="loading" @tap="goDevices">管理</button>
       </view>
       <view class="row legal-row">
         <view>
@@ -129,6 +129,10 @@ onShow(() => {
 
 function navigateToFeedback() {
   uni.navigateTo({ url: "/pages/profile/feedback" });
+}
+
+function goDevices() {
+  uni.navigateTo({ url: "/pages/index/index" });
 }
 
 function openTerms() {

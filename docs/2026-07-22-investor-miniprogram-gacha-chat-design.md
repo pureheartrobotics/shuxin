@@ -118,9 +118,14 @@ await billing_repo.deduct_device_minutes_quota(soft_device_id, minutes)
 4. 文字计费改配置/模块即可换公式，无需改 Agent 主路径  
 5. 真硬件 bind / Voice 主循环行为回归不受损（既有测试仍绿）
 
-## Open Questions
+## 附录 A：投资人演示清单
 
-- 无（grill 已钉：看板 B→miniapp-admin；语音 A→soft-credentials）
+1. 小程序登录 → Tab「抽卡」→ 免费摇 1～3 次 → 进「伙伴」列表  
+2. 点伙伴 → 文字聊天（≤500 字）→ `/miniapp-admin`「投资人数据」看注册/抽卡/文字轮次增加  
+3. `SHUXIN_WECHAT_MOCK=1` 时付费抽自动记已支付；正式环境走微信收银台  
+4. 语音：聊天页会拉取 soft-credentials；WS hello 带 `device_id/secret` + `companion_id`  
+5. 看板改抽卡价格/权重后，小程序 `/api/gacha/config` 应反映新值  
+
 
 ## Soft credentials 流程
 

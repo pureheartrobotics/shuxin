@@ -30,6 +30,7 @@ from shuxin.voice.persistence.factory_verify_repo import FactoryVerifyRepository
 from shuxin.voice.persistence.user_repo import UserRepository
 from shuxin.voice.persistence.memory_repo import MemoryRepository
 from shuxin.voice.persistence.mall_repo import MallRepository
+from shuxin.voice.persistence.companion_repo import CompanionRepository
 
 class VoicePostgresRepository:
     """Voice Web 的权威数据访问层门面 (Facade)。"""
@@ -43,6 +44,7 @@ class VoicePostgresRepository:
         self.users = UserRepository(pool, parent=self)
         self.memory = MemoryRepository(pool, parent=self)
         self.mall = MallRepository(pool, parent=self)
+        self.companions = CompanionRepository(pool, parent=self)
 
     def _clear_auth_cache(self, device_id: str | None = None) -> None:
         self.devices._clear_auth_cache(device_id)

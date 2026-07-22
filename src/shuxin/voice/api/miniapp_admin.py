@@ -337,6 +337,38 @@ async def miniapp_mall_ship(request: Request, payload: MallShipPayload):
     )
 
 
+# ---- Investor metrics + gacha config ----
+
+
+class GachaSettingsPayload(BaseModel):
+    paid_draw_price_yuan: float = 9.9
+    free_draws_per_user: int = 3
+    weights: Optional[dict] = None
+
+
+@miniapp_admin_router.get("/api/investor/metrics")
+async def investor_metrics(request: Request):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.companions.investor_metrics()
+
+
+@miniapp_admin_router.get("/api/investor/gacha-settings")
+async def get_investor_gacha_settings(request: Request):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.companions.get_gacha_settings()
+
+
+@miniapp_admin_router.put("/api/investor/gacha-settings")
+async def put_investor_gacha_settings(request: Request, payload: GachaSettingsPayload):
+    require_miniapp_admin(request)
+    body = {
+        "paid_draw_price_yuan": payload.paid_draw_price_yuan,
+        "free_draws_per_user": payload.free_draws_per_user,
+        "weights": payload.weights or {},
+    }
+    return await request.app.state.repo.companions.set_gacha_settings(body)
+
+
 @miniapp_admin_router.get("", response_class=HTMLResponse)
 async def admin_portal(request: Request):
     """渲染精美的小程序专属后台管理界面。"""

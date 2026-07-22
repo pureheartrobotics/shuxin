@@ -953,6 +953,35 @@ class BillingRepository(BaseRepository):
                         "already_fulfilled": True,
                     }
 
+                # Investor gacha: mark paid only (no minutes / DMX top-up)
+                if str(row["plan_id"]) == "gacha_draw":
+                    amount = dict(notify_payload.get("amount") or {})
+                    paid_total = int(amount.get("total") or 0)
+                    if paid_total and paid_total != int(row["amount_fen"]):
+                        raise ValueError(
+                            f"paid amount mismatch: expected {row['amount_fen']}, got {paid_total}"
+                        )
+                    await conn.execute(
+                        """
+                        UPDATE payment_orders
+                        SET status = 'paid',
+                            wx_transaction_id = $2,
+                            notify_payload = $3::jsonb,
+                            paid_at = now(),
+                            updated_at = now()
+                        WHERE order_id = $1
+                        """,
+                        str(row["order_id"]),
+                        str(wx_transaction_id or ""),
+                        json.dumps(notify_payload, ensure_ascii=False),
+                    )
+                    return {
+                        "order_id": str(row["order_id"]),
+                        "user_id": str(row["user_id"]),
+                        "status": "paid",
+                        "gacha": True,
+                    }
+
                 amount = dict(notify_payload.get("amount") or {})
                 paid_total = int(amount.get("total") or 0)
                 if paid_total != int(row["amount_fen"]):

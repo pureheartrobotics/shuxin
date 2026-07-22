@@ -198,6 +198,7 @@ class _VoiceWebSocketSession:
         self.client_ip = _client_ip_from_websocket(websocket)
         self._location_cache: dict | None = None
         self._agent_init_task: Optional[asyncio.Task] = None
+        self.companion_id: Optional[str] = None
 
         # 初始化独立管道处理器
         self.stt_pipeline = SpeechTranscriber(self)
@@ -329,6 +330,7 @@ class _VoiceWebSocketSession:
             or self.default_device_id
         )
         self.client_id = data.get("client_id") or "web-demo"
+        self.companion_id = str(data.get("companion_id") or "").strip() or None
         self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
         self.session_id = data.get("session_id") or uuid.uuid4().hex
         if not self.factory_acceptance:
@@ -1101,6 +1103,20 @@ class _VoiceWebSocketSession:
             self._setup_agent_tool_callbacks()
             await asyncio.to_thread(self.agent.initialize)
             VoiceService.apply_device_mbti(self.agent, self.device, self.agent_record)
+            if self.companion_id and self.user_id and hasattr(self.repo, "companions"):
+                try:
+                    companion = await self.repo.companions.get_companion_for_user(
+                        user_id=self.user_id,
+                        companion_id=self.companion_id,
+                    )
+                    mbti = str(companion.get("mbti") or "").strip().upper()
+                    if mbti:
+                        self.agent.identity.set_mbti(mbti)
+                        self.agent.context.metadata["companion_id"] = self.companion_id
+                        self.agent.context.metadata["companion_mbti"] = mbti
+                        await asyncio.to_thread(self.agent._build_system_prompt)
+                except Exception as exc:
+                    logger.warning("apply companion_id failed: %s", exc)
 
     def _setup_agent_tool_callbacks(self) -> None:
         if self.agent is None:

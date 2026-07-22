@@ -52,6 +52,7 @@ from shuxin.voice.api.miniapp_admin import miniapp_admin_router
 from shuxin.voice.api.routers.exception_handlers import register_exception_handlers
 from shuxin.voice.api.routers.user import router as user_router
 from shuxin.voice.api.routers.payment import router as payment_router
+from shuxin.voice.api.routers.companions import router as companions_router
 from shuxin.voice.api.routers.mall import router as mall_router
 from shuxin.voice.api.routers.mall_admin import router as mall_admin_router
 from shuxin.voice.api.routers.factory import router as factory_router
@@ -221,6 +222,7 @@ def create_app(
     app.include_router(miniapp_admin_router, prefix="/miniapp-admin", tags=["Miniapp Admin"])
     app.include_router(user_router)
     app.include_router(payment_router)
+    app.include_router(companions_router)
     app.include_router(mall_router)
     app.include_router(mall_admin_router)
     app.include_router(factory_router)
