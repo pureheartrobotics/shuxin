@@ -95,6 +95,70 @@ def test_create_user_token_falls_back_to_search(monkeypatch) -> None:
     assert api_key == "sk-search-key"
 
 
+def test_create_user_token_reveals_key_when_list_is_masked(monkeypatch) -> None:
+    """Production DMX masks keys in list/search; plaintext via POST /api/token/{id}/key."""
+    monkeypatch.setenv("DMX_SYSTEM_TOKEN", "admin-token")
+    monkeypatch.setenv("DMX_API_USER_ID", "42")
+    monkeypatch.setenv("DMX_API_BASE_URL", "https://dmx.example")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/api/token/":
+            return httpx.Response(200, json={"success": True})
+        if request.method == "GET" and request.url.path == "/api/token/":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "id": 55,
+                                "name": "wx_masked",
+                                "key": "AbCd**********XyZw",
+                                "created_time": 9,
+                            }
+                        ]
+                    }
+                },
+            )
+        if request.method == "GET" and request.url.path == "/api/token/search":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": 55,
+                            "name": "wx_masked",
+                            "key": "AbCd**********XyZw",
+                            "created_time": 9,
+                        }
+                    ]
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/token/55/key":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"key": "AbCdEFGHijklmnopqrstuvwxyz0123456789XyZw"},
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def mock_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(dmx_client.httpx, "AsyncClient", mock_client)
+
+    api_key = asyncio.run(dmx_client.create_user_token(name="wx_masked", quota_yuan=0, unlimited_quota=True))
+    assert api_key.startswith("sk-")
+    assert "*" not in api_key
+    assert api_key.endswith("XyZw")
+
+
 def test_pick_token_key_rejects_masked_key() -> None:
     items = [
         {"id": 2, "name": "wx_user", "key": "sk-ab************cd", "created_time": 2},

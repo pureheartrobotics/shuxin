@@ -14,7 +14,10 @@ logger = logging.getLogger("shuxin.voice.dmx")
 QUOTA_UNITS_PER_YUAN = 500_000
 DEFAULT_QUOTA_YUAN = 0.0
 MAX_TOP_UP_YUAN = 1000.0
-QUOTA_EXHAUSTED_MESSAGE = "额度已用尽，请充值"
+from shuxin.voice.billing.companion_points import QUOTA_EXHAUSTED_USER_MESSAGE
+
+# User-facing copy (miniprogram / soft). Hardware matches error_kind; also keep legacy substring checks in WS.
+QUOTA_EXHAUSTED_MESSAGE = QUOTA_EXHAUSTED_USER_MESSAGE
 
 
 def voice_test_mode_enabled() -> bool:
@@ -161,13 +164,38 @@ async def _get_token_record(client: httpx.AsyncClient, token_id: int) -> dict[st
     return data
 
 
+async def _reveal_token_key(client: httpx.AsyncClient, token_id: int) -> str:
+    """DMX list/detail return masked keys; plaintext requires POST /api/token/{id}/key."""
+    response = await client.post(
+        f"{_dmx_api_root()}/api/token/{int(token_id)}/key",
+        headers=_admin_headers(),
+        json={},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("success") is False:
+        raise PermissionError(str(payload.get("message") or "DMX token key reveal failed"))
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    raw = ""
+    if isinstance(data, dict):
+        raw = str(data.get("key") or "")
+    key = _normalize_api_key(raw)
+    if not _is_usable_api_key(key):
+        raise PermissionError(
+            f"DMX token key reveal returned unusable key for id={token_id}"
+        )
+    return key
+
+
 async def _fetch_token_key_by_name(client: httpx.AsyncClient, name: str) -> str:
+    # Prefer plaintext from list/search when present (tests / older APIs).
     list_response = await client.get(
         f"{_dmx_api_root()}/api/token/",
         headers=_admin_headers(),
     )
     list_response.raise_for_status()
-    key = _pick_token_key_for_name(_parse_token_items(list_response.json()), name)
+    list_items = _parse_token_items(list_response.json())
+    key = _pick_token_key_for_name(list_items, name)
     if key:
         return key
 
@@ -177,7 +205,33 @@ async def _fetch_token_key_by_name(client: httpx.AsyncClient, name: str) -> str:
         params={"keyword": name},
     )
     search_response.raise_for_status()
-    return _pick_token_key_for_name(_parse_token_items(search_response.json()), name)
+    search_items = _parse_token_items(search_response.json())
+    key = _pick_token_key_for_name(search_items, name)
+    if key:
+        return key
+
+    # Production DMX masks keys in list/search — reveal via token id.
+    item = _pick_latest_token_item(search_items, name) or _pick_latest_token_item(
+        list_items, name
+    )
+    if item is None:
+        # List default page may omit the new token; search again after create.
+        item = await _find_token_item_by_name(client, name)
+    if item is None:
+        return ""
+    token_id = int(item.get("id") or 0)
+    if token_id <= 0:
+        return ""
+    try:
+        return await _reveal_token_key(client, token_id)
+    except Exception as exc:
+        logger.warning(
+            "DMX reveal key failed for name=%s id=%s: %s",
+            name,
+            token_id,
+            exc,
+        )
+        return ""
 
 
 def parse_balance_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -222,12 +276,24 @@ async def create_user_token(
         "exclude_ips": "",
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{_dmx_api_root()}/api/token/",
-            headers=_admin_headers(),
-            json=body,
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                f"{_dmx_api_root()}/api/token/",
+                headers=_admin_headers(),
+                json=body,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            snip = (exc.response.text or "")[:240]
+            logger.warning(
+                "DMX create_user_token HTTP %s for name=%s body_snip=%s",
+                exc.response.status_code,
+                name,
+                snip,
+            )
+            raise PermissionError(
+                f"DMX token create HTTP {exc.response.status_code}: {snip}"
+            ) from exc
         payload = response.json()
         if payload.get("success") is False:
             raise PermissionError(str(payload.get("message") or "DMX token create failed"))

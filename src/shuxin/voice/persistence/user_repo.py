@@ -21,6 +21,10 @@ from shuxin.voice.persistence.base_repo import (
     _openid_from_wx_code,
     _hash_secret,
 )
+from shuxin.voice.persistence.device_secret_crypto import (
+    seal_llm_config_for_storage,
+    unseal_llm_config_for_use,
+)
 from shuxin.voice.persistence.users import (
     validate_user_id,
     DEFAULT_USER_ID,
@@ -165,6 +169,14 @@ class UserRepository(BaseRepository):
                 _hash_secret(session_token),
             )
         await self.audit("create_wechat_session", "session", session_token, {"user_id": user_id})
+        try:
+            await self.ensure_user_dmx_llm(user_id)
+        except Exception as exc:
+            logger.warning(
+                "ensure_user_dmx_llm after wechat login failed for %s: %s",
+                user_id,
+                exc,
+            )
         return {
             "session_token": session_token,
             "user_id": user_id,
@@ -190,15 +202,23 @@ class UserRepository(BaseRepository):
         orig_llm_config = copy.deepcopy(llm_config)
         orig_metadata = copy.deepcopy(metadata)
 
-        api_key = str(llm_config.get("api_key") or "").strip()
+        api_key_stored = str(llm_config.get("api_key") or "").strip()
         newly_provisioned = False
-        if not api_key:
+        if not api_key_stored:
             try:
-                api_key = await _resolve_create_user_token()(name=selected_id, quota_yuan=DEFAULT_QUOTA_YUAN, unlimited_quota=True)
+                api_key = await _resolve_create_user_token()(
+                    name=selected_id,
+                    quota_yuan=DEFAULT_QUOTA_YUAN,
+                    unlimited_quota=True,
+                )
                 newly_provisioned = True
                 logger.info("DMX provisioned token for %s", selected_id)
             except Exception as exc:
-                logger.warning("DMX token provisioning failed for %s: %s", selected_id, exc)
+                logger.warning(
+                    "DMX token provisioning failed for %s: %s",
+                    selected_id,
+                    exc,
+                )
                 return
             llm_config["api_key"] = api_key
         else:
@@ -209,7 +229,8 @@ class UserRepository(BaseRepository):
                 4,
             )
         llm_config = _resolve_merge_platform_llm_defaults()(llm_config)
-        
+        llm_config = seal_llm_config_for_storage(llm_config)
+
         if newly_provisioned or llm_config != orig_llm_config or metadata != orig_metadata:
             await self.pool.execute(
                 """
@@ -251,7 +272,10 @@ class UserRepository(BaseRepository):
                             user["user_id"],
                             user["token"],
                             user["audio_quota_mb"],
-                            json.dumps(user["llm_config"], ensure_ascii=False),
+                            json.dumps(
+                                seal_llm_config_for_storage(user["llm_config"]),
+                                ensure_ascii=False,
+                            ),
                             json.dumps({"seeded_from": "yaml"}),
                         )
 
@@ -284,6 +308,31 @@ class UserRepository(BaseRepository):
 
         await self.ensure_default_agents()
 
+    async def get_user_settings(self, user_id: str | None) -> UserSettings:
+        """Load enabled user settings without requiring users.token.
+
+        Use when identity is already proven (e.g. WeChat session_token or
+        device secret). Do not use for password/token login gates.
+        """
+        selected_id = validate_user_id(user_id or DEFAULT_USER_ID)
+        row = await self.pool.fetchrow(
+            """
+            SELECT user_id, token, audio_quota_mb, llm_config, agent_id
+            FROM users
+            WHERE user_id = $1 AND enabled = true AND deleted_at IS NULL
+            """,
+            selected_id,
+        )
+        if row is None:
+            raise PermissionError("user is disabled or not found")
+        return UserSettings(
+            user_id=str(row["user_id"]),
+            token=str(row["token"] or ""),
+            audio_quota_mb=int(row["audio_quota_mb"]),
+            llm_config=unseal_llm_config_for_use(_json_obj(row["llm_config"])),
+            agent_id=str(row["agent_id"] or ""),
+        )
+
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         selected_id = validate_user_id(user_id or DEFAULT_USER_ID)
         row = await self.pool.fetchrow(
@@ -305,7 +354,7 @@ class UserRepository(BaseRepository):
             user_id=str(row["user_id"]),
             token=expected,
             audio_quota_mb=int(row["audio_quota_mb"]),
-            llm_config=_json_obj(row["llm_config"]),
+            llm_config=unseal_llm_config_for_use(_json_obj(row["llm_config"])),
             agent_id=str(row["agent_id"] or ""),
         )
 
@@ -538,7 +587,12 @@ class UserRepository(BaseRepository):
             index += 1
         if "llm_config" in payload:
             fields.append(f"llm_config = ${index}::jsonb")
-            values.append(json.dumps(payload.get("llm_config") or {}, ensure_ascii=False))
+            values.append(
+                json.dumps(
+                    seal_llm_config_for_storage(payload.get("llm_config") or {}),
+                    ensure_ascii=False,
+                )
+            )
             index += 1
         if "metadata" in payload:
             fields.append(f"metadata = ${index}::jsonb")
@@ -623,6 +677,7 @@ class UserRepository(BaseRepository):
             llm_config = _merge_dict(_json_obj(existing_llm), llm_config)
         if not llm_config.get("api_key"):
             llm_config.pop("api_key", None)
+        llm_config = seal_llm_config_for_storage(llm_config)
         agent_id = payload.get("agent_id")
         if agent_id is not None:
             agent_id = str(agent_id).strip() or None
@@ -698,6 +753,12 @@ class UserRepository(BaseRepository):
 
     async def soft_delete_user(self, user_id: str) -> None:
         selected = validate_user_id(user_id)
+        try:
+            from shuxin.voice.cdn.qiniu_delete import delete_user_avatar
+
+            delete_user_avatar(selected)
+        except Exception as exc:
+            logger.info("soft_delete avatar cleanup skipped: %s", exc)
         await self.pool.execute(
             "UPDATE users SET deleted_at = now(), enabled = false, updated_at = now() WHERE user_id = $1",
             selected,

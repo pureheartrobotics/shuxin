@@ -82,6 +82,7 @@ from shuxin.voice.persistence.users import (
     UserSettings,
     validate_user_id,
 )
+from shuxin.voice.persistence.device_secret_crypto import unseal_llm_config_for_use
 from shuxin.voice.persistence.base_repo import (
     BaseRepository,
     _dt,
@@ -591,7 +592,9 @@ class DeviceRepository(BaseRepository):
             "SELECT llm_config FROM users WHERE user_id = $1 AND deleted_at IS NULL",
             user_id,
         )
-        llm_config = _json_obj(llm_row["llm_config"]) if llm_row else _json_obj(row["llm_config"])
+        llm_config = unseal_llm_config_for_use(
+            _json_obj(llm_row["llm_config"]) if llm_row else _json_obj(row["llm_config"])
+        )
 
         user_settings = UserSettings(
             user_id=user_id,

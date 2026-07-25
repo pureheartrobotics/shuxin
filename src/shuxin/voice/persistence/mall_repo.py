@@ -5,6 +5,7 @@ import os
 import uuid
 from typing import Any, Optional
 
+from shuxin.voice.cdn.qiniu import public_url
 from shuxin.voice.persistence.base_repo import (
     BaseRepository,
     _dt_iso,
@@ -19,7 +20,7 @@ def _product_item(row: Any, skus: list[dict[str, Any]] | None = None) -> dict[st
         "product_id": str(row["product_id"]),
         "name": str(row["name"]),
         "description": str(row.get("description") or ""),
-        "cover_url": str(row.get("cover_url") or ""),
+        "cover_url": public_url(str(row.get("cover_url") or "")),
         "status": str(row.get("status") or "on_sale"),
         "sort_order": int(row.get("sort_order") or 0),
         "skus": skus or [],
@@ -48,7 +49,7 @@ def _cart_item(row: Any) -> dict[str, Any]:
         "product_id": str(row.get("product_id") or ""),
         "product_name": str(row.get("product_name") or ""),
         "sku_name": str(row.get("sku_name") or ""),
-        "cover_url": str(row.get("cover_url") or ""),
+        "cover_url": public_url(str(row.get("cover_url") or "")),
         "price_fen": int(row.get("price_fen") or 0),
         "price_yuan": round(int(row.get("price_fen") or 0) / 100.0, 2),
         "quantity": int(row.get("quantity") or 1),
