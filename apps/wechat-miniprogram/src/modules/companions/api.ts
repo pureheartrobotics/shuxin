@@ -47,3 +47,23 @@ export async function chatText(companion_id: string, text: string) {
     data: { session_token, companion_id, text },
   });
 }
+
+export async function fetchEngagement(companion_id?: string) {
+  const session_token = requireSession();
+  return request("/api/companions/engagement", {
+    method: "POST",
+    data: { session_token, companion_id: companion_id || "" },
+  });
+}
+
+export async function ackCare(care_key: string, companion_id?: string) {
+  const session_token = requireSession();
+  return request("/api/companions/engagement/ack-care", {
+    method: "POST",
+    data: {
+      session_token,
+      care_key,
+      companion_id: companion_id || "",
+    },
+  });
+}

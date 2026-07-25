@@ -5,6 +5,8 @@
  */
 
 export const PRIVACY_AGREE_BUTTON_ID = "ble-privacy-agree-btn";
+/** 聊天页按住说话隐私同意按钮 id（须与 open-type=agreePrivacyAuthorization 的 button id 一致） */
+export const CHAT_PRIVACY_AGREE_BUTTON_ID = "chat-privacy-agree-btn";
 
 export class PrivacyNeedAgreeError extends Error {
   readonly privacyContractName: string;
@@ -17,17 +19,17 @@ export class PrivacyNeedAgreeError extends Error {
 }
 
 export class PrivacyDeniedError extends Error {
-  constructor() {
-    super("您已拒绝隐私授权，无法使用蓝牙配网功能");
+  constructor(message = "您已拒绝隐私授权，无法继续") {
+    super(message);
     this.name = "PrivacyDeniedError";
   }
 }
 
 export class PrivacyBackendError extends Error {
-  constructor() {
-    super(
-      "微信公众平台需在「用户隐私保护指引」中声明蓝牙，并重新上传体验版后再预览。",
-    );
+  constructor(
+    message = "微信公众平台需在「用户隐私保护指引」中声明所用接口（蓝牙 / 麦克风录音等），并重新上传体验版后再预览。",
+  ) {
+    super(message);
     this.name = "PrivacyBackendError";
   }
 }
@@ -94,6 +96,16 @@ export async function checkBlePrivacyNeeded(): Promise<BlePrivacyStatus> {
     };
   } catch {
     return { needed: false, contractName: "《用户隐私保护指引》" };
+  }
+}
+
+/** 录音 / 麦克风与蓝牙共用同一套微信隐私授权状态查询 */
+export const checkRecordPrivacyNeeded = checkBlePrivacyNeeded;
+
+export async function assertRecordPrivacyAuthorized(): Promise<void> {
+  const { needed, contractName } = await checkRecordPrivacyNeeded();
+  if (needed) {
+    throw new PrivacyNeedAgreeError(contractName);
   }
 }
 

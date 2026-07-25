@@ -33,6 +33,11 @@ shuxin/
 - 插件系统（动态导入 + Hook 机制）
 - JSON 持久化（~/.shuxin/companion/）
 
+## 文档与沟通语言
+
+- **对用户说明、设计规格、实现计划、任务清单默认中文**（与 Cursor 全局规则 `chinese-docs-and-comms` 一致）。
+- 代码标识符、API 路径、文件路径、命令、环境变量名保持英文。
+
 ## 快速启动
 
 ```bash
@@ -136,6 +141,7 @@ CLI -> Agent.initialize() -> SOUL/Identity/LLM/Memory/Plugin 初始化
 
 ### 微信小程序约束
 
+- **软硬延续性（文档预留，零代码）**：投资人软线（`user_companions` + soft 设备）与硬件盲盒（物理 `devices`）同属一个微信 `users` 账号，人格载体分离。当前产品面**只暴露软线**（伙伴 / 抽卡 / 聊天）；硬件扫码/绑机非常规入口。日后打通采用**可空关联**（勿把 companion 并进 `devices` 主键）；软硬打通未实现前**禁止**下线 `user_companions` / soft 设备模型。详设见 [`docs/superpowers/specs/2026-07-23-soft-hardware-continuity-design.md`](docs/superpowers/specs/2026-07-23-soft-hardware-continuity-design.md)。
 - 改 `apps/wechat-miniprogram` 源码后须 `bash scripts/wechat_miniprogram_dev.sh build`，微信工具导入 `dist/build/mp-weixin`（非源码目录）。
 - 登录页须用户主动勾选协议（`utils/policy.ts`），**禁止**默认勾选；协议页 `pages/legal/*`。
 - BLE 隐私走 `utils/privacy.ts`（`getPrivacySetting` + `agreePrivacyAuthorization`）；**禁止**与 `requirePrivacyAuthorize` 叠用；蓝牙**不得**写入 `requiredPrivateInfos`。

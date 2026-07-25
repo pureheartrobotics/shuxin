@@ -8,6 +8,30 @@ export type RequestOptions = {
   auth?: boolean;
 };
 
+export class ApiError extends Error {
+  code: string;
+  statusCode: number;
+  detail: string;
+  body: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    opts: {
+      code?: string;
+      statusCode?: number;
+      detail?: string;
+      body?: Record<string, unknown>;
+    } = {}
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.code = String(opts.code || message || "error");
+    this.statusCode = Number(opts.statusCode || 0);
+    this.detail = String(opts.detail || message || "");
+    this.body = opts.body || {};
+  }
+}
+
 function handleSessionError(errorMsg: string): boolean {
   if (errorMsg === "session_token is invalid or expired") {
     uni.removeStorageSync("shuxin_session_token");
@@ -35,7 +59,14 @@ export function request<T = any>(path: string, options: RequestOptions = {}): Pr
         }
         const errorMsg = body?.error || `请求失败: ${res.statusCode}`;
         handleSessionError(String(errorMsg));
-        reject(new Error(String(errorMsg)));
+        reject(
+          new ApiError(String(body?.detail || errorMsg), {
+            code: String(errorMsg),
+            statusCode: Number(res.statusCode || 0),
+            detail: String(body?.detail || errorMsg),
+            body: body && typeof body === "object" ? body : {},
+          })
+        );
       },
       fail: (error) => reject(new Error(error.errMsg || "请求失败")),
     });

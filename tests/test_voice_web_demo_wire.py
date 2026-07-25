@@ -50,3 +50,20 @@ def test_hardware_client_forces_opus_wire_format():
     session.audio_wire_format = str(session.audio_params["format"])
     assert session.audio_wire_format == "opus"
     assert session._uses_opus_downlink()
+
+
+def test_soft_miniprogram_client_keeps_pcm_like_web_demo():
+    session = _make_session()
+    session.client_id = "soft-miniprogram"
+    session.hardware_session = True
+    session.audio_params = _negotiate_audio_params({"format": "pcm", "sample_rate": 16000})
+    if (
+        session.hardware_session
+        and not session._is_web_demo_client()
+        and session.audio_params["format"] != "opus"
+    ):
+        session.audio_params = _negotiate_audio_params({"format": "opus"})
+    session.audio_wire_format = str(session.audio_params["format"])
+    assert session._is_web_demo_client()
+    assert session.audio_wire_format == "pcm"
+    assert not session._uses_opus_downlink()

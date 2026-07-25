@@ -6,6 +6,49 @@
       <view class="subtitle">{{ loggedIn ? "微信身份已登录" : "尚未登录" }}</view>
     </view>
 
+    <!-- 资料分组：微信式 cell；头像直达 chooseAvatar（官方推荐） -->
+    <view class="panel profile-panel">
+      <view class="cell avatar-cell">
+        <text class="cell-label">头像</text>
+        <view class="cell-right">
+          <button
+            class="avatar-hit"
+            open-type="chooseAvatar"
+            :disabled="saving"
+            hover-class="none"
+            @chooseavatar="onChooseAvatar"
+          >
+            <image
+              v-if="avatarUrl"
+              class="avatar"
+              :src="avatarUrl"
+              mode="aspectFill"
+            />
+            <view v-else class="avatar avatar-placeholder">{{ displayName.slice(0, 1) }}</view>
+          </button>
+          <view class="cell-more" @tap.stop="showAvatarMenu">
+            <text class="chev">›</text>
+          </view>
+        </view>
+      </view>
+      <view class="cell nick-cell">
+        <text class="cell-label">昵称</text>
+        <input
+          class="cell-input"
+          type="nickname"
+          maxlength="32"
+          :disabled="saving"
+          :value="nickname"
+          placeholder="点此填写，可选用微信昵称"
+          placeholder-class="cell-placeholder"
+          @input="onNicknameInput"
+          @change="onNicknameChange"
+          @blur="onNicknameBlur"
+        />
+      </view>
+      <view class="cell-hint">点头像用微信头像；点 › 可从相册选择或恢复默认。昵称：聚焦后在键盘上方点选微信昵称，也可自行输入</view>
+    </view>
+
     <view class="panel">
       <view class="row user-id-row">
         <view class="user-id-block">
@@ -16,18 +59,11 @@
       </view>
       <view class="row">
         <view class="balance-block">
-          <view class="label">账户剩余时长</view>
+          <view class="label">账户剩余陪伴点</view>
           <view class="value" :class="{ exhausted: quotaExhausted }">{{ balanceLabel }}</view>
-          <view v-if="quotaExhausted" class="hint">额度已用尽，请充值后继续使用</view>
+          <view v-if="quotaExhausted" class="hint">陪伴点已用尽，请充值后继续使用</view>
         </view>
         <button class="mini recharge" :disabled="loading || paying" @tap="openPaymentSheet">充值</button>
-      </view>
-      <view class="row">
-        <view>
-          <view class="label">绑定设备</view>
-          <view class="value">{{ deviceCount }} 台</view>
-        </view>
-        <button class="mini" :disabled="loading" @tap="goDevices">管理</button>
       </view>
       <view class="row legal-row">
         <view>
@@ -61,7 +97,7 @@
     <view v-if="showPaymentSheet" class="sheet-mask" @tap="closePaymentSheet">
       <view class="sheet" @tap.stop>
         <view class="sheet-title">选择购买套餐</view>
-        <view class="sheet-subtitle">支付成功后自动增加到账户剩余时长</view>
+        <view class="sheet-subtitle">支付成功后自动增加账户剩余陪伴点</view>
         <view v-if="plansLoading" class="sheet-hint">加载套餐中...</view>
         <view v-else-if="!plans.length" class="sheet-hint">暂无可用套餐</view>
         <view v-else class="plan-list">
@@ -73,12 +109,32 @@
           >
             <view>
               <view class="plan-name">{{ plan.name }}</view>
-              <view class="plan-desc">{{ plan.description || `${plan.duration_days} 天订阅` }}</view>
+              <view class="plan-desc">{{ planDisplayDesc(plan) }}</view>
             </view>
             <view class="plan-price">¥{{ plan.amount_yuan }}</view>
           </view>
         </view>
         <button class="sheet-close" :disabled="paying" @tap="closePaymentSheet">取消</button>
+      </view>
+    </view>
+
+    <!-- › 菜单：相册 / 恢复（微信头像由头像按钮直达） -->
+    <view v-if="avatarMenuVisible" class="sheet-mask" @tap="closeAvatarMenu">
+      <view class="sheet avatar-sheet" @tap.stop>
+        <view class="sheet-title">更换头像</view>
+        <button class="avatar-menu-btn" :disabled="saving" hover-class="none" @tap="pickFromAlbum">
+          从相册选择
+        </button>
+        <button
+          v-if="hasCustomAvatar"
+          class="avatar-menu-btn"
+          :disabled="saving"
+          hover-class="none"
+          @tap="restoreDefaultAvatar"
+        >
+          恢复默认
+        </button>
+        <button class="sheet-close" :disabled="saving" @tap="closeAvatarMenu">取消</button>
       </view>
     </view>
   </view>
@@ -90,19 +146,34 @@ import { computed } from "vue";
 import { isLoggedIn } from "../../core/auth";
 import { useProfile } from "../../modules/account/composables/useProfile";
 import { useQuotaPayment } from "../../modules/account/composables/useQuotaPayment";
+import type { PaymentPlan } from "../../modules/account/api/payment-quota";
+import { describePlanForUser } from "../../utils/companion-points";
 
 const profile = useProfile();
 const quotaPayment = useQuotaPayment();
 
 const {
   loading,
-  deviceCount,
+  saving,
   factoryQa,
   quotaExhausted,
   loggedIn,
   displayUserId,
+  displayName,
   balanceLabel,
+  nickname,
+  avatarUrl,
+  hasCustomAvatar,
+  avatarMenuVisible,
   loadProfile,
+  onNicknameInput,
+  onNicknameBlur,
+  onNicknameChange,
+  onChooseAvatar,
+  pickFromAlbum,
+  restoreDefaultAvatar,
+  showAvatarMenu,
+  closeAvatarMenu,
   logout,
   copyUserId,
 } = profile;
@@ -119,6 +190,13 @@ const {
 
 const message = computed(() => quotaPayment.message.value || profile.message.value);
 
+function planDisplayDesc(plan: PaymentPlan) {
+  return (
+    describePlanForUser(plan.description, plan.duration_minutes) ||
+    (plan.duration_days ? `${plan.duration_days} 天订阅` : "充值套餐")
+  );
+}
+
 onShow(() => {
   if (!isLoggedIn()) {
     uni.redirectTo({ url: "/pages/login/login" });
@@ -129,10 +207,6 @@ onShow(() => {
 
 function navigateToFeedback() {
   uni.navigateTo({ url: "/pages/profile/feedback" });
-}
-
-function goDevices() {
-  uni.navigateTo({ url: "/pages/index/index" });
 }
 
 function openTerms() {
@@ -196,6 +270,121 @@ async function handlePurchasePlan(plan: Parameters<typeof purchasePlan>[0]) {
   border: 1rpx solid rgba(128, 94, 69, 0.16);
   border-radius: 24rpx;
   box-shadow: 0 18rpx 50rpx rgba(70, 48, 32, 0.08);
+  margin-bottom: 24rpx;
+}
+
+.profile-panel {
+  padding: 8rpx 28rpx 20rpx;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 104rpx;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid rgba(128, 94, 69, 0.12);
+}
+
+.cell:last-of-type {
+  border-bottom: none;
+}
+
+.cell-label {
+  flex: 0 0 auto;
+  color: #25211c;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.cell-right {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.avatar-hit {
+  margin: 0;
+  padding: 0;
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 48rpx;
+  background: transparent;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.avatar-hit::after {
+  border: none;
+}
+
+.avatar {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 48rpx;
+  background: #e4eee8;
+  display: block;
+}
+
+.avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2f604f;
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.cell-more {
+  padding: 16rpx 4rpx 16rpx 12rpx;
+}
+
+.chev {
+  color: #b0a89e;
+  font-size: 40rpx;
+  line-height: 1;
+}
+
+.cell-input {
+  flex: 1;
+  margin-left: 24rpx;
+  text-align: right;
+  font-size: 28rpx;
+  color: #25211c;
+  height: 64rpx;
+  line-height: 64rpx;
+}
+
+.cell-placeholder {
+  color: #b5aa9d;
+}
+
+.cell-hint {
+  padding: 4rpx 0 8rpx;
+  color: #9a9186;
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+
+.avatar-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.avatar-menu-btn {
+  margin: 0;
+  width: 100%;
+  height: 96rpx;
+  line-height: 96rpx;
+  font-size: 30rpx;
+  color: #25211c;
+  background: #f5efe6;
+  border-radius: 20rpx;
+}
+
+.avatar-menu-btn::after {
+  border: none;
 }
 
 .row {

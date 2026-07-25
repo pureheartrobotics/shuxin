@@ -1,24 +1,24 @@
 <template>
   <view class="page">
     <view class="brand">
-      <view class="eyebrow">CHUXIN DEVICE</view>
-      <view class="title">登录后绑定设备</view>
-      <view class="subtitle">使用微信身份确认设备归属，再扫描机器人外壳认领码完成绑定。</view>
+      <view class="eyebrow">CHUXIN</view>
+      <view class="title">登录后开始陪伴</view>
+      <view class="subtitle">使用微信身份登录，抽卡遇见伙伴，文字与语音都能聊。</view>
     </view>
 
     <view class="panel">
       <view class="step">
         <view class="step-index">1</view>
         <view>
-          <view class="step-title">微信身份</view>
-          <view class="step-text">仅用于生成当前微信用户的设备绑定关系。</view>
+          <view class="step-title">微信登录</view>
+          <view class="step-text">确认你的账号，同步额度与伙伴列表。</view>
         </view>
       </view>
       <view class="step">
         <view class="step-index">2</view>
         <view>
-          <view class="step-title">扫码绑定</view>
-          <view class="step-text">外壳条形码只包含认领码，不包含设备密钥。</view>
+          <view class="step-title">抽卡与聊天</view>
+          <view class="step-text">免费抽卡获得性格伙伴，随时回来聊聊。</view>
         </view>
       </view>
       <view class="policy-row">
@@ -38,7 +38,7 @@
           </label>
         </checkbox-group>
       </view>
-      <button class="primary" :disabled="loading || !policyAgreed" @tap="loginAndContinue">进入设备绑定</button>
+      <button class="primary" :disabled="loading || !policyAgreed" @tap="loginAndContinue">进入伙伴</button>
       <view v-if="message" class="message">{{ message }}</view>
     </view>
   </view>
@@ -109,7 +109,7 @@ function loginAndContinue() {
         uni.setStorageSync("shuxin_session_token", session.session_token || "");
         uni.setStorageSync("shuxin_session_expires_at", session.expires_at || "");
         uni.setStorageSync("shuxin_user_id", session.user_id || "");
-        uni.switchTab({ url: "/pages/index/index" });
+        uni.switchTab({ url: "/pages/partners/partners" });
       } catch (error) {
         message.value = error.message || String(error);
       } finally {

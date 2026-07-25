@@ -2,7 +2,7 @@
   <scroll-view class="legal-page" scroll-y>
     <view class="legal-body">
       <view class="legal-title">稚子心机器人小程序隐私保护指引</view>
-      <view class="legal-updated">更新日期：2026年7月3日</view>
+      <view class="legal-updated">更新日期：2026年7月23日</view>
 
       <view class="section">
         <view class="section-text">
@@ -30,6 +30,15 @@
           </view>
           <view class="list-item">
             开发者通过已连接设备扫描附近 2.4GHz 无线网络名称（SSID），用于向设备发送配网信息；不读取手机 Wi-Fi 列表，不调用手机端 Wi-Fi 接口。
+          </view>
+          <view class="list-item">
+            开发者将在获取你的明示同意后，访问你的麦克风，用途是：在伙伴语音对话中「按住说话」时采集音频并上传至初心服务完成语音识别与回复；不在后台持续监听，不将录音用于广告画像。
+          </view>
+          <view class="list-item">
+            开发者收集你的昵称、头像，用途是：用于个人中心展示与账号资料完善；仅在你主动选择微信头像或填写/选用昵称后收集，不会静默读取微信资料。
+          </view>
+          <view class="list-item">
+            开发者收集你选中的照片或视频信息，用途是：在个人中心从相册上传个人头像；不用于广告画像。
           </view>
         </view>
       </view>

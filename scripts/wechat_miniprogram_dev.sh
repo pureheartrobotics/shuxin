@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/wechat-miniprogram"
 MODE="${1:-dev}"
-# DEFAULT_API_BASE="https://shuxinzzx.com.cn"
+DEFAULT_API_BASE="https://shuxinzzx.com.cn"
 DEFAULT_APPID="wxda3acb8842b5c9f4"
-DEFAULT_API_BASE="http://localhost:8765"
+# DEFAULT_API_BASE="http://localhost:8765"
 
 read_env_var() {
   local key="$1"
