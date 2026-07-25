@@ -81,6 +81,9 @@ class VoicePostgresRepository:
             default_device_id=default_device_id,
         )
 
+    async def get_user_settings(self, user_id: str | None) -> UserSettings:
+        return await self.users.get_user_settings(user_id=user_id)
+
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         return await self.users.authenticate_user(user_id=user_id, token=token)
 
@@ -371,6 +374,22 @@ class VoicePostgresRepository:
 
     async def get_user_profile_by_session(self, session_token: str) -> dict[str, Any]:
         return await self.billing.get_user_profile_by_session(session_token=session_token)
+
+    async def update_user_profile_by_session(
+        self,
+        session_token: str,
+        *,
+        nickname: Optional[str] = None,
+        avatar_key: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return await self.billing.update_user_profile_by_session(
+            session_token,
+            nickname=nickname,
+            avatar_key=avatar_key,
+        )
+
+    async def clear_user_avatar_by_session(self, session_token: str) -> dict[str, Any]:
+        return await self.billing.clear_user_avatar_by_session(session_token)
 
     async def assert_user_quota_available(self, user_id: str) -> None:
         await self.billing.assert_user_quota_available(user_id=user_id)

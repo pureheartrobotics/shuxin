@@ -80,11 +80,65 @@ class VoiceLocalRepository:
         user_id = str(session["user_id"])
         quota = await self.get_user_quota_by_user_id(user_id)
         quota_payload = {key: value for key, value in quota.items() if key != "user_id"}
+        meta = dict(getattr(self, "user_metadata", {}).get(user_id) or {})
         return {
             "user_id": user_id,
+            "nickname": str(meta.get("nickname") or ""),
+            "avatar_url": str(meta.get("avatar_url") or ""),
+            "avatar_key": str(meta.get("avatar_key") or ""),
             "roles": {"factory_qa": False},
             "quota": quota_payload,
         }
+
+    async def update_user_profile_by_session(
+        self,
+        session_token: str,
+        *,
+        nickname=None,
+        avatar_key=None,
+    ) -> dict[str, Any]:
+        profile = await self.get_user_profile_by_session(session_token)
+        user_id = profile["user_id"]
+        if not hasattr(self, "user_metadata"):
+            self.user_metadata = {}
+        meta = dict(self.user_metadata.get(user_id) or {})
+        if nickname is not None:
+            name = str(nickname or "").strip()
+            if name and len(name) > 32:
+                raise ValueError("nickname must be 1..32 characters")
+            if name:
+                meta["nickname"] = name
+            else:
+                meta.pop("nickname", None)
+        if avatar_key is not None:
+            from shuxin.voice.cdn.purposes import resolve_key
+            from shuxin.voice.cdn.qiniu import public_url_with_version
+
+            key = str(avatar_key or "").strip().lstrip("/")
+            expected = resolve_key("ugc_avatar", user_id=user_id)
+            if key and key != expected:
+                raise ValueError("avatar_key does not belong to this user")
+            if key:
+                meta["avatar_key"] = key
+                meta["avatar_updated_at"] = "v1"
+                meta["avatar_url"] = public_url_with_version(key, "v1")
+            else:
+                meta.pop("avatar_key", None)
+                meta.pop("avatar_url", None)
+                meta.pop("avatar_updated_at", None)
+        self.user_metadata[user_id] = meta
+        return await self.get_user_profile_by_session(session_token)
+
+    async def clear_user_avatar_by_session(self, session_token: str) -> dict[str, Any]:
+        profile = await self.get_user_profile_by_session(session_token)
+        user_id = profile["user_id"]
+        if hasattr(self, "user_metadata") and user_id in self.user_metadata:
+            self.user_metadata[user_id].pop("avatar_key", None)
+            self.user_metadata[user_id].pop("avatar_url", None)
+            self.user_metadata[user_id].pop("avatar_updated_at", None)
+        out = await self.get_user_profile_by_session(session_token)
+        out["cdn_delete"] = {"ok": True, "status": 612}
+        return out
 
     async def assert_user_quota_available(self, user_id: str) -> None:
         return None
@@ -141,6 +195,10 @@ class VoiceLocalRepository:
         notify_payload: dict[str, Any],
     ) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required for payment")
+
+    async def get_user_settings(self, user_id: str | None) -> UserSettings:
+        """YAML path: return settings without token gate (parity with Postgres)."""
+        return self.user_provider.get(user_id)
 
     async def authenticate_user(self, user_id: str | None, token: str | None) -> UserSettings:
         return self.user_provider.authenticate(user_id, token)

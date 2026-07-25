@@ -301,6 +301,38 @@ class MallShipPayload(BaseModel):
     shipping_carrier: Optional[str] = ""
 
 
+class UploadTokenPayload(BaseModel):
+    purpose: str
+    entity_id: Optional[str] = ""
+
+
+@miniapp_admin_router.post("/api/upload/token")
+async def miniapp_upload_token(request: Request, payload: UploadTokenPayload):
+    """签发七牛直传凭证（仅 admin purpose）。"""
+    require_miniapp_admin(request)
+    from shuxin.voice.cdn.purposes import get_purpose
+    from shuxin.voice.cdn.token_signer import issue_upload_token
+
+    purpose = str(payload.purpose or "").strip()
+    entity_id = str(payload.entity_id or "").strip()
+    try:
+        spec = get_purpose(purpose)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if spec.who != "admin":
+        raise HTTPException(
+            status_code=400,
+            detail="purpose %s is not allowed on admin upload token API" % purpose,
+        )
+    try:
+        out = issue_upload_token(purpose=purpose, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return JSONResponse(out)
+
+
 @miniapp_admin_router.get("/api/mall/products")
 async def miniapp_mall_products(request: Request, limit: int = 50):
     require_miniapp_admin(request)
@@ -367,6 +399,30 @@ async def put_investor_gacha_settings(request: Request, payload: GachaSettingsPa
         "weights": payload.weights or {},
     }
     return await request.app.state.repo.companions.set_gacha_settings(body)
+
+
+class TextBillingSettingsPayload(BaseModel):
+    text_max_chars: Optional[float] = None
+    chars_per_minute: Optional[float] = None
+    llm_input_yuan_per_m_tokens: Optional[float] = None
+    llm_output_yuan_per_m_tokens: Optional[float] = None
+    llm_cache_yuan_per_m_tokens: Optional[float] = None
+    yuan_to_minutes_rate: Optional[float] = None
+
+
+@miniapp_admin_router.get("/api/investor/text-billing-settings")
+async def get_investor_text_billing_settings(request: Request):
+    require_miniapp_admin(request)
+    return await request.app.state.repo.companions.get_text_billing_settings()
+
+
+@miniapp_admin_router.put("/api/investor/text-billing-settings")
+async def put_investor_text_billing_settings(
+    request: Request, payload: TextBillingSettingsPayload
+):
+    require_miniapp_admin(request)
+    body = payload.model_dump(exclude_none=True)
+    return await request.app.state.repo.companions.set_text_billing_settings(body)
 
 
 @miniapp_admin_router.get("", response_class=HTMLResponse)
