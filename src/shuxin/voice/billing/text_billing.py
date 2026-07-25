@@ -11,6 +11,8 @@ DEFAULT_TEXT_BILLING: dict[str, float] = {
     "llm_output_yuan_per_m_tokens": 1.7,
     "llm_cache_yuan_per_m_tokens": 0.02,
     "yuan_to_minutes_rate": 1.0,
+    # 中文手机输入保守估计，用于预估展示；后台 investor.text_billing 可改
+    "chars_per_minute": 40.0,
 }
 
 
@@ -82,7 +84,7 @@ def estimate_minutes_for_text(
     max_completion_tokens: int = 384,
     settings: Mapping[str, Any] | None = None,
 ) -> float:
-    """Upper-bound gate before calling the LLM."""
+    """Upper-bound gate before calling the LLM (token path, conservative)."""
     cfg = merge_text_billing_settings(settings)
     prompt = estimate_chars_to_prompt_tokens(text)
     return minutes_from_llm_usage(
@@ -91,6 +93,20 @@ def estimate_minutes_for_text(
         cache_tokens=0,
         settings=cfg,
     )
+
+
+def estimate_minutes_by_typing_speed(
+    text: str,
+    *,
+    settings: Mapping[str, Any] | None = None,
+) -> float:
+    """展示用预估：按可配中文打字速度（字/分钟）换算。"""
+    cfg = merge_text_billing_settings(settings)
+    cpm = float(cfg.get("chars_per_minute") or 40.0)
+    if cpm <= 0:
+        cpm = 40.0
+    n = len(text or "")
+    return max(0.0, float(n) / cpm)
 
 
 def text_max_chars(settings: Mapping[str, Any] | None = None) -> int:

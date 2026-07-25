@@ -29,10 +29,10 @@
 `listen/stop` 或 `text_turn` 路径（推荐硬件依赖此格式）：
 
 ```json
-{"type":"error","error_kind":"quota_exhausted","message":"额度已用尽，请充值"}
+{"type":"error","error_kind":"quota_exhausted","message":"陪伴点已用尽，请充值"}
 ```
 
-硬件：解析 `error_kind == "quota_exhausted"` → 播放本地资源键 `QUOTA_EXHAUSTED`（文案「额度已用尽，请充值」）。
+硬件：解析 `error_kind == "quota_exhausted"` → 播放本地资源键 `QUOTA_EXHAUSTED`（本地音文案可仍为「额度已用尽」）。用户向 `message` 现为「陪伴点已用尽，请充值」。
 
 ### 1.4 额度模型（用户级共用池）
 

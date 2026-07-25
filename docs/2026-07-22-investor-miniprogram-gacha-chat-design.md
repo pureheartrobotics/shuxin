@@ -3,14 +3,15 @@
 **日期：** 2026-07-22  
 **计划分支：** `feat/investor-miniprogram-gacha-chat`（自 `improve-codebase`）  
 **状态：** 待人工批准后实现（SPECIFY 完成；PLAN/TASKS 见 `tasks/`）  
-**关联设计决策：** 增长证明选 B（看板）；看板挂 `/miniapp-admin`；语音鉴权选 A（soft-credentials）
+**关联设计决策：** 增长证明选 B（看板）；看板挂 `/miniapp-admin`；语音鉴权选 A（soft-credentials）  
+**软硬延续性：** 见 [`docs/superpowers/specs/2026-07-23-soft-hardware-continuity-design.md`](superpowers/specs/2026-07-23-soft-hardware-continuity-design.md)。下文「本线可弃」指**实现优先级**可让位于硬件主路径，**不等于**量产可丢弃已获客用户的关系资产；延续策略以 continuity spec（方案 1 关联表、当前 UI 仅软线）为准。
 
 ## Objective
 
 向投资人证明产品**有市场、有人数**：无硬件可获客、可抽卡、可对话、可付费；运营台能展示注册/抽卡/转化/对话等数字。
 
 **用户：** 微信小程序终端用户；演示讲解人用 `/miniapp-admin`。  
-**长期：** 本线可弃；硬件绑定产品为主路径，不被 soft/companion 污染。
+**长期：** 本线实现优先级可让位于硬件；**勿污染** `devices` 主键。用户关系延续见 continuity spec，而非简单废弃 companion。
 
 ## Tech Stack
 

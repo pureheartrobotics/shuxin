@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from shuxin.voice.billing.companion_points import format_plan_description_minutes
 from shuxin.voice.config.payment_config import (
     DEFAULT_CREDIT_RATIO,
     DISPLAY_BALANCE_METADATA_KEY,
@@ -42,6 +43,7 @@ import yaml
 
 from shuxin.voice.audio.audio_files import compress_wav_to_mp3, purge_attachment_file, sha256_file
 from shuxin.voice.persistence.device_secret_crypto import (
+    decrypt_llm_api_key,
     device_secret_encryption_configured,
     encrypt_device_secret,
     mask_device_secret,
@@ -212,7 +214,8 @@ class BillingRepository(BaseRepository):
             items.append({
                 "id": r["plan_id"],
                 "name": r["name"],
-                "description": r["description"] or f"{r['duration_minutes']}分钟/月",
+                "description": r["description"]
+                or format_plan_description_minutes(int(r["duration_minutes"]), monthly=True),
                 "amount_fen": r["amount_fen"],
                 "amount_yuan": round(r["amount_fen"] / 100, 2),
                 "type": "subscription",
@@ -222,7 +225,8 @@ class BillingRepository(BaseRepository):
             items.append({
                 "id": r["package_id"],
                 "name": r["name"],
-                "description": r["description"] or f"{r['duration_minutes']}分钟",
+                "description": r["description"]
+                or format_plan_description_minutes(int(r["duration_minutes"]), monthly=False),
                 "amount_fen": r["amount_fen"],
                 "amount_yuan": round(r["amount_fen"] / 100, 2),
                 "type": "fuel_pack",
@@ -512,7 +516,12 @@ class BillingRepository(BaseRepository):
                 user_id
             )
             if user_row:
-                api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
+                api_key = (
+                    decrypt_llm_api_key(
+                        str(_json_obj(user_row["llm_config"]).get("api_key") or "")
+                    )
+                    or ""
+                ).strip()
                 if api_key:
                     try:
                         balance = await _resolve_get_token_balance()(api_key)
@@ -607,13 +616,133 @@ class BillingRepository(BaseRepository):
         meta = _json_obj(row["metadata"])
         quota = await self.parent.get_user_quota_by_user_id(user_id)
         quota_payload = {key: value for key, value in quota.items() if key != "user_id"}
-        return {
+        return self._profile_payload(user_id=user_id, meta=meta, quota=quota_payload)
+
+    def _profile_payload(
+        self,
+        *,
+        user_id: str,
+        meta: dict[str, Any],
+        quota: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        from shuxin.voice.cdn.qiniu import public_url_with_version
+
+        nickname = str(meta.get("nickname") or "").strip()
+        avatar_key = str(meta.get("avatar_key") or "").strip()
+        avatar_updated_at = str(meta.get("avatar_updated_at") or "").strip()
+        avatar_url = ""
+        if avatar_key:
+            avatar_url = public_url_with_version(avatar_key, avatar_updated_at)
+        out: dict[str, Any] = {
             "user_id": user_id,
+            "nickname": nickname,
+            "avatar_url": avatar_url,
+            "avatar_key": avatar_key,
             "roles": {
                 "factory_qa": str(meta.get("factory_role") or "").lower() == "true",
             },
-            "quota": quota_payload,
         }
+        if quota is not None:
+            out["quota"] = quota
+        return out
+
+    async def update_user_profile_by_session(
+        self,
+        session_token: str,
+        *,
+        nickname: Optional[str] = None,
+        avatar_key: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from shuxin.voice.cdn.purposes import resolve_key
+
+        async with self.pool.acquire() as conn:
+            user_id = await self.parent._user_id_from_wechat_auth(
+                conn, session_token=session_token
+            )
+            row = await conn.fetchrow(
+                """
+                SELECT metadata
+                FROM users
+                WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                """,
+                user_id,
+            )
+            if row is None:
+                raise PermissionError("user is disabled or not found")
+            meta = _json_obj(row["metadata"])
+
+            if nickname is not None:
+                name = str(nickname or "").strip()
+                if name and (len(name) < 1 or len(name) > 32):
+                    raise ValueError("nickname must be 1..32 characters")
+                if name:
+                    meta["nickname"] = name
+                else:
+                    meta.pop("nickname", None)
+
+            if avatar_key is not None:
+                key = str(avatar_key or "").strip().lstrip("/")
+                expected = resolve_key("ugc_avatar", user_id=user_id)
+                if key and key != expected:
+                    raise ValueError("avatar_key does not belong to this user")
+                if key:
+                    meta["avatar_key"] = key
+                    meta["avatar_updated_at"] = (
+                        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    )
+                else:
+                    meta.pop("avatar_key", None)
+                    meta.pop("avatar_updated_at", None)
+
+            await conn.execute(
+                """
+                UPDATE users
+                SET metadata = $2::jsonb, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+                json.dumps(meta, ensure_ascii=False),
+            )
+        return self._profile_payload(user_id=user_id, meta=meta)
+
+    async def clear_user_avatar_by_session(self, session_token: str) -> dict[str, Any]:
+        from shuxin.voice.cdn.qiniu_delete import delete_user_avatar
+
+        async with self.pool.acquire() as conn:
+            user_id = await self.parent._user_id_from_wechat_auth(
+                conn, session_token=session_token
+            )
+            row = await conn.fetchrow(
+                """
+                SELECT metadata
+                FROM users
+                WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                """,
+                user_id,
+            )
+            if row is None:
+                raise PermissionError("user is disabled or not found")
+            meta = _json_obj(row["metadata"])
+
+        delete_result = delete_user_avatar(user_id)
+        meta.pop("avatar_key", None)
+        meta.pop("avatar_updated_at", None)
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE users
+                SET metadata = $2::jsonb, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+                json.dumps(meta, ensure_ascii=False),
+            )
+        payload = self._profile_payload(user_id=user_id, meta=meta)
+        payload["cdn_delete"] = {
+            "ok": bool(delete_result.get("ok")),
+            "status": delete_result.get("status"),
+        }
+        return payload
 
     async def assert_user_quota_available(self, user_id: str) -> None:
         quota = await self.parent.get_user_quota_by_user_id(user_id)
@@ -649,7 +778,9 @@ class BillingRepository(BaseRepository):
         )
         if row is None:
             raise PermissionError("user is disabled or not found")
-        api_key = str(_json_obj(row["llm_config"]).get("api_key") or "").strip()
+        api_key = (
+            decrypt_llm_api_key(str(_json_obj(row["llm_config"]).get("api_key") or "")) or ""
+        ).strip()
         if not api_key:
             raise PermissionError("user has no DMX api_key; ask user to login first")
 
@@ -1077,7 +1208,12 @@ class BillingRepository(BaseRepository):
                     )
                     if user_row is None:
                         raise PermissionError("user is disabled or not found")
-                    api_key = str(_json_obj(user_row["llm_config"]).get("api_key") or "").strip()
+                    api_key = (
+                        decrypt_llm_api_key(
+                            str(_json_obj(user_row["llm_config"]).get("api_key") or "")
+                        )
+                        or ""
+                    ).strip()
                     if not api_key:
                         raise PermissionError("user has no DMX api_key; ask user to login first")
 

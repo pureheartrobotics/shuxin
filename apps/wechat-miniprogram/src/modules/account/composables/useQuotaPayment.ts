@@ -40,7 +40,7 @@ export function useQuotaPayment() {
     try {
       const result: any = await createQuotaOrder(plan.id);
       await invokeWechatPay(result.pay_params || {});
-      message.value = "支付成功，额度更新中";
+      message.value = "支付成功，陪伴点更新中";
       showPaymentSheet.value = false;
       if (onSuccess) await onSuccess();
     } catch (error: any) {

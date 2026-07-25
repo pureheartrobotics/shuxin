@@ -7,8 +7,10 @@ export type PaymentPlan = {
   description?: string;
   amount_fen: number;
   amount_yuan: number;
-  add_yuan: number;
-  duration_days: number;
+  add_yuan?: number;
+  duration_days?: number;
+  duration_minutes?: number;
+  type?: string;
 };
 
 export async function fetchPaymentPlans(): Promise<PaymentPlan[]> {

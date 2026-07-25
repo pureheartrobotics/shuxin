@@ -576,18 +576,29 @@
                             <div class="text-3xl font-bold mt-2">{{ investorMetrics.free_draws || 0 }} / {{ investorMetrics.paid_draws || 0 }}</div>
                         </div>
                         <div class="glass rounded-2xl border border-gray-800 p-5">
-                            <div class="text-xs text-gray-400">付费抽转化</div>
-                            <div class="text-3xl font-bold mt-2">{{ ((investorMetrics.paid_draw_conversion || 0) * 100).toFixed(1) }}%</div>
-                        </div>
-                        <div class="glass rounded-2xl border border-gray-800 p-5">
                             <div class="text-xs text-gray-400">文字对话轮次</div>
                             <div class="text-3xl font-bold mt-2">{{ investorMetrics.text_turns || 0 }}</div>
+                        </div>
+                        <div class="glass rounded-2xl border border-gray-800 p-5">
+                            <div class="text-xs text-gray-400">人均日轮次 (C)</div>
+                            <div class="text-3xl font-bold mt-2">{{ investorMetrics.avg_text_turns_per_active_today || 0 }}</div>
+                            <div class="text-[10px] text-gray-500 mt-1">当日活跃 {{ investorMetrics.active_chat_users_today || 0 }} 人 · 今日轮次 {{ investorMetrics.text_turns_today || 0 }}</div>
+                        </div>
+                        <div class="glass rounded-2xl border border-gray-800 p-5">
+                            <div class="text-xs text-gray-400">付费抽转化 (D)</div>
+                            <div class="text-3xl font-bold mt-2">{{ ((investorMetrics.paid_draw_conversion || 0) * 100).toFixed(1) }}%</div>
+                            <div class="text-[10px] text-gray-500 mt-1">免费抽用尽后付费用户</div>
+                        </div>
+                        <div class="glass rounded-2xl border border-gray-800 p-5">
+                            <div class="text-xs text-gray-400">日低保用尽(soft)</div>
+                            <div class="text-3xl font-bold mt-2">{{ investorMetrics.daily_allowance_exhausted_users || 0 }}</div>
                         </div>
                         <div class="glass rounded-2xl border border-gray-800 p-5">
                             <div class="text-xs text-gray-400">语音消耗代理计数</div>
                             <div class="text-3xl font-bold mt-2">{{ investorMetrics.voice_turns_proxy || 0 }}</div>
                         </div>
                     </div>
+                    <p class="text-xs text-gray-500">口径：人均日轮次 = 当日有文字对话用户的人均 companion_text_turns（北京日）；付费抽转化 = paid_draw_users / free_exhausted_users。</p>
                     <div class="glass rounded-2xl border border-gray-800 p-6 space-y-4">
                         <h3 class="text-lg font-bold">抽卡配置</h3>
                         <div class="grid grid-cols-2 gap-4">
@@ -609,6 +620,40 @@
                         </div>
                         <button @click="saveGachaSettings" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl">
                             保存抽卡配置
+                        </button>
+                    </div>
+                    <div class="glass rounded-2xl border border-gray-800 p-6 space-y-4">
+                        <h3 class="text-lg font-bold">文字计费</h3>
+                        <p class="text-sm text-gray-400">实扣仍按 LLM token→分钟；「字/分钟」仅用于预估展示。</p>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">中文打字速度（字/分钟）</label>
+                                <input type="number" step="1" v-model.number="textBillingForm.chars_per_minute"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">单条最大字数</label>
+                                <input type="number" step="1" v-model.number="textBillingForm.text_max_chars"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">输入单价（元/百万 token）</label>
+                                <input type="number" step="0.01" v-model.number="textBillingForm.llm_input_yuan_per_m_tokens"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">输出单价（元/百万 token）</label>
+                                <input type="number" step="0.01" v-model.number="textBillingForm.llm_output_yuan_per_m_tokens"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-300 mb-1">元→分钟汇率</label>
+                                <input type="number" step="0.01" v-model.number="textBillingForm.yuan_to_minutes_rate"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white">
+                            </div>
+                        </div>
+                        <button @click="saveTextBillingSettings" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-6 rounded-xl">
+                            保存文字计费
                         </button>
                     </div>
                 </div>
@@ -879,9 +924,12 @@
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">封面 URL</label>
-                            <input type="text" v-model="productForm.cover_url" placeholder="https://..."
+                            <label class="block text-sm font-medium text-gray-300 mb-1">封面 URL / 七牛 key</label>
+                            <input type="text" v-model="productForm.cover_url" placeholder="zzx_xcx/mall/... 或 https://..."
                                 class="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50">
+                            <input type="file" accept="image/*" class="mt-2 block w-full text-sm text-gray-400"
+                                @change="onCoverFileChange">
+                            <p class="mt-1 text-xs text-gray-500">选择本地图片将直传七牛（mall_product_cover），并自动填入相对 key</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">排序</label>
@@ -1054,6 +1102,12 @@
                     status: 'on_sale',
                     sort_order: 0
                 });
+                const coverFile = ref(null);
+
+                const onCoverFileChange = (ev) => {
+                    const f = ev && ev.target && ev.target.files && ev.target.files[0];
+                    coverFile.value = f || null;
+                };
                 const emptySkuRow = () => ({
                     sku_id: null,
                     name: '默认',
@@ -1077,7 +1131,7 @@
 
                 const apiRequest = async (path, method = 'GET', body = null) => {
                     const headers = { 'Content-Type': 'application/json' };
-                    const options = { method, headers };
+                    const options = { method, headers, credentials: 'same-origin' };
                     if (body) {
                         options.body = JSON.stringify(body);
                     }
@@ -1086,9 +1140,34 @@
                         authenticated.value = false;
                         throw new Error('未授权，请登录');
                     }
-                    const data = await res.json();
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        const detail = data.detail || data.error || ('HTTP ' + res.status);
+                        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+                    }
                     if (data.error) throw new Error(data.error);
                     return data;
+                };
+
+                const requestUploadToken = async (purpose, entityId) => {
+                    return apiRequest('/api/upload/token', 'POST', {
+                        purpose,
+                        entity_id: entityId || ''
+                    });
+                };
+
+                const uploadFileToQiniu = async (file, purpose, entityId) => {
+                    const tok = await requestUploadToken(purpose, entityId);
+                    const form = new FormData();
+                    form.append('token', tok.token);
+                    form.append('key', tok.key);
+                    form.append('file', file);
+                    const upRes = await fetch(tok.upload_url, { method: 'POST', body: form });
+                    if (!upRes.ok) {
+                        const text = await upRes.text().catch(() => '');
+                        throw new Error('七牛上传失败: HTTP ' + upRes.status + ' ' + text.slice(0, 200));
+                    }
+                    return tok;
                 };
 
                 const handleLogin = async () => {
@@ -1133,17 +1212,26 @@
                 const investorMetrics = ref({});
                 const gachaForm = ref({ paid_draw_price_yuan: 9.9, free_draws_per_user: 3 });
                 const gachaWeightsJson = ref('{}');
+                const textBillingForm = ref({
+                    chars_per_minute: 40,
+                    text_max_chars: 500,
+                    llm_input_yuan_per_m_tokens: 0.85,
+                    llm_output_yuan_per_m_tokens: 1.7,
+                    yuan_to_minutes_rate: 1.0
+                });
                 const loadInvestorData = async () => {
                     if (!authenticated.value) return;
                     try {
-                        const [metrics, gacha] = await Promise.all([
+                        const [metrics, gacha, textBilling] = await Promise.all([
                             apiRequest('/api/investor/metrics'),
-                            apiRequest('/api/investor/gacha-settings')
+                            apiRequest('/api/investor/gacha-settings'),
+                            apiRequest('/api/investor/text-billing-settings').catch(() => ({}))
                         ]);
                         investorMetrics.value = metrics || {};
                         gachaForm.value.paid_draw_price_yuan = gacha.paid_draw_price_yuan;
                         gachaForm.value.free_draws_per_user = gacha.free_draws_per_user;
                         gachaWeightsJson.value = JSON.stringify(gacha.weights || {}, null, 2);
+                        Object.assign(textBillingForm.value, textBilling || {});
                     } catch (err) {
                         console.error('加载投资人数据失败:', err);
                     }
@@ -1162,6 +1250,25 @@
                         });
                         await loadInvestorData();
                         alert('已保存');
+                    } catch (err) {
+                        alert(err.message || String(err));
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const saveTextBillingSettings = async () => {
+                    loading.value = true;
+                    try {
+                        await apiRequest('/api/investor/text-billing-settings', 'PUT', {
+                            chars_per_minute: Number(textBillingForm.value.chars_per_minute),
+                            text_max_chars: Number(textBillingForm.value.text_max_chars),
+                            llm_input_yuan_per_m_tokens: Number(textBillingForm.value.llm_input_yuan_per_m_tokens),
+                            llm_output_yuan_per_m_tokens: Number(textBillingForm.value.llm_output_yuan_per_m_tokens),
+                            yuan_to_minutes_rate: Number(textBillingForm.value.yuan_to_minutes_rate)
+                        });
+                        await loadInvestorData();
+                        alert('文字计费已保存');
                     } catch (err) {
                         alert(err.message || String(err));
                     } finally {
@@ -1430,6 +1537,7 @@
                         status: 'on_sale',
                         sort_order: 0
                     };
+                    coverFile.value = null;
                     skuRows.value = [emptySkuRow()];
                     showProductModal.value = true;
                 };
@@ -1443,6 +1551,7 @@
                         status: p.status || 'on_sale',
                         sort_order: p.sort_order || 0
                     };
+                    coverFile.value = null;
                     const skus = p.skus || [];
                     skuRows.value = skus.length
                         ? skus.map(s => ({
@@ -1494,10 +1603,22 @@
                             if (row.sku_id) sku.sku_id = row.sku_id;
                             skus.push(sku);
                         }
+                        let coverUrl = productForm.value.cover_url || '';
+                        if (coverFile.value) {
+                            const entityId = productForm.value.product_id
+                                || ('tmp_' + Date.now().toString(36));
+                            const uploaded = await uploadFileToQiniu(
+                                coverFile.value,
+                                'mall_product_cover',
+                                entityId
+                            );
+                            coverUrl = uploaded.key;
+                            productForm.value.cover_url = coverUrl;
+                        }
                         const payload = {
                             name: productForm.value.name,
                             description: productForm.value.description || '',
-                            cover_url: productForm.value.cover_url || '',
+                            cover_url: coverUrl,
                             status: productForm.value.status || 'on_sale',
                             sort_order: Number(productForm.value.sort_order) || 0,
                             skus
@@ -1507,6 +1628,7 @@
                         }
                         await apiRequest('/api/mall/products', 'POST', payload);
                         showProductModal.value = false;
+                        coverFile.value = null;
                         await loadMallData();
                     } catch (err) {
                         alert(err.message);
@@ -1595,9 +1717,13 @@
                     gachaWeightsJson,
                     loadInvestorData,
                     saveGachaSettings,
+                    textBillingForm,
+                    saveTextBillingSettings,
                     mallProductMinPrice,
                     showProductModal,
                     productForm,
+                    coverFile,
+                    onCoverFileChange,
                     skuRows,
                     openAddProductModal,
                     editProduct,

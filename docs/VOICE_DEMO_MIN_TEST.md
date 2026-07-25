@@ -1097,6 +1097,13 @@ Docker 部署改 `.env` 后须 `bash scripts/redeploy_docker.sh`（compose 已�
 
 ```bash
 docker exec shuxin-voice-demo-pg env | grep -E 'DMX_|SHUXIN_LLM_DEFAULT|SHUXIN_VOICE_TEST'
+docker exec shuxin-voice-demo-pg python /app/scripts/probe_dmx_admin.py
+```
+
+`probe_dmx_admin.py` 应对 `GET/POST /api/token/` 返回非 401。若 `AUTH_UNAUTHORIZED` / `invalid access token`，更新 `.env` 中有效的 `DMX_SYSTEM_TOKEN`（管理端 access token）后 `--skip-build` 重部署。微信登录后会调用 `ensure_user_dmx_llm` 为用户签发子 key；存量无钥用户可：
+
+```bash
+docker exec shuxin-voice-demo-pg python /app/scripts/backfill_dmx_user_keys.py
 ```
 
 ### 19.2 新用户 DMX 开通（mock 微信）
@@ -1180,6 +1187,17 @@ PYTHONPATH=src pytest tests/test_dmx_client.py tests/test_voice_wechat_login_api
 ```
 
 （含 DMX 开通、增量充值 admin route 用例。）
+
+### 19.7 用户 LLM api_key 加密落库
+
+与设备密钥共用 `SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY`。`users.llm_config.api_key` 存 `enc:v1:` + Fernet 密文；读写经 `seal_llm_config_for_storage` / `unseal_llm_config_for_use`。存量明文回迁：
+
+```bash
+docker exec shuxin-voice-demo-pg python /app/scripts/migrate_encrypt_llm_api_keys.py --dry-run
+docker exec shuxin-voice-demo-pg python /app/scripts/migrate_encrypt_llm_api_keys.py
+```
+
+验收：DB 抽查 `api_key` 以 `enc:v1:` 开头、无裸 `sk-`；文字/soft 语音仍可用。
 
 ## 15. 最终通过标准
 

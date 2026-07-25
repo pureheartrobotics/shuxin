@@ -1,7 +1,7 @@
 # Spec: 陪伴点展示换皮（账本仍为分钟）
 
 **日期：** 2026-07-24  
-**状态：** 待实现  
+**状态：** 已实现  
 **关联：** [`docs/PRICING_STRATEGY.md`](../../PRICING_STRATEGY.md)、文字计费 [`src/shuxin/voice/billing/text_billing.py`](../../../src/shuxin/voice/billing/text_billing.py)、额度门控 [`docs/VOICE_QUOTA_GATE_TEST.md`](../../VOICE_QUOTA_GATE_TEST.md)
 
 ## 目标
