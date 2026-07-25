@@ -6,13 +6,29 @@ import json
 import logging
 import secrets
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from shuxin.core.identity import IdentityEngine, MBTI_DESCRIPTIONS
 from shuxin.voice.billing.gacha import merge_gacha_settings, weighted_pick_mbti
 from shuxin.voice.billing.text_billing import merge_text_billing_settings
+from shuxin.voice.cdn.qiniu import public_url, qiniu_config
 from shuxin.voice.config.mbti_reveal import mbti_display_name
 from shuxin.voice.config.config import default_device_tts_config, default_tencent_stt_config
+from shuxin.voice.engagement.soft_loops import (
+    beijing_day_start_utc,
+    care_key_for,
+    is_care_due,
+)
+from shuxin.voice.engagement.relationship import (
+    build_relationship_payload,
+    default_relationship_payload,
+    evaluate_milestones,
+    pick_care_message_for_stage,
+    read_bond_level,
+    stage_for_bond,
+    streak_nudge_for_stage,
+)
 from shuxin.voice.persistence.base_repo import BaseRepository, _hash_secret
 from shuxin.voice.persistence.device_secret_crypto import (
     encrypt_device_secret,
@@ -23,6 +39,15 @@ logger = logging.getLogger("shuxin.voice.companions")
 
 GACHA_SETTING_KEY = "investor.gacha"
 TEXT_BILLING_SETTING_KEY = "investor.text_billing"
+
+
+def _mbti_avatar_url(mbti: str) -> str:
+    """CDN URL for MBTI art key ``zzx_xcx/gacha/mbti/{CODE}.png``; empty when CDN not configured."""
+    code = str(mbti or "").strip().upper()
+    if not code or not qiniu_config().get("cdn_domain"):
+        return ""
+    return public_url(f"zzx_xcx/gacha/mbti/{code}.png")
+
 GACHA_PLAN_ID = "gacha_draw"
 SOFT_DEVICE_PREFIX = "soft_"
 
@@ -119,7 +144,7 @@ class CompanionRepository(BaseRepository):
         )
 
     def _default_display_name(self, mbti: str) -> str:
-        engine = IdentityEngine(mbti_type=mbti)
+        engine = IdentityEngine(mbti=mbti)
         tagline = engine.get_description() or MBTI_DESCRIPTIONS.get(mbti, mbti)
         return mbti_display_name(tagline, mbti)
 
@@ -144,7 +169,7 @@ class CompanionRepository(BaseRepository):
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT companion_id, mbti, display_name, source, created_at
+                SELECT companion_id, mbti, display_name, source, created_at, metadata
                 FROM user_companions
                 WHERE user_id = $1
                 ORDER BY created_at DESC
@@ -153,16 +178,138 @@ class CompanionRepository(BaseRepository):
             )
         items = []
         for row in rows:
+            cid = str(row["companion_id"])
+            try:
+                eng = await self.get_engagement_for_user(
+                    user_id=user_id, companion_id=cid
+                )
+            except Exception as exc:
+                logger.info("per-companion engagement failed: %s", exc)
+                eng = {
+                    "relationship": default_relationship_payload(),
+                    "care": {"unread": False, "message": "", "care_key": ""},
+                }
             items.append(
                 {
-                    "companion_id": row["companion_id"],
+                    "companion_id": cid,
                     "mbti": row["mbti"],
                     "display_name": row["display_name"],
+                    "avatar_url": _mbti_avatar_url(str(row["mbti"] or "")),
                     "source": row["source"],
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "relationship": eng.get("relationship") or default_relationship_payload(),
+                    "care": eng.get("care")
+                    or {"unread": False, "message": "", "care_key": ""},
                 }
             )
-        return {"items": items}
+        # User-level quota snapshot (shared soft device)
+        engagement = await self.get_engagement_for_user(user_id=user_id)
+        return {"items": items, "engagement": engagement}
+
+    async def _get_companion_metadata(
+        self, conn, *, user_id: str, companion_id: str
+    ) -> dict[str, Any]:
+        row = await conn.fetchrow(
+            """
+            SELECT metadata FROM user_companions
+            WHERE companion_id = $1 AND user_id = $2
+            """,
+            companion_id,
+            user_id,
+        )
+        if not row:
+            return {}
+        return _json_obj(row["metadata"])
+
+    async def _set_companion_metadata(
+        self, conn, *, user_id: str, companion_id: str, metadata: dict[str, Any]
+    ) -> None:
+        await conn.execute(
+            """
+            UPDATE user_companions
+            SET metadata = $3::jsonb
+            WHERE companion_id = $1 AND user_id = $2
+            """,
+            companion_id,
+            user_id,
+            json.dumps(metadata, ensure_ascii=False),
+        )
+
+    def _user_home(self, user_id: str):
+        from shuxin.core.config import get_shuxin_home
+
+        return get_shuxin_home() / "users" / str(user_id)
+
+    async def after_companion_turn(
+        self,
+        *,
+        user_id: str,
+        companion_id: str,
+        voice_turn: bool = False,
+    ) -> dict[str, Any]:
+        """Evaluate milestones after a text/voice turn; never raises to callers."""
+        try:
+            return await self._after_companion_turn_inner(
+                user_id=user_id,
+                companion_id=companion_id,
+                voice_turn=voice_turn,
+            )
+        except Exception as exc:
+            logger.info("after_companion_turn failed: %s", exc)
+            return {}
+
+    async def _after_companion_turn_inner(
+        self,
+        *,
+        user_id: str,
+        companion_id: str,
+        voice_turn: bool = False,
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT created_at, metadata FROM user_companions
+                WHERE companion_id = $1 AND user_id = $2
+                """,
+                companion_id,
+                user_id,
+            )
+            if not row:
+                return {}
+            meta = _json_obj(row["metadata"])
+            if voice_turn:
+                meta["voice_turns"] = int(meta.get("voice_turns") or 0) + 1
+            text_turns = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM companion_text_turns
+                    WHERE user_id = $1 AND companion_id = $2
+                    """,
+                    user_id,
+                    companion_id,
+                )
+                or 0
+            )
+            total_turns = text_turns + int(meta.get("voice_turns") or 0)
+            bond = read_bond_level(self._user_home(user_id), companion_id)
+            stage_id, _ = stage_for_bond(bond)
+            prev_stage = str(meta.get("last_stage_id") or "")
+            milestones = meta.get("milestones") if isinstance(meta.get("milestones"), dict) else {}
+            care_acked = bool(meta.get("engagement_care_ack"))
+            updated, _newly = evaluate_milestones(
+                milestones=milestones,
+                created_at=row["created_at"],
+                total_turns=total_turns,
+                bond_level=bond,
+                previous_stage_id=prev_stage,
+                care_acked=care_acked,
+            )
+            meta["milestones"] = updated
+            meta["last_stage_id"] = stage_id
+            await self._set_companion_metadata(
+                conn, user_id=user_id, companion_id=companion_id, metadata=meta
+            )
+        return meta
 
     async def rename_companion(
         self, *, session_token: str, companion_id: str, display_name: str
@@ -189,6 +336,7 @@ class CompanionRepository(BaseRepository):
             "companion_id": row["companion_id"],
             "mbti": row["mbti"],
             "display_name": row["display_name"],
+            "avatar_url": _mbti_avatar_url(str(row["mbti"] or "")),
             "source": row["source"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
@@ -221,6 +369,33 @@ class CompanionRepository(BaseRepository):
                 soft_id,
             )
             if existing:
+                has_binding = await conn.fetchval(
+                    """
+                    SELECT 1 FROM device_bindings
+                    WHERE device_id = $1 AND user_id = $2 AND status = 'active'
+                    LIMIT 1
+                    """,
+                    soft_id,
+                    user_id,
+                )
+                if not has_binding:
+                    await conn.execute(
+                        """
+                        INSERT INTO device_bindings (binding_id, user_id, device_id, status)
+                        VALUES ($1, $2, $3, 'active')
+                        """,
+                        f"bind_{uuid.uuid4().hex[:20]}",
+                        user_id,
+                        soft_id,
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET status = 'bound', updated_at = now()
+                        WHERE device_id = $1
+                        """,
+                        soft_id,
+                    )
                 return {"device_id": soft_id, "created": False, "device_secret": None}
 
             require_device_secret_encryption()
@@ -239,11 +414,11 @@ class CompanionRepository(BaseRepository):
                 INSERT INTO devices (
                     device_id, auth_mode, device_secret_hash, device_secret_encrypted,
                     stt_config, tts_config,
-                    status, enabled, note, metadata, bound_user_id, updated_at
+                    status, enabled, note, metadata, updated_at
                 )
                 VALUES (
                     $1, 'per_device_secret', $2, $3, $4::jsonb, $5::jsonb,
-                    'bound', true, $6, $7::jsonb, $8, now()
+                    'bound', true, $6, $7::jsonb, now()
                 )
                 """,
                 soft_id,
@@ -253,10 +428,19 @@ class CompanionRepository(BaseRepository):
                 tts_config,
                 "investor soft device",
                 json.dumps(metadata, ensure_ascii=False),
-                user_id,
             )
             await conn.execute(
                 "INSERT INTO device_status (device_id) VALUES ($1) ON CONFLICT (device_id) DO NOTHING",
+                soft_id,
+            )
+            binding_id = f"bind_{uuid.uuid4().hex[:20]}"
+            await conn.execute(
+                """
+                INSERT INTO device_bindings (binding_id, user_id, device_id, status)
+                VALUES ($1, $2, $3, 'active')
+                """,
+                binding_id,
+                user_id,
                 soft_id,
             )
             return {"device_id": soft_id, "created": True, "device_secret": device_secret}
@@ -295,7 +479,7 @@ class CompanionRepository(BaseRepository):
                 SET device_secret_hash = $2,
                     device_secret_encrypted = $3,
                     metadata = $4::jsonb,
-                    bound_user_id = $5,
+                    status = 'bound',
                     updated_at = now()
                 WHERE device_id = $1
                 """,
@@ -303,8 +487,26 @@ class CompanionRepository(BaseRepository):
                 secret_hash,
                 encrypted,
                 json.dumps(meta, ensure_ascii=False),
+            )
+            has_binding = await conn.fetchval(
+                """
+                SELECT 1 FROM device_bindings
+                WHERE device_id = $1 AND user_id = $2 AND status = 'active'
+                LIMIT 1
+                """,
+                soft_id,
                 user_id,
             )
+            if not has_binding:
+                await conn.execute(
+                    """
+                    INSERT INTO device_bindings (binding_id, user_id, device_id, status)
+                    VALUES ($1, $2, $3, 'active')
+                    """,
+                    f"bind_{uuid.uuid4().hex[:20]}",
+                    user_id,
+                    soft_id,
+                )
         if self.parent is not None:
             try:
                 self.parent._clear_auth_cache(soft_id)
@@ -392,6 +594,7 @@ class CompanionRepository(BaseRepository):
                 "companion_id": companion_id,
                 "mbti": mbti,
                 "display_name": display_name,
+                "avatar_url": _mbti_avatar_url(mbti),
                 "source": source,
             },
             "free_gacha_remaining": remaining if source == "free_gacha" else (
@@ -470,7 +673,216 @@ class CompanionRepository(BaseRepository):
                 float(cost_minutes),
             )
 
+    async def get_engagement_for_user(
+        self,
+        *,
+        user_id: str,
+        companion_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Quota snapshot + care unread + today streak + relationship for soft UX."""
+        soft = await self.ensure_soft_device(user_id=user_id)
+        soft_id = soft["device_id"]
+        quota: dict[str, Any] = {}
+        try:
+            quota = await self.parent.get_device_quota(soft_id)
+        except Exception as exc:
+            logger.info("engagement quota lookup failed: %s", exc)
+            quota = {
+                "remain_yuan": 0.0,
+                "exhausted": True,
+                "daily_allowance_left": 0.0,
+            }
+
+        day_start = beijing_day_start_utc()
+        cid = str(companion_id or "").strip() or None
+        async with self.pool.acquire() as conn:
+            if cid:
+                last_turn = await conn.fetchval(
+                    """
+                    SELECT MAX(created_at) FROM companion_text_turns
+                    WHERE user_id = $1 AND companion_id = $2
+                    """,
+                    user_id,
+                    cid,
+                )
+                today_companion_turns = int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM companion_text_turns
+                        WHERE user_id = $1 AND companion_id = $2 AND created_at >= $3
+                        """,
+                        user_id,
+                        cid,
+                        day_start,
+                    )
+                    or 0
+                )
+                text_turns_all = int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM companion_text_turns
+                        WHERE user_id = $1 AND companion_id = $2
+                        """,
+                        user_id,
+                        cid,
+                    )
+                    or 0
+                )
+                crow = await conn.fetchrow(
+                    """
+                    SELECT created_at, metadata FROM user_companions
+                    WHERE companion_id = $1 AND user_id = $2
+                    """,
+                    cid,
+                    user_id,
+                )
+                cmeta = _json_obj(crow["metadata"]) if crow else {}
+                created_at = crow["created_at"] if crow else None
+            else:
+                last_turn = await conn.fetchval(
+                    """
+                    SELECT MAX(created_at) FROM companion_text_turns
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                )
+                today_companion_turns = int(
+                    await conn.fetchval(
+                        """
+                        SELECT COUNT(*) FROM companion_text_turns
+                        WHERE user_id = $1 AND created_at >= $2
+                        """,
+                        user_id,
+                        day_start,
+                    )
+                    or 0
+                )
+                text_turns_all = 0
+                cmeta = {}
+                created_at = None
+                # Fall back to user-level care ack for list without companion
+                umeta = await self._get_user_metadata(conn, user_id)
+                cmeta = {"engagement_care_ack": umeta.get("engagement_care_ack")}
+
+            today_turns = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM companion_text_turns
+                    WHERE user_id = $1 AND created_at >= $2
+                    """,
+                    user_id,
+                    day_start,
+                )
+                or 0
+            )
+
+        now = datetime.now(timezone.utc)
+        last_dt = last_turn
+        if isinstance(last_dt, datetime) and last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        due = is_care_due(last_dt, now=now)
+        key = care_key_for(last_dt)
+        acked = str(cmeta.get("engagement_care_ack") or "")
+        unread = bool(due and acked != key)
+
+        exhausted = bool(quota.get("exhausted"))
+        bond = 30.0
+        milestones: dict[str, Any] = {}
+        if cid:
+            try:
+                bond = read_bond_level(self._user_home(user_id), cid)
+            except Exception:
+                bond = 30.0
+            milestones = (
+                cmeta.get("milestones")
+                if isinstance(cmeta.get("milestones"), dict)
+                else {}
+            )
+
+        relationship = build_relationship_payload(bond_level=bond, milestones=milestones)
+        stage_id = str(relationship.get("stage_id") or "first_meet")
+        milestone_label = ""
+        latest = relationship.get("latest_milestone") or {}
+        if isinstance(latest, dict):
+            milestone_label = str(latest.get("label") or "")
+
+        if unread:
+            care_msg = pick_care_message_for_stage(
+                key, stage_id, milestone_label=milestone_label
+            )
+        else:
+            care_msg = ""
+
+        nudge = streak_nudge_for_stage(
+            today_companion_turns,
+            stage_id,
+            quota_exhausted=exhausted,
+        )
+
+        return {
+            "quota": {
+                "remain_yuan": float(quota.get("remain_yuan") or 0),
+                "exhausted": exhausted,
+                "daily_allowance_left": float(quota.get("daily_allowance_left") or 0),
+                "subscription_minutes_left": float(
+                    quota.get("subscription_minutes_left") or 0
+                ),
+                "fuel_minutes_left": float(quota.get("fuel_minutes_left") or 0),
+            },
+            "care": {
+                "unread": unread,
+                "message": care_msg if unread else "",
+                "care_key": key,
+            },
+            "streak": {
+                "today_turns": today_turns,
+                "today_companion_turns": today_companion_turns,
+                "nudge": nudge or "",
+            },
+            "relationship": relationship,
+        }
+
+    async def ack_engagement_care(
+        self,
+        *,
+        session_token: str,
+        care_key: str,
+        companion_id: str = "",
+    ) -> dict[str, Any]:
+        user_id = await self._user_id_from_session(session_token)
+        selected = str(care_key or "").strip()
+        if not selected:
+            raise ValueError("care_key is required")
+        cid = str(companion_id or "").strip()
+        async with self.pool.acquire() as conn:
+            if cid:
+                meta = await self._get_companion_metadata(
+                    conn, user_id=user_id, companion_id=cid
+                )
+                meta["engagement_care_ack"] = selected
+                milestones = meta.get("milestones") if isinstance(meta.get("milestones"), dict) else {}
+                updated, _ = evaluate_milestones(
+                    milestones=milestones,
+                    unlock_care_ack=True,
+                    care_acked=True,
+                )
+                meta["milestones"] = updated
+                await self._set_companion_metadata(
+                    conn, user_id=user_id, companion_id=cid, metadata=meta
+                )
+            else:
+                meta = await self._get_user_metadata(conn, user_id)
+                meta["engagement_care_ack"] = selected
+                await self._set_user_metadata(conn, user_id, meta)
+        return {"ok": True, "care_key": selected, "companion_id": cid}
+
+    async def get_engagement(self, *, session_token: str, companion_id: str = "") -> dict[str, Any]:
+        user_id = await self._user_id_from_session(session_token)
+        cid = str(companion_id or "").strip() or None
+        return await self.get_engagement_for_user(user_id=user_id, companion_id=cid)
+
     async def investor_metrics(self) -> dict[str, Any]:
+        day_start = beijing_day_start_utc()
         async with self.pool.acquire() as conn:
             registered = int(
                 await conn.fetchval(
@@ -515,6 +927,67 @@ class CompanionRepository(BaseRepository):
             text_turns = int(
                 await conn.fetchval("SELECT COUNT(*) FROM companion_text_turns") or 0
             )
+            text_turns_today = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM companion_text_turns
+                    WHERE created_at >= $1
+                    """,
+                    day_start,
+                )
+                or 0
+            )
+            active_chat_users_today = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(DISTINCT user_id) FROM companion_text_turns
+                    WHERE created_at >= $1
+                    """,
+                    day_start,
+                )
+                or 0
+            )
+            # Users whose soft device burned today's allowance (date=today BJ, used > 0)
+            # Approximation via devices.daily_allowance_*: soft_* rows with used seconds
+            # and date matching Beijing calendar day.
+            from shuxin.voice.engagement.soft_loops import BEIJING
+
+            today_bj = datetime.now(BEIJING).date()
+            daily_allowance_exhausted_users = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(DISTINCT b.user_id)
+                    FROM devices d
+                    JOIN device_bindings b
+                      ON b.device_id = d.device_id AND b.status = 'active'
+                    WHERE d.device_id LIKE 'soft_%'
+                      AND d.deleted_at IS NULL
+                      AND d.daily_allowance_date = $1
+                      AND COALESCE(d.daily_allowance_seconds_used, 0) > 0
+                      AND COALESCE(d.fuel_minutes_balance, 0) <= 0
+                      AND (
+                        COALESCE(d.subscription_minutes_limit, 0)
+                        - COALESCE(d.subscription_minutes_used, 0)
+                      ) <= 0
+                    """,
+                    today_bj,
+                )
+                or 0
+            )
+            # Paid after free-gacha exhausted (existing) + paid users who also chat-exhausted
+            paid_after_quota_users = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(DISTINCT u.user_id)
+                    FROM users u
+                    JOIN user_companions c
+                      ON c.user_id = u.user_id AND c.source = 'paid_gacha'
+                    WHERE u.deleted_at IS NULL
+                      AND COALESCE((u.metadata->>'free_gacha_remaining')::int, 3) <= 0
+                    """
+                )
+                or 0
+            )
             voice_turns = 0
             try:
                 voice_turns = int(
@@ -529,6 +1002,11 @@ class CompanionRepository(BaseRepository):
             except Exception:
                 voice_turns = 0
         conversion = (paid_users / exhausted) if exhausted > 0 else 0.0
+        avg_text_turns_per_active_today = (
+            round(text_turns_today / active_chat_users_today, 2)
+            if active_chat_users_today > 0
+            else 0.0
+        )
         return {
             "registered_users": registered,
             "companions_total": companions,
@@ -538,5 +1016,15 @@ class CompanionRepository(BaseRepository):
             "free_exhausted_users": exhausted,
             "paid_draw_conversion": round(conversion, 4),
             "text_turns": text_turns,
+            "text_turns_today": text_turns_today,
+            "active_chat_users_today": active_chat_users_today,
+            "avg_text_turns_per_active_today": avg_text_turns_per_active_today,
+            "daily_allowance_exhausted_users": daily_allowance_exhausted_users,
+            "paid_after_free_gacha_users": paid_after_quota_users,
             "voice_turns_proxy": voice_turns,
+            "metric_notes": {
+                "avg_text_turns_per_active_today": "C: 当日有文字对话的用户人均轮次（北京日）",
+                "paid_draw_conversion": "D: 免费抽用尽用户中产生过付费抽的比例",
+                "daily_allowance_exhausted_users": "当日 soft 设备低保已用且订阅/加油包无剩余（近似）",
+            },
         }

@@ -729,6 +729,20 @@ class _VoiceWebSocketSession:
                     tts_model=tts_model
                 )
 
+            if (
+                self.companion_id
+                and self.user_id
+                and hasattr(self.repo, "companions")
+                and str(self.device_id or "").startswith("soft_")
+            ):
+                asyncio.create_task(
+                    self.repo.companions.after_companion_turn(
+                        user_id=self.user_id,
+                        companion_id=self.companion_id,
+                        voice_turn=True,
+                    )
+                )
+
             asyncio.create_task(self.repo.compress_if_needed(self.user_settings))
             if self.user_settings is not None:
                 asyncio.create_task(
@@ -754,7 +768,12 @@ class _VoiceWebSocketSession:
             )
         except Exception as exc:
             err_msg = str(exc)
-            if err_msg == QUOTA_EXHAUSTED_MESSAGE or "额度已用尽" in err_msg or "quota" in err_msg.lower():
+            if (
+                err_msg == QUOTA_EXHAUSTED_MESSAGE
+                or "额度已用尽" in err_msg
+                or "陪伴点已用尽" in err_msg
+                or "quota" in err_msg.lower()
+            ):
                 await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
             else:
                 await self._send_json({"type": "error", "message": err_msg})
@@ -868,7 +887,12 @@ class _VoiceWebSocketSession:
             )
         except Exception as exc:
             err_msg = str(exc)
-            if err_msg == QUOTA_EXHAUSTED_MESSAGE or "额度已用尽" in err_msg or "quota" in err_msg.lower():
+            if (
+                err_msg == QUOTA_EXHAUSTED_MESSAGE
+                or "额度已用尽" in err_msg
+                or "陪伴点已用尽" in err_msg
+                or "quota" in err_msg.lower()
+            ):
                 await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
             else:
                 await self._send_json({"type": "error", "message": err_msg})
@@ -994,7 +1018,8 @@ class _VoiceWebSocketSession:
 
 
     def _is_web_demo_client(self) -> bool:
-        return (self.client_id or "web-demo") == "web-demo"
+        cid = self.client_id or "web-demo"
+        return cid in {"web-demo", "soft-miniprogram", "miniprogram"}
 
     def _uses_opus_downlink(self) -> bool:
         if self._is_web_demo_client():
@@ -1069,11 +1094,29 @@ class _VoiceWebSocketSession:
             )
         if self.device is None:
             self.device = await self.repo.get_device(self.device_id)
+        self.device.llm = merge_llm_device_config(
+            self.device.llm,
+            default_platform_llm_config(),
+        )
         if self.user_settings and self.user_settings.llm_config:
             self.device.llm = merge_llm_device_config(
                 self.device.llm,
                 self.user_settings.llm_config,
             )
+        if not str(self.device.llm.api_key or "").strip():
+            from shuxin.core.config import Config
+
+            fallback = Config.load()
+            if fallback.llm.api_key:
+                self.device.llm = merge_llm_device_config(
+                    self.device.llm,
+                    {
+                        "provider": fallback.llm.provider,
+                        "model": fallback.llm.model,
+                        "base_url": fallback.llm.base_url,
+                        "api_key": fallback.llm.api_key,
+                    },
+                )
         if self.agent is None:
             if hasattr(self.repo, "assert_device_quota_available"):
                 await self.repo.assert_device_quota_available(self.device_id)
@@ -1096,6 +1139,7 @@ class _VoiceWebSocketSession:
                 self.device,
                 user_home=self.audio_store.user_shuxin_home(),
                 agent=self.agent_record,
+                companion_id=self.companion_id,
             )
             self.agent.context.metadata["channel"] = "voice"
             self.agent.context.metadata["agent_id"] = self.agent_record.agent_id

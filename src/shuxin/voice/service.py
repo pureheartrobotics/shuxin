@@ -83,10 +83,16 @@ class VoiceService:
         user_home: Path | None = None,
         *,
         agent: AgentRecord | None = None,
+        companion_id: str | None = None,
     ) -> Agent:
         """根据设备和用户目录创建 Agent 实例。"""
         return Agent(
-            config=self._build_agent_config(device, user_home=user_home, agent=agent)
+            config=self._build_agent_config(
+                device,
+                user_home=user_home,
+                agent=agent,
+                companion_id=companion_id,
+            )
         )
 
     def build_agent_config(
@@ -95,9 +101,15 @@ class VoiceService:
         user_home: Path | None = None,
         *,
         agent: AgentRecord | None = None,
+        companion_id: str | None = None,
     ) -> Config:
         """构建 Agent 配置，保留给测试直接断言配置合成结果。"""
-        return self._build_agent_config(device, user_home=user_home, agent=agent)
+        return self._build_agent_config(
+            device,
+            user_home=user_home,
+            agent=agent,
+            companion_id=companion_id,
+        )
 
     def _build_agent_config(
         self,
@@ -105,13 +117,22 @@ class VoiceService:
         user_home: Path | None = None,
         *,
         agent: AgentRecord | None = None,
+        companion_id: str | None = None,
     ) -> Config:
         """把设备级 LLM 配置覆盖到全局配置上。"""
         config = Config.load(self.config_path)
         if user_home is not None:
             # Web 多用户场景必须隔离 shuxin_home，否则长期记忆和陪伴状态会串用户。
             config.shuxin_home = str(user_home)
-            config.companion.data_dir = str(user_home / "companion")
+            cid = str(companion_id or "").strip()
+            if cid:
+                from shuxin.voice.engagement.relationship import ensure_companion_data_dir
+
+                config.companion.data_dir = str(
+                    ensure_companion_data_dir(Path(user_home), cid)
+                )
+            else:
+                config.companion.data_dir = str(user_home / "companion")
         if agent is not None and agent.soul_path.strip():
             config.soul.soul_path = agent.soul_path.strip()
         if device.llm.provider:

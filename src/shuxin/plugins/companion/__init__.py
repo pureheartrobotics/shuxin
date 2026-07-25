@@ -109,6 +109,15 @@ class CompanionPlugin:
         # 注入用户画像
         profile_context = self.user_model.get_profile_context()
 
+        # 关系阶段口吻（防空阶段）
+        stage_tone = ""
+        try:
+            from shuxin.voice.engagement.relationship import stage_tone_prompt
+
+            stage_tone = stage_tone_prompt(float(self.user_model.relationship.bond_level))
+        except Exception:
+            stage_tone = ""
+
         # 注入自尊状态
         esteem_status = self.self_esteem.get_status_text()
         growth_context = self._get_growth_context()
@@ -165,12 +174,16 @@ class CompanionPlugin:
         micro_anchor_block = (
             f"## 风格微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
         )
+        stage_tone_block = (
+            f"## 关系阶段口吻\n\n{stage_tone}\n\n" if stage_tone.strip() else ""
+        )
         return (
             location_block
             + low_confidence_hint
             + map_tools_hint
             + voice_style_hint
             + micro_anchor_block
+            + stage_tone_block
             + f"## 初心当前状态\n\n"
             + f"{esteem_status}\n\n"
             + f"{emotion_context}\n\n"
