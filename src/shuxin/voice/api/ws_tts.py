@@ -96,7 +96,7 @@ class TtsSentenceSegmenter:
         )
         clean_text = prepare_speakable_text(text)
         if not clean_text:
-            logger.info(
+            logger.warning(
                 "[SOFT-VOICE] tts_sentence idx=%s speakable_len=0 status=skip device=%s",
                 sentence_index,
                 self.session.device_id,
@@ -126,7 +126,7 @@ class TtsSentenceSegmenter:
             else:
                 await self.session._send_downlink_bytes(payload)
                 send_bytes = len(payload)
-            logger.info(
+            logger.warning(
                 "[SOFT-VOICE] tts_sentence idx=%s speakable_len=%s status=ok send_bytes=%s device=%s",
                 sentence_index,
                 len(clean_text),
