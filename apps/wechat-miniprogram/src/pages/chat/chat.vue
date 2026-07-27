@@ -399,6 +399,8 @@ async function startContinuousVoice() {
   });
   try {
     await voice.connect({ conversationMode: "continuous" });
+    // 双保险：connect 内已 setupRecorder；若 onReady 早于 recorder 竞态被 pending 吃掉，这里再开麦
+    voice.startListen();
   } catch (e: any) {
     mode.value = "text";
     statusHint.value = e?.message || "语音连接失败";

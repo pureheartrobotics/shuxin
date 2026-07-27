@@ -3,38 +3,20 @@
  * continuous 模式：sentence_final 由服务端出轮；播音时关麦，播完再听。
  * 协议对齐 /voice-demo：hello.ok 后才可 listen；agent/delta 文字流 + 分句 mp3。
  */
+import {
+  afterRecorderReady,
+  coerceBinaryFrame,
+  requestStartListen,
+  tryDecodeUtf8JsonText,
+  type ListenGateState,
+} from "./voice-ws-decode";
+
 const API_BASE = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
 
 function wsBaseFromHttp(httpBase: string): string {
   if (httpBase.startsWith("https://")) return "wss://" + httpBase.slice("https://".length);
   if (httpBase.startsWith("http://")) return "ws://" + httpBase.slice("http://".length);
   return httpBase;
-}
-
-function toArrayBuffer(raw: unknown): ArrayBuffer | null {
-  if (!raw) return null;
-  if (raw instanceof ArrayBuffer) return raw;
-  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(raw as any)) {
-    const view = raw as ArrayBufferView;
-    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-  }
-  // 部分微信运行时把二进制帧编成 base64 字符串
-  if (typeof raw === "string" && raw.length > 0 && !raw.trimStart().startsWith("{")) {
-    try {
-      const binary = uni.base64ToArrayBuffer
-        ? uni.base64ToArrayBuffer(raw)
-        : (() => {
-            const chars = (globalThis as any).atob ? (globalThis as any).atob(raw) : "";
-            const bytes = new Uint8Array(chars.length);
-            for (let i = 0; i < chars.length; i++) bytes[i] = chars.charCodeAt(i);
-            return bytes.buffer;
-          })();
-      return binary as ArrayBuffer;
-    } catch {
-      return null;
-    }
-  }
-  return null;
 }
 
 export type SoftVoiceHandlers = {
@@ -69,6 +51,8 @@ export class SoftVoiceSession {
   /** 有未确认错误时，tts idle 不要盖成「请继续说」 */
   private stickyError = false;
   private forceRelistenPending = false;
+  /** ready 时 recorder 未就绪 / 暂不可听，补发 startListen */
+  private pendingListen = false;
 
   constructor(
     creds: { device_id: string; device_secret: string },
@@ -85,6 +69,8 @@ export class SoftVoiceSession {
     if (this.socketTask) return;
     this.conversationMode = opts?.conversationMode || "push_to_talk";
     this.autoResumeListen = this.conversationMode === "continuous";
+    // 必须在等 hello.ok / onReady→startListen 之前就绪，否则首轮静默丢麦
+    this.setupRecorder();
     const url = `${wsBaseFromHttp(API_BASE.replace(/\/$/, ""))}/ws/voice`;
     await new Promise<void>((resolve, reject) => {
       const task = uni.connectSocket({
@@ -117,16 +103,54 @@ export class SoftVoiceSession {
         if (!this.ready) reject(new Error("voice hello timeout"));
       }, 8000);
     });
-    this.setupRecorder();
+    if (this.pendingListen) {
+      this.startListen();
+    }
+  }
+
+  private listenGateSnapshot(): ListenGateState {
+    return {
+      ready: this.ready,
+      hasRecorder: !!this.recorder,
+      listening: this.listening,
+      playing: this.playing,
+      sessionTtsActive: this.sessionTtsActive,
+      pendingListen: this.pendingListen,
+    };
+  }
+
+  private applyListenGate(next: ListenGateState, emitListenStart: boolean) {
+    this.pendingListen = next.pendingListen;
+    if (!emitListenStart) return;
+    this.listening = true;
+    this.forceRelistenPending = false;
+    this.sentenceChunks = [];
+    this.handlers.onBusy?.(true);
+    this.socketTask?.send({ data: JSON.stringify({ type: "listen", state: "start" }) });
+    this.recorder?.start({
+      format: "PCM",
+      sampleRate: 16000,
+      numberOfChannels: 1,
+      frameSize: 4,
+      // @ts-expect-error uni types vary by platform
+      encodeBitRate: 48000,
+    });
   }
 
   private handleMessage(raw: unknown) {
-    const binary = toArrayBuffer(raw);
+    const jsonText = tryDecodeUtf8JsonText(raw);
+    if (jsonText != null) {
+      this.handleJsonMessage(jsonText);
+      return;
+    }
+    const binary = coerceBinaryFrame(raw);
     if (binary) {
       this.sentenceChunks.push(binary);
       return;
     }
-    if (typeof raw !== "string") return;
+  }
+
+  private handleJsonMessage(raw: string) {
     let data: any;
     try {
       data = JSON.parse(raw);
@@ -138,6 +162,7 @@ export class SoftVoiceSession {
     if (t === "hello" && data.state === "ok") {
       this.ready = true;
       this.handlers.onReady?.();
+      if (this.pendingListen) this.startListen();
       return;
     }
     if (t === "hello" && data.state === "ready") {
@@ -199,7 +224,6 @@ export class SoftVoiceSession {
       return;
     }
     if (t === "error" || (t === "agent" && data.state === "error")) {
-      // tts_failed 后可能整段重试，不永久 sticky
       const kind = String(data.error_kind || "");
       const msg = String(data.message || data.error_kind || "voice error");
       if (kind === "tts_failed") {
@@ -214,6 +238,7 @@ export class SoftVoiceSession {
   }
 
   private setupRecorder() {
+    if (this.recorder) return;
     const rec = uni.getRecorderManager();
     this.recorder = rec;
     rec.onFrameRecorded((res) => {
@@ -225,25 +250,13 @@ export class SoftVoiceSession {
       this.listening = false;
       this.handlers.onBusy?.(false);
     });
+    const { state, emitListenStart } = afterRecorderReady(this.listenGateSnapshot());
+    this.applyListenGate(state, emitListenStart);
   }
 
   startListen() {
-    if (!this.ready || !this.recorder || this.listening || this.playing || this.sessionTtsActive) {
-      return;
-    }
-    this.listening = true;
-    this.forceRelistenPending = false;
-    this.sentenceChunks = [];
-    this.handlers.onBusy?.(true);
-    this.socketTask?.send({ data: JSON.stringify({ type: "listen", state: "start" }) });
-    this.recorder.start({
-      format: "PCM",
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      frameSize: 4,
-      // @ts-expect-error uni types vary by platform
-      encodeBitRate: 48000,
-    });
+    const { state, emitListenStart } = requestStartListen(this.listenGateSnapshot());
+    this.applyListenGate(state, emitListenStart);
   }
 
   stopListen() {
@@ -355,7 +368,6 @@ export class SoftVoiceSession {
       this.handlers.onTtsIdle?.();
     }
     if ((this.autoResumeListen || this.forceRelistenPending) && this.ready) {
-      // 强制再听：防止上一轮 playing/sessionTtsActive 时序导致漏 startListen
       this.forceRelistenPending = false;
       setTimeout(() => this.startListen(), 50);
     }
@@ -364,6 +376,7 @@ export class SoftVoiceSession {
   close() {
     this.autoResumeListen = false;
     this.forceRelistenPending = false;
+    this.pendingListen = false;
     this.sessionTtsActive = false;
     this.playQueue = [];
     try {
