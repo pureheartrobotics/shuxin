@@ -380,9 +380,14 @@ async function startContinuousVoice() {
       if (isQuotaExhaustedMessage(raw)) {
         promptQuotaPaywall(raw);
         hangUpVoice();
-      } else if (raw.includes("tts_failed") || raw.includes("语音合成")) {
+      } else if (
+        raw.includes("tts_failed") ||
+        raw.includes("tts_audio_missing") ||
+        raw.includes("语音合成")
+      ) {
         // 保留提示；不要被后续「请继续说」盖掉（voice-ws stickyError）
-        statusHint.value = mapped ? mapped.message : raw.includes("语音合成") ? raw : "语音播放失败";
+        statusHint.value =
+          mapped ? mapped.message : raw.includes("tts_audio_missing") ? "语音播放失败" : raw.includes("语音合成") ? raw : "语音播放失败";
       } else {
         statusHint.value = mapped ? mapped.message : message;
       }
