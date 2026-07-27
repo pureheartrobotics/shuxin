@@ -39,6 +39,8 @@ export class SoftVoiceSession {
   private deviceSecret: string;
   private companionId: string;
   private currentAudio: UniApp.InnerAudioContext | null = null;
+  /** 有未确认错误时，tts idle 不要盖成「请继续说」 */
+  private stickyError = false;
 
   constructor(
     creds: { device_id: string; device_secret: string },
@@ -121,11 +123,13 @@ export class SoftVoiceSession {
       return;
     }
     if (t === "agent" && data.state === "delta" && data.text) {
+      this.stickyError = false;
       this.handlers.onDelta?.(String(data.text));
       return;
     }
-    if (t === "agent" && data.state === "reply" && data.text) {
-      this.handlers.onReply?.(String(data.text));
+    if (t === "agent" && data.state === "reply") {
+      this.stickyError = false;
+      this.handlers.onReply?.(String(data.text || ""));
       return;
     }
     if (t === "tts" && data.state === "sentence_start") {
@@ -136,6 +140,10 @@ export class SoftVoiceSession {
       return;
     }
     if (t === "tts" && data.state === "sentence_stop") {
+      if (data.error_kind) {
+        this.stickyError = true;
+        this.handlers.onError?.(String(data.message || data.error_kind || "tts_failed"));
+      }
       void this.enqueueSentenceMp3();
       return;
     }
@@ -157,6 +165,7 @@ export class SoftVoiceSession {
       return;
     }
     if (t === "error" || (t === "agent" && data.state === "error")) {
+      this.stickyError = true;
       this.handlers.onError?.(String(data.message || data.error_kind || "voice error"));
       this.handlers.onBusy?.(false);
       this.sessionTtsActive = false;
@@ -287,7 +296,9 @@ export class SoftVoiceSession {
   private maybeResumeAfterTts() {
     if (this.sessionTtsActive || this.playing || this.playQueue.length) return;
     this.handlers.onBusy?.(false);
-    this.handlers.onTtsIdle?.();
+    if (!this.stickyError) {
+      this.handlers.onTtsIdle?.();
+    }
     if (this.autoResumeListen && this.ready) {
       this.startListen();
     }

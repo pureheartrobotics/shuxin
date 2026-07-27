@@ -361,10 +361,11 @@ async function startContinuousVoice() {
       }
     },
     onReply: (text) => {
+      const body = String(text || "").trim() || "（没有听清文字，请再说一次）";
       if (voiceAssistantIndex < 0) {
-        voiceAssistantIndex = pushMessage("assistant", text);
+        voiceAssistantIndex = pushMessage("assistant", body);
       } else if (!(messages.value[voiceAssistantIndex]?.text || "").trim()) {
-        setMessage(voiceAssistantIndex, text);
+        setMessage(voiceAssistantIndex, body);
       }
       voiceUserBubbleIndex = -1;
       void fetchEngagement(companionId.value).then(applyEngagement).catch(() => undefined);
@@ -379,6 +380,9 @@ async function startContinuousVoice() {
       if (isQuotaExhaustedMessage(raw)) {
         promptQuotaPaywall(raw);
         hangUpVoice();
+      } else if (raw.includes("tts_failed") || raw.includes("语音合成")) {
+        // 保留提示；不要被后续「请继续说」盖掉（voice-ws stickyError）
+        statusHint.value = mapped ? mapped.message : raw.includes("语音合成") ? raw : "语音播放失败";
       } else {
         statusHint.value = mapped ? mapped.message : message;
       }
