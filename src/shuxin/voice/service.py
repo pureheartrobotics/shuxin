@@ -86,13 +86,23 @@ class VoiceService:
         companion_id: str | None = None,
     ) -> Agent:
         """根据设备和用户目录创建 Agent 实例。"""
+        memory_data_dir: str | None = None
+        memory_user_id: str | None = None
+        cid = str(companion_id or "").strip()
+        if user_home is not None and cid:
+            companion_root = Path(user_home) / "companions" / cid
+            memory_data_dir = str(companion_root / "memory")
+            memory_user_id = f"{Path(user_home).name}::companion::{cid}"
         return Agent(
             config=self._build_agent_config(
                 device,
                 user_home=user_home,
                 agent=agent,
                 companion_id=companion_id,
-            )
+            ),
+            memory_data_dir=memory_data_dir,
+            memory_user_id=memory_user_id,
+            defer_mem0_writes=True,
         )
 
     def build_agent_config(
