@@ -126,15 +126,31 @@ export class SoftVoiceSession {
     this.forceRelistenPending = false;
     this.sentenceChunks = [];
     this.handlers.onBusy?.(true);
+    // 避免上一段 stop 未完成导致 start 静默失败、服务端收不到 PCM
+    try {
+      this.recorder?.stop();
+    } catch {
+      /* ignore */
+    }
     this.socketTask?.send({ data: JSON.stringify({ type: "listen", state: "start" }) });
-    this.recorder?.start({
-      format: "PCM",
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      frameSize: 4,
-      // @ts-expect-error uni types vary by platform
-      encodeBitRate: 48000,
-    });
+    const startRec = () => {
+      if (!this.listening || !this.recorder) return;
+      try {
+        this.recorder.start({
+          format: "PCM",
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          frameSize: 4,
+          // @ts-expect-error uni types vary by platform
+          encodeBitRate: 48000,
+        });
+      } catch (e: any) {
+        this.stickyError = true;
+        this.handlers.onError?.(e?.errMsg || e?.message || "recorder start failed");
+        this.listening = false;
+      }
+    };
+    setTimeout(startRec, 40);
   }
 
   private handleMessage(raw: unknown) {
@@ -243,7 +259,18 @@ export class SoftVoiceSession {
     this.recorder = rec;
     rec.onFrameRecorded((res) => {
       if (!this.listening || !this.socketTask || !res.frameBuffer) return;
-      this.socketTask.send({ data: res.frameBuffer });
+      const buf =
+        res.frameBuffer instanceof ArrayBuffer
+          ? res.frameBuffer
+          : ArrayBuffer.isView(res.frameBuffer as any)
+            ? (res.frameBuffer as ArrayBufferView).buffer.slice(
+                (res.frameBuffer as ArrayBufferView).byteOffset,
+                (res.frameBuffer as ArrayBufferView).byteOffset +
+                  (res.frameBuffer as ArrayBufferView).byteLength
+              )
+            : null;
+      if (!buf || buf.byteLength <= 0) return;
+      this.socketTask.send({ data: buf as any });
     });
     rec.onError((err) => {
       this.handlers.onError?.(err.errMsg || "recorder error");
