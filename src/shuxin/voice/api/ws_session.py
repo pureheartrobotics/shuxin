@@ -207,6 +207,8 @@ class _VoiceWebSocketSession:
         self._pcm_frames = 0
         self._continuous_turn_armed = False  # listen 窗口内是否已成功启动出轮
         self._listen_generation = 0
+        self._memory_flush_tasks: set[asyncio.Task] = set()
+        self._shutdown_started = False
 
         # 初始化独立管道处理器
         self.stt_pipeline = SpeechTranscriber(self)
@@ -240,9 +242,40 @@ class _VoiceWebSocketSession:
 
     async def shutdown(self, mark_offline: bool = True) -> None:
         """关闭连接时释放当前 Agent，避免插件状态和资源泄漏。"""
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         if self._agent_init_task is not None:
             self._agent_init_task.cancel()
             self._agent_init_task = None
+        await self.stt_pipeline.close()
+        if self.agent is not None:
+            if self._memory_flush_tasks:
+                await asyncio.gather(
+                    *list(self._memory_flush_tasks),
+                    return_exceptions=True,
+                )
+            loop = asyncio.get_event_loop()
+            try:
+                flushed = await loop.run_in_executor(
+                    None,
+                    lambda: self.agent.memory.flush_deferred_mem0(force=True),
+                )
+            except Exception as exc:
+                flushed = 0
+                logger.warning(
+                    "[Mem0-Flush] trigger=session_end status=fail "
+                    "device=%s companion=%s error=%s",
+                    self.device_id,
+                    self.companion_id or "",
+                    exc,
+                )
+            logger.warning(
+                "[Mem0-Flush] trigger=session_end turns=%s device=%s companion=%s",
+                flushed,
+                self.device_id,
+                self.companion_id or "",
+            )
         if self.user_settings is not None:
             try:
                 await self.repo.maybe_merge_rolling_summary(
@@ -252,9 +285,9 @@ class _VoiceWebSocketSession:
                 )
             except Exception:
                 pass
-        await self.stt_pipeline.close()
         if self.agent is not None:
-            await asyncio.to_thread(self.agent.shutdown)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.agent.shutdown)
             self.agent = None
         self.agent_record = None
         if mark_offline and self.device_id:
@@ -264,6 +297,48 @@ class _VoiceWebSocketSession:
                 pass
         if self.device_id:
             vsr.unregister(self.device_id, self)
+
+    async def _flush_memory_checkpoint(self) -> None:
+        if self.agent is None:
+            return
+        loop = asyncio.get_event_loop()
+        flushed = await loop.run_in_executor(
+            None,
+            lambda: self.agent.memory.flush_deferred_mem0(force=False),
+        )
+        if flushed:
+            logger.warning(
+                "[Mem0-Flush] trigger=checkpoint turns=%s device=%s companion=%s",
+                flushed,
+                self.device_id,
+                self.companion_id or "",
+            )
+
+    def _schedule_memory_checkpoint(self) -> None:
+        if self.agent is None or self._memory_flush_tasks:
+            return
+        memory = self.agent.memory
+        if (
+            memory.deferred_mem0_turn_count
+            < memory.mem0_checkpoint_turns
+        ):
+            return
+        task = asyncio.create_task(self._flush_memory_checkpoint())
+        self._memory_flush_tasks.add(task)
+        task.add_done_callback(self._on_memory_flush_done)
+
+    def _on_memory_flush_done(self, task: asyncio.Task) -> None:
+        self._memory_flush_tasks.discard(task)
+        try:
+            task.result()
+        except Exception as exc:
+            logger.warning(
+                "[Mem0-Flush] trigger=checkpoint status=fail "
+                "device=%s companion=%s error=%s",
+                self.device_id,
+                self.companion_id or "",
+                exc,
+            )
 
     async def _handle_text(self, raw: str) -> None:
         """处理设备/浏览器上行的 JSON 控制消息。
@@ -930,6 +1005,7 @@ class _VoiceWebSocketSession:
                     "error_kind": error_kind or "",
                 },
             )
+            self._schedule_memory_checkpoint()
 
             # 异步记录消费流水（不阻塞语音核心流）
             billing_svc = getattr(self.app.state, "billing", None) if self.app is not None else None
@@ -1068,6 +1144,7 @@ class _VoiceWebSocketSession:
                     "total_elapsed_ms": _elapsed_ms(started),
                 },
             )
+            self._schedule_memory_checkpoint()
 
             # 异步记录消费流水（不阻塞语音核心流）
             billing_svc = getattr(self.app.state, "billing", None) if self.app is not None else None

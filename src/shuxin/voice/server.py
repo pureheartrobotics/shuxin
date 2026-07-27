@@ -373,6 +373,10 @@ def create_app(
         try:
             await session.run()
         except WebSocketDisconnect:
+            pass
+        finally:
+            # receive() 既可能抛 WebSocketDisconnect，也可能返回 disconnect
+            # 消息后正常结束；两条路径都必须 flush 记忆并释放 Agent。
             await session.shutdown()
 
     return app
