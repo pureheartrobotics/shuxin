@@ -88,6 +88,7 @@ import {
   softCredentials,
 } from "../../modules/companions/api";
 import { SoftVoiceSession } from "../../modules/companions/voice-ws";
+import { stripActionParens } from "../../modules/companions/voice-ws-decode";
 import {
   CHAT_PRIVACY_AGREE_BUTTON_ID,
   PrivacyNeedAgreeError,
@@ -101,6 +102,9 @@ import {
   setPrivacyGateHandler,
 } from "../../utils/privacy";
 import { formatPointsLabel } from "../../utils/companion-points";
+
+/** 语音气泡累计 raw，展示时再 strip，避免流式半括弧闪一下 */
+let voiceAssistantRaw = "";
 
 const companionId = ref("");
 const mbti = ref("");
@@ -328,6 +332,7 @@ async function startContinuousVoice() {
   statusHint.value = "正在连接语音…";
   voiceUserBubbleIndex = -1;
   voiceAssistantIndex = -1;
+  voiceAssistantRaw = "";
   voice?.close();
   voice = new SoftVoiceSession(softCreds!, companionId.value, {
     onReady: () => {
@@ -347,6 +352,7 @@ async function startContinuousVoice() {
           setMessage(voiceUserBubbleIndex, text);
         }
         voiceAssistantIndex = -1;
+        voiceAssistantRaw = "";
       }
     },
     onThinking: () => {
@@ -354,17 +360,22 @@ async function startContinuousVoice() {
       busy.value = true;
     },
     onDelta: (piece) => {
+      voiceAssistantRaw += String(piece || "");
+      const visible = stripActionParens(voiceAssistantRaw);
+      if (!visible) return;
       if (voiceAssistantIndex < 0) {
-        voiceAssistantIndex = pushMessage("assistant", piece);
+        voiceAssistantIndex = pushMessage("assistant", visible);
       } else {
-        appendToMessage(voiceAssistantIndex, piece);
+        setMessage(voiceAssistantIndex, visible);
       }
     },
     onReply: (text) => {
-      const body = String(text || "").trim() || "（没有听清文字，请再说一次）";
+      voiceAssistantRaw = String(text || "");
+      const visible = stripActionParens(voiceAssistantRaw).trim();
+      const body = visible || "（没有听清文字，请再说一次）";
       if (voiceAssistantIndex < 0) {
         voiceAssistantIndex = pushMessage("assistant", body);
-      } else if (!(messages.value[voiceAssistantIndex]?.text || "").trim()) {
+      } else {
         setMessage(voiceAssistantIndex, body);
       }
       voiceUserBubbleIndex = -1;
@@ -383,11 +394,22 @@ async function startContinuousVoice() {
       } else if (
         raw.includes("tts_failed") ||
         raw.includes("tts_audio_missing") ||
-        raw.includes("语音合成")
+        raw.includes("tts_write_failed") ||
+        raw.includes("语音合成") ||
+        raw.includes("播放失败")
       ) {
-        // 保留提示；不要被后续「请继续说」盖掉（voice-ws stickyError）
-        statusHint.value =
-          mapped ? mapped.message : raw.includes("tts_audio_missing") ? "语音播放失败" : raw.includes("语音合成") ? raw : "语音播放失败";
+        // 保留诊断明细（chunks/errMsg），便于真机对照
+        statusHint.value = mapped
+          ? mapped.message
+          : raw.includes("tts_audio_missing")
+            ? `语音播放失败（无音频包）`
+            : raw.includes("tts_write_failed")
+              ? `语音写盘失败`
+              : raw.includes("播放失败")
+                ? raw
+                : raw.includes("语音合成")
+                  ? raw
+                  : "语音播放失败";
       } else {
         statusHint.value = mapped ? mapped.message : message;
       }
@@ -417,6 +439,7 @@ function hangUpVoice() {
   statusHint.value = "已挂断，可继续文字聊天";
   voiceUserBubbleIndex = -1;
   voiceAssistantIndex = -1;
+  voiceAssistantRaw = "";
 }
 
 function onOpenPrivacyContract() {

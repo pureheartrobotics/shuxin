@@ -59,6 +59,37 @@ export function coerceBinaryFrame(raw: unknown): ArrayBuffer | null {
   return null;
 }
 
+/**
+ * 剥离中英文括弧舞台动作（对齐服务端 clean_action_text）。
+ * 语音气泡只展示可读正文，不展示「（轻轻抬头…）」类动作。
+ */
+export function stripActionParens(text: string): string {
+  let cleaned = String(text || "").replace(/[\(（][^\)）]*[\)）]/g, "");
+  cleaned = cleaned.trim();
+  if (!cleaned) return "";
+
+  const lastOpen = Math.max(cleaned.lastIndexOf("("), cleaned.lastIndexOf("（"));
+  if (lastOpen > 0) {
+    const tail = cleaned.slice(lastOpen);
+    if (!tail.includes(")") && !tail.includes("）")) {
+      cleaned = cleaned.slice(0, lastOpen).trim();
+    }
+  }
+
+  if (cleaned && (cleaned[0] === "(" || cleaned[0] === "（")) {
+    let depth = 0;
+    for (const ch of cleaned) {
+      if (ch === "(" || ch === "（") depth += 1;
+      else if (ch === ")" || ch === "）") depth = Math.max(0, depth - 1);
+    }
+    if (depth > 0) {
+      const lastSpace = cleaned.lastIndexOf(" ");
+      cleaned = lastSpace > 0 ? cleaned.slice(lastSpace + 1).replace(/^\s+/, "") : "";
+    }
+  }
+  return cleaned.trim();
+}
+
 /** 首轮开麦状态机：ready 时 recorder 未就绪须 pending，setup 后补发。 */
 export type ListenGateState = {
   ready: boolean;
