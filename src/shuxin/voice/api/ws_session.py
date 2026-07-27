@@ -245,11 +245,19 @@ class _VoiceWebSocketSession:
         if self._shutdown_started:
             return
         self._shutdown_started = True
+        await self._teardown_agent(mark_offline=mark_offline)
+
+    async def _teardown_agent(self, *, mark_offline: bool) -> None:
+        """刷新延迟记忆并释放 Agent；可被 hello 重置与最终断线共用。"""
         if self._agent_init_task is not None:
             self._agent_init_task.cancel()
             self._agent_init_task = None
         await self.stt_pipeline.close()
+        agent_present = 1 if self.agent is not None else 0
+        pending = 0
+        flushed = 0
         if self.agent is not None:
+            pending = int(self.agent.memory.deferred_mem0_turn_count)
             if self._memory_flush_tasks:
                 await asyncio.gather(
                     *list(self._memory_flush_tasks),
@@ -270,12 +278,31 @@ class _VoiceWebSocketSession:
                     self.companion_id or "",
                     exc,
                 )
-            logger.warning(
-                "[Mem0-Flush] trigger=session_end turns=%s device=%s companion=%s",
-                flushed,
-                self.device_id,
-                self.companion_id or "",
-            )
+            # flush 失败时落盘，避免随后 agent.shutdown 丢队列
+            try:
+                remaining = int(self.agent.memory.deferred_mem0_turn_count)
+                if remaining > 0:
+                    await loop.run_in_executor(
+                        None,
+                        self.agent.memory.persist_deferred_mem0,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[Mem0-Flush] persist_pending status=fail "
+                    "device=%s companion=%s error=%s",
+                    self.device_id,
+                    self.companion_id or "",
+                    exc,
+                )
+        logger.warning(
+            "[Mem0-Flush] trigger=session_end agent=%s pending=%s turns=%s "
+            "device=%s companion=%s",
+            agent_present,
+            pending,
+            flushed,
+            self.device_id,
+            self.companion_id or "",
+        )
         if self.user_settings is not None:
             try:
                 await self.repo.maybe_merge_rolling_summary(
@@ -1212,8 +1239,14 @@ class _VoiceWebSocketSession:
             await self.repo.assert_user_quota_available(self.user_id)
 
     async def _reset_runtime(self) -> None:
-        """切换用户或设备时重建运行态，确保配置和记忆目录重新绑定。"""
-        await self.shutdown(mark_offline=False)
+        """切换用户或设备时重建运行态，确保配置和记忆目录重新绑定。
+
+        注意：hello 会走这里，但不能把 ``_shutdown_started`` 留成 True，
+        否则挂断时 ``finally: shutdown()`` 会直接 return，Mem0 永远不 flush
+        （生产表现为零 ``[Mem0-Flush]``、跨通话 hits=0）。
+        """
+        await self._teardown_agent(mark_offline=False)
+        self._shutdown_started = False
         self.stt = None
         self.tts = None
         self.device = None
