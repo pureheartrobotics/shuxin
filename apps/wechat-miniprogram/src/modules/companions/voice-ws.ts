@@ -303,12 +303,26 @@ export class SoftVoiceSession {
         merged.set(new Uint8Array(chunk), offset);
         offset += chunk.byteLength;
       }
+      const exact = merged.buffer.slice(merged.byteOffset, merged.byteOffset + merged.byteLength);
       const fs = uni.getFileSystemManager();
       const userDataPath =
         (typeof wx !== "undefined" && (wx as any).env && (wx as any).env.USER_DATA_PATH) ||
         `${uni.env.USER_DATA_PATH || ""}`;
       const path = `${userDataPath}/soft-tts-${Date.now()}-${Math.random().toString(16).slice(2)}.mp3`;
-      fs.writeFileSync(path, merged.buffer as any, "binary");
+      const b64 = uni.arrayBufferToBase64
+        ? uni.arrayBufferToBase64(exact)
+        : (() => {
+            const bytes = new Uint8Array(exact);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            return (globalThis as any).btoa ? (globalThis as any).btoa(binary) : "";
+          })();
+      if (!b64) {
+        this.stickyError = true;
+        this.handlers.onError?.("tts_audio_missing");
+        return;
+      }
+      fs.writeFileSync(path, b64, "base64");
       this.playQueue.push({ path });
       void this.pumpPlayQueue();
     } catch (e: any) {
