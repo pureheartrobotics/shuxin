@@ -96,6 +96,11 @@ class TtsSentenceSegmenter:
         )
         clean_text = prepare_speakable_text(text)
         if not clean_text:
+            logger.info(
+                "[SOFT-VOICE] tts_sentence idx=%s speakable_len=0 status=skip device=%s",
+                sentence_index,
+                self.session.device_id,
+            )
             output_path.write_bytes(b"")
             await asyncio.sleep(0.01)
             await self.session._send_json(
@@ -114,10 +119,20 @@ class TtsSentenceSegmenter:
         try:
             sentence_started = time.perf_counter()
             speech_path = await self.session.tts.synthesize(clean_text, output_path)
+            payload = speech_path.read_bytes()
             if self.session._uses_opus_downlink():
                 await self.session._send_opus_downlink_stream(speech_path)
+                send_bytes = speech_path.stat().st_size if speech_path.exists() else 0
             else:
-                await self.session._send_downlink_bytes(speech_path.read_bytes())
+                await self.session._send_downlink_bytes(payload)
+                send_bytes = len(payload)
+            logger.info(
+                "[SOFT-VOICE] tts_sentence idx=%s speakable_len=%s status=ok send_bytes=%s device=%s",
+                sentence_index,
+                len(clean_text),
+                send_bytes,
+                self.session.device_id,
+            )
             await self.session._send_json(
                 {
                     "type": "tts",
@@ -131,6 +146,13 @@ class TtsSentenceSegmenter:
             return speech_path
         except Exception as exc:
             logger.warning("TTS 语音合成失败 (clean_text='%s'): %s", clean_text, exc)
+            logger.warning(
+                "[SOFT-VOICE] tts_sentence idx=%s speakable_len=%s status=fail err=%s device=%s",
+                sentence_index,
+                len(clean_text),
+                exc,
+                self.session.device_id,
+            )
             try:
                 output_path.write_bytes(b"")
             except Exception:

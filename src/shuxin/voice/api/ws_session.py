@@ -53,6 +53,7 @@ from shuxin.voice.api import voice_session_registry as vsr
 from shuxin.voice.api.ws_stt import SpeechTranscriber
 from shuxin.voice.api.ws_llm import LlmStreamProcessor
 from shuxin.voice.api.ws_tts import TtsSentenceSegmenter
+from shuxin.voice.api.soft_voice import resolve_conversation_mode
 from shuxin.voice.api.miniapp_admin import miniapp_admin_router
 from shuxin.voice.api.routers.exception_handlers import register_exception_handlers
 from shuxin.voice.api.routers.user import router as user_router
@@ -202,6 +203,9 @@ class _VoiceWebSocketSession:
         self.conversation_mode = "push_to_talk"  # or continuous (soft call)
         self.turn_in_progress = False
         self._forced_user_text: Optional[str] = None
+        self._pcm_bytes = 0
+        self._pcm_frames = 0
+        self._continuous_turn_armed = False  # listen 窗口内是否已成功启动出轮
 
         # 初始化独立管道处理器
         self.stt_pipeline = SpeechTranscriber(self)
@@ -334,11 +338,12 @@ class _VoiceWebSocketSession:
         )
         self.client_id = data.get("client_id") or "web-demo"
         self.companion_id = str(data.get("companion_id") or "").strip() or None
-        mode = str(data.get("conversation_mode") or "push_to_talk").strip().lower()
-        self.conversation_mode = (
-            "continuous" if mode == "continuous" else "push_to_talk"
-        )
+        requested_mode = str(data.get("conversation_mode") or "push_to_talk").strip().lower()
+        self.conversation_mode = resolve_conversation_mode(self.client_id, requested_mode)
         self.turn_in_progress = False
+        self._continuous_turn_armed = False
+        self._pcm_bytes = 0
+        self._pcm_frames = 0
         self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
         self.session_id = data.get("session_id") or uuid.uuid4().hex
         if not self.factory_acceptance:
@@ -406,6 +411,14 @@ class _VoiceWebSocketSession:
                 "frame_duration": int(self.audio_params["frame_duration"]),
             }
         await self._send_json(hello_ok)
+        logger.info(
+            "[SOFT-VOICE] hello mode=%s requested=%s client=%s device=%s companion=%s",
+            self.conversation_mode,
+            requested_mode,
+            self.client_id,
+            self.device_id,
+            self.companion_id,
+        )
         vsr.register(self.device_id, self)
         if not self.factory_acceptance:
             self._agent_init_task = asyncio.create_task(self._ensure_runtime())
@@ -421,39 +434,100 @@ class _VoiceWebSocketSession:
         state = data.get("state")
         if state == "start":
             self.audio_chunks = []
+            self._pcm_bytes = 0
+            self._pcm_frames = 0
+            self._continuous_turn_armed = False
             self.listening = True
+            asr_status = "skipped"
             try:
-                await self._start_realtime_asr_if_needed()
+                asr_status = await self._start_realtime_asr_if_needed()
             except Exception as exc:
                 self.listening = False
+                logger.warning(
+                    "[SOFT-VOICE] listen_start_failed device=%s err=%s",
+                    self.device_id,
+                    exc,
+                )
                 await self._send_json({"type": "error", "message": str(exc)})
                 return
+            logger.info(
+                "[SOFT-VOICE] listen_start asr=%s mode=%s device=%s client=%s",
+                asr_status,
+                self.conversation_mode,
+                self.device_id,
+                self.client_id,
+            )
             await self._send_json({"type": "listen", "state": "start"})
         elif state == "stop":
             self.listening = False
+            logger.info(
+                "[SOFT-VOICE] listen_stop pcm_bytes=%s frames=%s turn_in_progress=%s device=%s",
+                self._pcm_bytes,
+                self._pcm_frames,
+                self.turn_in_progress,
+                self.device_id,
+            )
             if self.turn_in_progress:
                 await self._send_json({"type": "listen", "state": "stop"})
                 return
             await self._process_turn()
 
-    async def _trigger_continuous_turn(self, text: str) -> None:
-        """continuous 模式：sentence_final 自动出轮（播音关麦由客户端配合）。"""
+    async def _trigger_continuous_turn(
+        self,
+        text: str,
+        *,
+        source: str = "sentence_final",
+    ) -> None:
+        """continuous 模式：sentence_final / ASR idle 兜底自动出轮。"""
         cleaned = str(text or "").strip()
         if not cleaned:
+            logger.info(
+                "[SOFT-VOICE] turn_skip reason=empty source=%s device=%s",
+                source,
+                self.device_id,
+            )
             return
         if self.conversation_mode != "continuous":
-            return
-        if self.turn_in_progress or not self.listening:
             logger.info(
-                "[SOFT-TURN] skip text_len=%s turn_in_progress=%s listening=%s device=%s",
+                "[SOFT-VOICE] turn_skip reason=mode mode=%s source=%s text_len=%s device=%s",
+                self.conversation_mode,
+                source,
                 len(cleaned),
+                self.device_id,
+            )
+            return
+        if self._continuous_turn_armed or self.turn_in_progress:
+            logger.info(
+                "[SOFT-VOICE] turn_skip reason=busy source=%s armed=%s in_progress=%s text_len=%s device=%s",
+                source,
+                self._continuous_turn_armed,
                 self.turn_in_progress,
-                self.listening,
+                len(cleaned),
+                self.device_id,
+            )
+            return
+        # idle 兜底时可能已经 stopRecorder，listening 仍应为 True；若已被清空也允许兜底
+        if not self.listening and source != "asr_idle_fallback":
+            logger.info(
+                "[SOFT-VOICE] turn_skip reason=not_listening source=%s text_len=%s device=%s",
+                source,
+                len(cleaned),
                 self.device_id,
             )
             return
         self.listening = False
         self.turn_in_progress = True
+        self._continuous_turn_armed = True
+        logger.info(
+            "[SOFT-VOICE] turn_start source=%s text_len=%s pcm_bytes=%s device=%s companion=%s client=%s",
+            source,
+            len(cleaned),
+            self._pcm_bytes,
+            self.device_id,
+            self.companion_id,
+            self.client_id,
+        )
+        # 兼容旧 grep
         logger.info(
             "[SOFT-TURN] start text_len=%s device=%s companion=%s client=%s",
             len(cleaned),
@@ -462,12 +536,10 @@ class _VoiceWebSocketSession:
             self.client_id,
         )
         try:
-            # 结束当前 ASR 会话，避免播音回采；客户端会在 TTS 后重新 listen start
             try:
                 await self.stt_pipeline.finish()
             except Exception as exc:
-                logger.info("continuous asr finish: %s", exc)
-            # Reuse listen-stop path: seed audio_chunks empty and inject text via process
+                logger.info("[SOFT-VOICE] asr_finish_err source=%s err=%s", source, exc)
             await self._process_turn_with_text(cleaned)
         finally:
             self.turn_in_progress = False
@@ -517,9 +589,9 @@ class _VoiceWebSocketSession:
     async def _handle_ping_msg(self, data: dict[str, Any]) -> None:
         await self._send_json({"type": "pong", "ts": time.time()})
 
-    async def _start_realtime_asr_if_needed(self) -> None:
-        """运行态实时 ASR 启动代理。"""
-        await self.stt_pipeline.start()
+    async def _start_realtime_asr_if_needed(self) -> str:
+        """运行态实时 ASR 启动代理。返回 started|skipped。"""
+        return await self.stt_pipeline.start()
 
     async def _handle_audio_frame(self, frame: bytes) -> None:
         """缓存 listen 窗口内收到的 PCM16 或 Opus 二进制音频帧，并按需转发实时 ASR。"""
@@ -533,6 +605,21 @@ class _VoiceWebSocketSession:
                     )
                 pcm_frame = self.opus_uplink_decoder.decode_packet(frame)
             self.audio_chunks.append(pcm_frame)
+            self._pcm_frames += 1
+            self._pcm_bytes += len(pcm_frame)
+            if self._pcm_frames == 1:
+                logger.info(
+                    "[SOFT-VOICE] pcm first_bytes=%s device=%s",
+                    len(pcm_frame),
+                    self.device_id,
+                )
+            elif self._pcm_frames % 50 == 0:
+                logger.info(
+                    "[SOFT-VOICE] pcm total_bytes=%s frames=%s device=%s",
+                    self._pcm_bytes,
+                    self._pcm_frames,
+                    self.device_id,
+                )
             await self.stt_pipeline.send_audio(pcm_frame)
 
     async def _process_turn(self) -> None:
@@ -634,6 +721,11 @@ class _VoiceWebSocketSession:
             allow_weak_punctuation = True
 
             await self._send_json({"type": "agent", "state": "thinking"})
+            logger.info(
+                "[SOFT-VOICE] llm_start text_len=%s device=%s",
+                len(text or ""),
+                self.device_id,
+            )
             if self.agent is not None:
                 self.agent.context.metadata.pop("llm_error_kind", None)
                 self.agent.context.metadata.pop("map_tool_ms", None)
@@ -647,6 +739,11 @@ class _VoiceWebSocketSession:
                 if first_agent_delta_ms is None:
                     first_agent_delta_ms = _elapsed_ms(agent_started)
                     llm_ttft_ms = first_agent_delta_ms
+                    logger.info(
+                        "[SOFT-VOICE] llm_ttft_ms=%s device=%s",
+                        llm_ttft_ms,
+                        self.device_id,
+                    )
                     pending_error = (
                         self.agent.context.metadata.get("llm_error_kind")
                         if self.agent is not None
@@ -730,6 +827,14 @@ class _VoiceWebSocketSession:
                 {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
             )
             logger.info(
+                "[SOFT-VOICE] llm_done reply_len=%s error_kind=%s ttft_ms=%s device=%s companion=%s",
+                len(reply or ""),
+                error_kind or "",
+                llm_ttft_ms or 0,
+                self.device_id,
+                self.companion_id,
+            )
+            logger.info(
                 "[SOFT-TURN] reply_len=%s speech=%s error_kind=%s device=%s companion=%s",
                 len(reply or ""),
                 "yes" if speech_path is not None else "pending",
@@ -753,6 +858,13 @@ class _VoiceWebSocketSession:
             if speech_path is None:
                 speech_path = paths.reply_mp3
                 speech_path.write_bytes(b"")
+            logger.info(
+                "[SOFT-VOICE] turn_done reply_len=%s speech_bytes=%s error_kind=%s device=%s",
+                len(reply or ""),
+                speech_path.stat().st_size if speech_path.exists() else 0,
+                error_kind or "",
+                self.device_id,
+            )
             logger.info(
                 "[SOFT-TURN] done reply_len=%s speech_bytes=%s error_kind=%s device=%s",
                 len(reply or ""),
