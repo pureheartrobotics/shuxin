@@ -41,6 +41,19 @@ _META_SPEECH_RE = re.compile(
 )
 
 
+def _resolve_user_home_for_companion_data(data_dir: Path) -> Path:
+    """从 companion data_dir 解析用户 home。
+
+    - soft: ``.../users/{uid}/companions/{cid}`` → ``.../users/{uid}``
+    - 硬件/默认: ``.../users/{uid}/companion`` → ``.../users/{uid}``
+    """
+    base = Path(data_dir)
+    if base.parent.name == "companions":
+        return base.parent.parent
+    return base.parent
+
+
+
 class CompanionPlugin:
     """陪伴插件主类 — 协调所有子系统。
 
@@ -196,14 +209,17 @@ class CompanionPlugin:
 
         这里不直接修改成长状态，只把 storage 初始化出的 personality.json
         和 shared_memory.json 转成简短提示，保证每轮回复能感知长期关系进展。
+
+        soft 伙伴 data_dir 为 ``users/{uid}/companions/{cid}``，摘要与 profile
+        仍在用户 home：``users/{uid}/summaries/shared_memory.json``。
         """
         if not self.data_dir:
             return "## 长期成长\n暂无长期成长摘要。"
 
         base = Path(self.data_dir)
+        user_home = _resolve_user_home_for_companion_data(base)
         personality_path = base / "personality.json"
-        summary_path = base.parent / "summaries" / "shared_memory.json"
-        user_home = base.parent
+        summary_path = user_home / "summaries" / "shared_memory.json"
         lines = ["## 长期成长"]
 
         try:
