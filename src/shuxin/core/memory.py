@@ -34,6 +34,33 @@ _SYNC_USER_PATTERNS = (
     re.compile(r"记住"),
 )
 
+_LOW_SEMANTIC_FILLERS = frozenset(
+    {
+        "嗯",
+        "啊",
+        "哦",
+        "呃",
+        "哈",
+        "呀",
+        "哎",
+        "欸",
+        "唔",
+        "嗯嗯",
+        "哈哈",
+        "呵呵",
+        "嘿嘿",
+        "好的",
+        "好吧",
+        "我不知道",
+        "你想说什么",
+        "那当然啦",
+        "原来是这样",
+        "没有关系",
+        "没关系啊",
+        "没事的哈",
+    }
+)
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name, "").strip().lower()
@@ -144,9 +171,13 @@ class MemoryManager:
         self._last_mem0_results: List[str] = []
 
         self._load_facts()
+        self._load_pending_mem0()
         if self._mem0_enabled():
             self._ensure_mem0()
             self._migrate_facts_to_mem0_once()
+            # 上次挂断 flush 失败留下的队列：有 client 后立刻再试
+            if self._deferred_mem0_turns and self._defer_mem0_writes:
+                self.flush_deferred_mem0(force=True)
 
     @staticmethod
     def _mem0_enabled() -> bool:
@@ -287,6 +318,7 @@ class MemoryManager:
         """按对话顺序把语音会话待处理轮次交给 Mem0 提炼。
 
         非强制模式仅在达到检查点轮数时执行；失败时保留队列供断线 flush 重试。
+        infer 提炼为空时追加 infer=False 原文要点，保证 Qdrant 至少有可检索内容。
         """
         if not self._defer_mem0_writes or not self._mem0_enabled():
             return 0
@@ -299,6 +331,7 @@ class MemoryManager:
 
             self._ensure_mem0()
             if self._mem0_client is None:
+                self.persist_deferred_mem0()
                 return 0
             messages: List[Dict[str, str]] = []
             for user_text, assistant_text in turns:
@@ -308,8 +341,10 @@ class MemoryManager:
                         {"role": "assistant", "content": assistant_text},
                     ]
                 )
+            extracted = 0
             try:
-                self._mem0_client.add(messages, user_id=self._user_id)
+                raw = self._mem0_client.add(messages, user_id=self._user_id)
+                extracted = self._count_mem0_results(raw)
             except Exception as exc:
                 logger.warning(
                     "[Mem0-Flush] status=fail namespace=%s turns=%s error=%s",
@@ -317,27 +352,139 @@ class MemoryManager:
                     len(turns),
                     exc,
                 )
+                self.persist_deferred_mem0()
+                return 0
+
+            digest_ok = True
+            if extracted <= 0:
+                digest = self._session_digest(turns)
+                try:
+                    self._mem0_add_text(
+                        digest,
+                        infer=False,
+                        metadata={"source": "session_digest"},
+                    )
+                    extracted = max(extracted, 1)
+                except Exception as exc:
+                    digest_ok = False
+                    logger.warning(
+                        "[Mem0-Flush] digest status=fail namespace=%s error=%s",
+                        self._user_id,
+                        exc,
+                    )
+
+            if not digest_ok and extracted <= 0:
+                self.persist_deferred_mem0()
                 return 0
 
             with self._lock:
                 del self._deferred_mem0_turns[: len(turns)]
+            self._clear_pending_mem0_file()
             logger.warning(
-                "[Mem0-Flush] status=ok namespace=%s turns=%s",
+                "[Mem0-Flush] status=ok namespace=%s turns=%s extracted=%s",
                 self._user_id,
                 len(turns),
+                extracted,
             )
             return len(turns)
 
+    def persist_deferred_mem0(self) -> None:
+        """把未成功 flush 的回合落到磁盘，避免 agent 销毁后丢失。"""
+        with self._lock:
+            turns = list(self._deferred_mem0_turns)
+        path = self.data_dir / "pending_mem0.json"
+        if not turns:
+            self._clear_pending_mem0_file()
+            return
+        try:
+            path.write_text(
+                json.dumps({"turns": turns}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.warning(
+                "[Mem0-Flush] persist_pending turns=%s path=%s",
+                len(turns),
+                path,
+            )
+        except OSError as exc:
+            logger.warning("[Mem0-Flush] persist_pending fail: %s", exc)
+
+    def _load_pending_mem0(self) -> None:
+        path = self.data_dir / "pending_mem0.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            turns = data.get("turns") if isinstance(data, dict) else None
+            if not isinstance(turns, list):
+                return
+            loaded: List[tuple[str, str]] = []
+            for item in turns:
+                if (
+                    isinstance(item, (list, tuple))
+                    and len(item) == 2
+                    and str(item[0]).strip()
+                    and str(item[1]).strip()
+                ):
+                    loaded.append((str(item[0]).strip(), str(item[1]).strip()))
+            if not loaded:
+                return
+            with self._lock:
+                self._deferred_mem0_turns = loaded + self._deferred_mem0_turns
+            logger.warning(
+                "[Mem0-Flush] load_pending turns=%s namespace=%s",
+                len(loaded),
+                self._user_id,
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("[Mem0-Flush] load_pending fail: %s", exc)
+
+    def _clear_pending_mem0_file(self) -> None:
+        path = self.data_dir / "pending_mem0.json"
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _count_mem0_results(raw: Any) -> int:
+        if raw is None:
+            return 0
+        if isinstance(raw, dict):
+            items = raw.get("results") or raw.get("memories") or []
+            if isinstance(items, list):
+                return len(items)
+            return 0
+        if isinstance(raw, list):
+            return len(raw)
+        return 0
+
+    @staticmethod
+    def _session_digest(turns: List[tuple[str, str]]) -> str:
+        parts: List[str] = ["本通对话要点（原文摘录，供长期回忆）："]
+        for user_text, assistant_text in turns[-8:]:
+            parts.append(f"用户: {user_text[:200]}")
+            parts.append(f"助手: {assistant_text[:120]}")
+        text = "\n".join(parts)
+        if len(text) > 1500:
+            text = text[:1500]
+        return text
+
     def _is_low_semantic_query(self, query: str) -> bool:
-        q = query.strip()
-        if len(q) < 5:
-            # 涉及显式记忆设定的特殊前缀，不进行绕过
-            if any(p.search(q) for p in _SYNC_USER_PATTERNS):
-                return False
+        """短语气词 / 无实义回应变绕过 Mem0；短中文实义词（如「面试」）必须检索。"""
+        raw = query.strip()
+        if not raw:
             return True
-        # 长但无实际实体或语义意图的日常语气词
-        fillers = {"我不知道", "你想说什么", "那当然啦", "原来是这样", "没有关系", "没关系啊", "没事的哈"}
-        if q in fillers:
+        if any(p.search(raw) for p in _SYNC_USER_PATTERNS):
+            return False
+        q = raw.rstrip("。.!！?？…~～、，,")
+        if q in _LOW_SEMANTIC_FILLERS or raw in _LOW_SEMANTIC_FILLERS:
+            return True
+        # 单字符或纯拉丁极短无实义
+        if len(q) <= 1:
+            return True
+        if len(q) < 5 and not any("\u4e00" <= c <= "\u9fff" for c in q):
             return True
         return False
 
@@ -347,6 +494,45 @@ class MemoryManager:
             return False
         return any(p.search(text) for p in _SYNC_USER_PATTERNS)
 
+    def _get_all_mem0(self) -> List[str]:
+        self._ensure_mem0()
+        if self._mem0_client is None:
+            return []
+        try:
+            raw = self._mem0_client.get_all(user_id=self._user_id)
+        except TypeError:
+            try:
+                raw = self._mem0_client.get_all(filters={"user_id": self._user_id})
+            except Exception as exc:
+                logger.warning("Mem0 get_all 失败: %s", exc)
+                return []
+        except Exception as exc:
+            logger.warning("Mem0 get_all 失败: %s", exc)
+            return []
+
+        items: List[Any] = []
+        if isinstance(raw, dict):
+            items = raw.get("results") or raw.get("memories") or []
+        elif isinstance(raw, list):
+            items = raw
+
+        lines: List[str] = []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                lines.append(item.strip())
+                continue
+            if not isinstance(item, dict):
+                continue
+            text = (
+                item.get("memory")
+                or item.get("text")
+                or item.get("content")
+                or (item.get("metadata") or {}).get("text")
+            )
+            if text and str(text).strip():
+                lines.append(str(text).strip())
+        return lines[: self._mem0_top_k]
+
     def _search_mem0(self, query: str) -> List[str]:
         self._ensure_mem0()
         if self._mem0_client is None:
@@ -355,10 +541,21 @@ class MemoryManager:
         if not q:
             return []
 
-        # 低语义/短查询绕过：复用最近一次的有效检索结果，将首字延迟 (TTFT) 降低 1~2s 左右阻碍
-        if self._is_low_semantic_query(q) and self._last_mem0_results:
-            logger.debug("[Mem0-Bypass] 针对低语义/短查询 '%s' 复用上一次有效结果: %s", q, self._last_mem0_results)
-            return self._last_mem0_results
+        # 低语义/短查询：有缓存则复用；无缓存则直接跳过，避免无意义的 embedding 超时
+        if self._is_low_semantic_query(q):
+            if self._last_mem0_results:
+                logger.debug(
+                    "[Mem0-Bypass] 针对低语义/短查询 '%s' 复用上一次有效结果: %s",
+                    q,
+                    self._last_mem0_results,
+                )
+                return self._last_mem0_results
+            logger.warning(
+                "[Mem0-Bypass] low_semantic skip_search query=%s namespace=%s",
+                q[:32],
+                self._user_id,
+            )
+            return []
 
         # 缓存命中：相同查询文本 5 分钟内直接复用结果，避免重复调 embedding API
         now = time.monotonic()
@@ -372,8 +569,11 @@ class MemoryManager:
                     return results
             # 清理过期缓存，防止无限增长
             if len(self._mem0_search_cache) > 32:
-                expired = [k for k, (t, _) in self._mem0_search_cache.items()
-                           if now - t >= _MEM0_SEARCH_CACHE_TTL]
+                expired = [
+                    k
+                    for k, (t, _) in self._mem0_search_cache.items()
+                    if now - t >= _MEM0_SEARCH_CACHE_TTL
+                ]
                 for k in expired:
                     self._mem0_search_cache.pop(k, None)
 
@@ -428,11 +628,22 @@ class MemoryManager:
 
     def _legacy_facts_summary(self) -> str:
         if not self.facts:
-            return "暂无关于用户的长期记忆。"
+            return (
+                "## 关于用户的记忆\n"
+                "暂无可用长期记忆。你没有关于用户姓名、住址或往事的可靠记录。"
+                "禁止声称记得；禁止从当前问句里编造名字或事实。"
+            )
         lines = ["## 关于用户的记忆"]
         for fact in self.facts.values():
             lines.append(f"- {fact.key}: {fact.value}")
         return "\n".join(lines)
+
+    def _empty_mem0_summary(self) -> str:
+        return (
+            "## 关于用户的记忆\n"
+            "暂无可用长期记忆。你没有关于用户姓名、住址或往事的可靠记录。"
+            "禁止声称记得；禁止从当前问句里编造名字或事实。"
+        )
 
     # ---- 短期记忆 ----
 
@@ -446,19 +657,21 @@ class MemoryManager:
         with self._lock:
             self.short_term.append(entry)
             if len(self.short_term) > self.max_short_term:
-                self.short_term = self.short_term[-self.max_short_term:]
+                self.short_term = self.short_term[-self.max_short_term :]
 
         if role == "user":
             text = content.strip()
             self._last_user_text = text
             self._pending_user_text = text
-            if (
-                self._mem0_enabled()
-                and not self._defer_mem0_writes
-                and self._should_sync_mem0_add(text)
-            ):
+            # 显式「记住/我叫…」即使 defer 也同步落盘，避免短通话挂断竞态丢事实
+            if self._mem0_enabled() and self._should_sync_mem0_add(text):
                 self._ensure_mem0()
-                self._mem0_add_text(text, infer=False, metadata={"source": "explicit_user"})
+                try:
+                    self._mem0_add_text(
+                        text, infer=False, metadata={"source": "explicit_user"}
+                    )
+                except Exception as exc:
+                    logger.warning("Mem0 显式记忆写入失败: %s", exc)
         elif role == "assistant" and self._mem0_enabled():
             user_text = self._pending_user_text
             self._pending_user_text = ""
@@ -536,8 +749,15 @@ class MemoryManager:
             query = self._last_user_text or self._recent_user_text()
             if not query:
                 hits = []
+            elif self._is_low_semantic_query(query) and not self._last_mem0_results:
+                logger.warning(
+                    "[Mem0-Search] search_ms=0 hits=0 timed_out=0 bypass=1 namespace=%s",
+                    self._user_id,
+                )
+                hits = []
             else:
                 from concurrent.futures import TimeoutError
+
                 started = time.monotonic()
                 future = _MEM0_EXECUTOR.submit(self._search_mem0, query)
                 try:
@@ -561,6 +781,15 @@ class MemoryManager:
                     )
                     hits = self._last_mem0_results
 
+            if not hits:
+                hits = self._get_all_mem0()
+                if hits:
+                    logger.warning(
+                        "[Mem0-Search] fallback=get_all hits=%s namespace=%s",
+                        len(hits),
+                        self._user_id,
+                    )
+
             if hits:
                 lines = ["## 关于用户的记忆（相关）"]
                 for line in hits:
@@ -568,9 +797,8 @@ class MemoryManager:
                 return "\n".join(lines)
             if self.facts:
                 return self._legacy_facts_summary()
-            return "暂无关于用户的长期记忆。"
+            return self._empty_mem0_summary()
         return self._legacy_facts_summary()
-
     def _load_facts(self) -> None:
         facts_file = self.data_dir / "facts.json"
         if not facts_file.exists():

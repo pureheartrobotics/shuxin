@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -56,7 +56,8 @@ def test_add_message_short_term(tmp_path: Path) -> None:
     mem.add_message("user", "你好")
     mem.add_message("assistant", "你好呀")
     assert len(mem.short_term) == 2
-    assert mem.get_facts_summary() == "暂无关于用户的长期记忆。"
+    assert "暂无可用长期记忆" in mem.get_facts_summary()
+    assert "禁止声称记得" in mem.get_facts_summary()
 
 
 def test_search_mem0_clips_to_top_k(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,7 +160,7 @@ def test_deferred_mem0_stores_ordered_turns_only_when_flushed(
         defer_mem0_writes=True,
         mem0_checkpoint_turns=2,
     )
-    calls: list[tuple[list[dict[str, str]], str]] = []
+    calls: list[tuple[Any, str]] = []
 
     class _FakeMem0:
         def add(self, messages, *, user_id, **kwargs):
@@ -169,24 +170,20 @@ def test_deferred_mem0_stores_ordered_turns_only_when_flushed(
     mem._mem0_client = _FakeMem0()
     mem._mem0_init_attempted = True
 
-    mem.add_message("user", "我叫小明")
-    mem.add_message("assistant", "你好，小明")
+    # 避免触发「我叫/记住」同步写，专注验证 defer 队列
+    mem.add_message("user", "我住在上海")
+    mem.add_message("assistant", "记下了")
     mem.add_message("user", "我养了一只猫")
     mem.add_message("assistant", "它叫什么？")
 
     assert calls == []
     assert mem.flush_deferred_mem0(force=False) == 2
-    assert calls == [
-        (
-            [
-                {"role": "user", "content": "我叫小明"},
-                {"role": "assistant", "content": "你好，小明"},
-                {"role": "user", "content": "我养了一只猫"},
-                {"role": "assistant", "content": "它叫什么？"},
-            ],
-            "alice::companion::c1",
-        )
-    ]
+    # infer 空结果时会追加一条 infer=False digest
+    assert len(calls) == 2
+    assert calls[0][1] == "alice::companion::c1"
+    assert calls[0][0][0]["content"] == "我住在上海"
+    assert isinstance(calls[1][0], str)
+    assert "本通对话要点" in calls[1][0]
     assert mem.flush_deferred_mem0(force=True) == 0
 
 
@@ -207,14 +204,80 @@ def test_deferred_mem0_keeps_turns_when_flush_fails(
             attempts += 1
             if attempts == 1:
                 raise RuntimeError("temporary failure")
+            return {"results": [{"memory": "ok"}]}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+    mem.add_message("user", "我喜欢喝茶")
+    mem.add_message("assistant", "好的")
+
+    assert mem.flush_deferred_mem0(force=False) == 0
+    assert mem.deferred_mem0_turn_count == 1
+    assert (tmp_path / "users" / "alice" / "memory" / "pending_mem0.json").exists()
+    assert mem.flush_deferred_mem0(force=True) == 1
+    assert mem.deferred_mem0_turn_count == 0
+
+
+def test_low_semantic_skips_search_when_no_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(data_dir=str(tmp_path / "users" / "alice" / "memory"))
+    search_count = 0
+
+    class _FakeMem0:
+        def search(self, query: str, *, filters=None, top_k=20, **kwargs):
+            nonlocal search_count
+            search_count += 1
+            return {"results": [{"memory": "x"}]}
+
+        def get_all(self, **kwargs):
             return {"results": []}
 
     mem._mem0_client = _FakeMem0()
     mem._mem0_init_attempted = True
-    mem.add_message("user", "记住我喜欢茶")
-    mem.add_message("assistant", "记住了")
+    assert mem._search_mem0("嗯") == []
+    assert search_count == 0
 
-    assert mem.flush_deferred_mem0(force=False) == 0
-    assert mem.deferred_mem0_turn_count == 1
-    assert mem.flush_deferred_mem0(force=True) == 1
-    assert mem.deferred_mem0_turn_count == 0
+
+def test_get_facts_summary_falls_back_to_get_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(data_dir=str(tmp_path / "users" / "alice" / "memory"))
+
+    class _FakeMem0:
+        def search(self, query: str, *, filters=None, top_k=20, **kwargs):
+            return {"results": []}
+
+        def get_all(self, **kwargs):
+            return {"results": [{"memory": "用户住在上海"}]}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+    mem.add_message("user", "你还记得我住哪吗？")
+    summary = mem.get_facts_summary()
+    assert "用户住在上海" in summary
+
+
+def test_explicit_remember_syncs_even_when_deferred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(
+        data_dir=str(tmp_path / "users" / "alice" / "memory"),
+        defer_mem0_writes=True,
+    )
+    calls: list[Any] = []
+
+    class _FakeMem0:
+        def add(self, messages, *, user_id, **kwargs):
+            calls.append({"messages": messages, "infer": kwargs.get("infer", True)})
+            return {"results": []}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+    mem.add_message("user", "记住我喜欢猫")
+    assert len(calls) == 1
+    assert calls[0]["infer"] is False
+    assert "记住我喜欢猫" in calls[0]["messages"]

@@ -183,9 +183,11 @@ http://localhost:8765/voice-demo
 | 中期 | `shared_memory` 的 7 日 `rolling_summary` + 规则 `recent_topics` | 每 `SHUXIN_SUMMARY_EVERY_N` 轮（默认 5）及 WebSocket 断线时异步合并 |
 | 长期 | Mem0 + Qdrant 重要事实；陪伴插件状态 | 语音每 5 轮检查点及断线后提炼 |
 
-中期实现见 `src/shuxin/voice/persistence/memory_summary.py`。`record_turn` 后规则更新 topics；满足轮次或断线时 `maybe_merge_rolling_summary` 调用便宜模型合并摘要，并同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json`。重连**不**从 `conversation_events` 恢复最近原文，仅依赖中期摘要与长期记忆。
+中期实现见 `src/shuxin/voice/persistence/memory_summary.py`。`record_turn` 后规则更新 topics；满足轮次或断线时 `maybe_merge_rolling_summary` 调用便宜模型合并摘要，并同步 `~/.shuxin/users/{user_id}/summaries/shared_memory.json`。重连**不**从 `conversation_events` 恢复最近原文，仅依赖中期摘要与长期记忆。软伙伴 `data_dir` 为 `users/{uid}/companions/{cid}` 时，陪伴插件须解析用户 home 再读 `summaries/`，不得读成 `companions/summaries/`。
 
-**长期记忆（Mem0）**：同一次电话依靠 `short_term` 原文；语音通话不逐轮同步写 Mem0，而是在每 5 轮检查点及 WebSocket 正常/异常断线时，按顺序将用户 ASR 文本与 Agent 回复交给 Mem0，只提炼稳定事实、偏好、承诺和重要事件。软伙伴使用 `{user_id}::companion::{companion_id}` namespace，伙伴间不共享私密长期记忆；无 `companion_id` 的硬件路径保持用户级 namespace。检索缓存 TTL 为 300 秒，等待预算由 `SHUXIN_MEM0_SEARCH_TIMEOUT_MS` 控制（默认 2500ms）。
+**长期记忆（Mem0）**：同一次电话依靠 `short_term` 原文；语音通话不逐轮同步写 Mem0，而是在每 5 轮检查点及 WebSocket 正常/异常断线时，按顺序将用户 ASR 文本与 Agent 回复交给 Mem0，只提炼稳定事实、偏好、承诺和重要事件。`infer` 为空时追加 `infer=False` 会话要点；显式「记住/我叫…」即使 defer 也同步落盘。挂断 flush 失败写入 `pending_mem0.json`，下次会话再试。软伙伴使用 `{user_id}::companion::{companion_id}` namespace，伙伴间不共享私密长期记忆；无 `companion_id` 的硬件路径保持用户级 namespace。检索缓存 TTL 为 300 秒，等待预算由 `SHUXIN_MEM0_SEARCH_TIMEOUT_MS` 控制（默认 2500ms）；search 空时回退 `get_all`。无长期命中时系统提示禁止装懂。
+
+**断线 flush 约束**：`hello` → `_reset_runtime` 会 teardown Agent，但**不得**把 `_shutdown_started` 留成 True，否则挂断时 `finally: shutdown()` 直接 return，生产会出现零 `[Mem0-Flush]`、跨通话 `hits=0`。验收：挂断后必见 `[Mem0-Flush] trigger=session_end agent=1 …`。
 
 环境变量：`SHUXIN_SUMMARY_EVERY_N`、`SHUXIN_SUMMARY_MODEL`、`SHUXIN_SUMMARY_MAX_TOKENS`、`SHUXIN_MEM0_SEARCH_TIMEOUT_MS`。`compress_if_needed` 仍只处理音频附件配额，与对话摘要无关。
 
