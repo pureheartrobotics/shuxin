@@ -73,8 +73,12 @@ class TtsSentenceSegmenter:
         base_path: Path,
         sentence_index: int,
         turn_started: float,
-    ) -> Path:
-        """合成单句文本并实时发送音频。如果全是括弧动作文本，服务端静默忽略合成但会发送控制事件。"""
+    ):
+        """合成单句并下发音频。
+
+        无可读文本时仍发 sentence_start/stop（供动作），返回 None。
+        合成失败返回 None，便于 session 用整段 reply 回退合成。
+        """
         if sentence_index == 1:
             output_path = base_path
         else:
@@ -104,7 +108,8 @@ class TtsSentenceSegmenter:
                     "total_elapsed_ms": _elapsed_ms(turn_started),
                 }
             )
-            return output_path
+            # None → session 仍可用完整 reply 回退合成
+            return None
 
         try:
             sentence_started = time.perf_counter()
@@ -138,6 +143,15 @@ class TtsSentenceSegmenter:
                     "index": sentence_index,
                     "elapsed_ms": 10,
                     "total_elapsed_ms": _elapsed_ms(turn_started),
+                    "error_kind": "tts_failed",
                 }
             )
-            return output_path
+            await self.session._send_json(
+                {
+                    "type": "agent",
+                    "state": "error",
+                    "error_kind": "tts_failed",
+                    "message": "语音合成失败，正在尝试整段重试",
+                }
+            )
+            return None

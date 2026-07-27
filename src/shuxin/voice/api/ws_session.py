@@ -669,15 +669,17 @@ class _VoiceWebSocketSession:
                         tts_started = time.perf_counter()
                         await self._send_json({"type": "tts", "state": "start"})
                     sentence_index += 1
-                    speech_path = await self.tts_pipeline.synthesize_and_send(
+                    sent_path = await self.tts_pipeline.synthesize_and_send(
                         segment,
                         paths.reply_mp3,
                         sentence_index,
                         started,
                     )
-                    tts_total_ms = _elapsed_ms(tts_started)
-                    if first_tts_audio_ms is None:
-                        first_tts_audio_ms = _elapsed_ms(started)
+                    if sent_path is not None:
+                        speech_path = sent_path
+                        tts_total_ms = _elapsed_ms(tts_started)
+                        if first_tts_audio_ms is None:
+                            first_tts_audio_ms = _elapsed_ms(started)
 
             segments, sentence_buffer = self.tts_pipeline.pop_segments(sentence_buffer, force=True)
             for segment in segments:
@@ -685,15 +687,17 @@ class _VoiceWebSocketSession:
                     tts_started = time.perf_counter()
                     await self._send_json({"type": "tts", "state": "start"})
                 sentence_index += 1
-                speech_path = await self.tts_pipeline.synthesize_and_send(
+                sent_path = await self.tts_pipeline.synthesize_and_send(
                     segment,
                     paths.reply_mp3,
                     sentence_index,
                     started,
                 )
-                tts_total_ms = _elapsed_ms(tts_started)
-                if first_tts_audio_ms is None:
-                    first_tts_audio_ms = _elapsed_ms(started)
+                if sent_path is not None:
+                    speech_path = sent_path
+                    tts_total_ms = _elapsed_ms(tts_started)
+                    if first_tts_audio_ms is None:
+                        first_tts_audio_ms = _elapsed_ms(started)
 
             reply = "".join(reply_parts).strip()
             agent_ms = _elapsed_ms(agent_started)
@@ -718,11 +722,12 @@ class _VoiceWebSocketSession:
                 speech_path = await self.tts_pipeline.synthesize_and_send(
                     reply,
                     paths.reply_mp3,
-                    1,
+                    max(1, sentence_index + 1),
                     started,
                 )
                 tts_total_ms = _elapsed_ms(tts_started)
-                first_tts_audio_ms = _elapsed_ms(started)
+                if speech_path is not None and first_tts_audio_ms is None:
+                    first_tts_audio_ms = _elapsed_ms(started)
             if speech_path is None:
                 speech_path = paths.reply_mp3
                 speech_path.write_bytes(b"")
