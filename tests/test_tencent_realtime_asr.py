@@ -11,6 +11,7 @@ from shuxin.voice.integrations.tencent_realtime_asr import (
     PCM_16K_200MS_BYTES,
     TencentRealtimeASRSession,
     build_tencent_realtime_asr_url,
+    is_benign_asr_idle_error,
     is_tencent_realtime_stt,
     parse_tencent_realtime_asr_message,
 )
@@ -100,3 +101,85 @@ def test_tencent_realtime_stt_type_detection():
     assert is_tencent_realtime_stt(ProviderConfig(type="tencent-realtime"))
     assert is_tencent_realtime_stt(ProviderConfig(type="tencent-asr-realtime"))
     assert not is_tencent_realtime_stt(ProviderConfig(type="local"))
+
+
+def test_is_benign_asr_idle_error():
+    assert is_benign_asr_idle_error("客户端超过15秒未发送音频数据")
+    assert is_benign_asr_idle_error("Tencent realtime ASR failed: 未发送音频数据")
+    assert not is_benign_asr_idle_error("signature error")
+
+
+def test_asr_finish_cancels_hung_reader(monkeypatch):
+    monkeypatch.setattr(
+        "shuxin.voice.integrations.tencent_realtime_asr.ASR_FINISH_TIMEOUT_SECONDS",
+        0.05,
+    )
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def close(self):
+            self.closed = True
+
+    async def hung_reader():
+        await asyncio.sleep(30)
+
+    async def run():
+        websocket = FakeWebSocket()
+        session = TencentRealtimeASRSession(
+            ProviderConfig(type="tencent-realtime"),
+            on_result=lambda _result: None,
+        )
+        session._websocket = websocket
+        session._reader_task = asyncio.create_task(hung_reader())
+        text = await session.finish()
+        return websocket, text, session._reader_task
+
+    websocket, text, reader = asyncio.run(run())
+    assert websocket.closed
+    assert reader is None
+    assert text == ""
+    assert '{"type": "end"}' in websocket.sent
+
+
+def test_asr_read_loop_swallows_idle_timeout():
+    class FakeWebSocket:
+        def __init__(self):
+            self.messages = [
+                json.dumps({"code": 4000, "message": "客户端超过15秒未发送音频数据"}),
+            ]
+            self._i = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._i >= len(self.messages):
+                raise StopAsyncIteration
+            msg = self.messages[self._i]
+            self._i += 1
+            return msg
+
+    async def run():
+        ends = []
+
+        async def on_end(reason, text):
+            ends.append((reason, text))
+
+        session = TencentRealtimeASRSession(
+            ProviderConfig(type="tencent-realtime"),
+            on_result=lambda _result: None,
+            on_end=on_end,
+        )
+        session._websocket = FakeWebSocket()
+        session._last_text = "你好"
+        await session._read_loop()
+        return ends
+
+    ends = asyncio.run(run())
+    assert ends == [("idle", "你好")]
