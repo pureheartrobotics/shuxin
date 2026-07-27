@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -85,3 +86,8 @@ class SpeechTranscriber:
                 "elapsed_ms": _elapsed_ms(self.realtime_stt_started),
             }
         )
+        if result.is_sentence_final and str(result.text or "").strip():
+            # Fire-and-forget continuous turn (soft call mode)
+            asyncio.create_task(
+                self.session._trigger_continuous_turn(str(result.text))
+            )

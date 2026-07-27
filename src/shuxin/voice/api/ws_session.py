@@ -199,6 +199,9 @@ class _VoiceWebSocketSession:
         self._location_cache: dict | None = None
         self._agent_init_task: Optional[asyncio.Task] = None
         self.companion_id: Optional[str] = None
+        self.conversation_mode = "push_to_talk"  # or continuous (soft call)
+        self.turn_in_progress = False
+        self._forced_user_text: Optional[str] = None
 
         # 初始化独立管道处理器
         self.stt_pipeline = SpeechTranscriber(self)
@@ -331,6 +334,11 @@ class _VoiceWebSocketSession:
         )
         self.client_id = data.get("client_id") or "web-demo"
         self.companion_id = str(data.get("companion_id") or "").strip() or None
+        mode = str(data.get("conversation_mode") or "push_to_talk").strip().lower()
+        self.conversation_mode = (
+            "continuous" if mode == "continuous" else "push_to_talk"
+        )
+        self.turn_in_progress = False
         self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
         self.session_id = data.get("session_id") or uuid.uuid4().hex
         if not self.factory_acceptance:
@@ -423,7 +431,41 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "listen", "state": "start"})
         elif state == "stop":
             self.listening = False
+            if self.turn_in_progress:
+                await self._send_json({"type": "listen", "state": "stop"})
+                return
             await self._process_turn()
+
+    async def _trigger_continuous_turn(self, text: str) -> None:
+        """continuous 模式：sentence_final 自动出轮（播音关麦由客户端配合）。"""
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return
+        if self.conversation_mode != "continuous":
+            return
+        if self.turn_in_progress or not self.listening:
+            return
+        self.listening = False
+        self.turn_in_progress = True
+        try:
+            # 结束当前 ASR 会话，避免播音回采；客户端会在 TTS 后重新 listen start
+            try:
+                await self.stt_pipeline.finish()
+            except Exception as exc:
+                logger.info("continuous asr finish: %s", exc)
+            # Reuse listen-stop path: seed audio_chunks empty and inject text via process
+            await self._process_turn_with_text(cleaned)
+        finally:
+            self.turn_in_progress = False
+
+    async def _process_turn_with_text(self, text: str) -> None:
+        """Run a voice turn using provided transcript (skip waiting for listen-stop ASR)."""
+        # Temporarily stash so _process_turn's STT path can use forced text
+        self._forced_user_text = text
+        try:
+            await self._process_turn()
+        finally:
+            self._forced_user_text = None
 
     async def _handle_abort_msg(self, data: dict[str, Any]) -> None:
         self.audio_chunks = []
@@ -486,12 +528,13 @@ class _VoiceWebSocketSession:
         mp3 下发 -> 事件和附件索引入库。第一版是 turn-based 准实时，
         即用户松手后才开始识别和回复。
         """
-        if not self.audio_chunks:
+        forced = getattr(self, "_forced_user_text", None)
+        if not self.audio_chunks and forced is None:
             await self._send_json({"type": "error", "message": "no audio received"})
             return
 
         started = time.perf_counter()
-        pcm = b"".join(self.audio_chunks)
+        pcm = b"".join(self.audio_chunks) if self.audio_chunks else b""
 
         try:
             await self._assert_quota_for_turn()
@@ -503,11 +546,20 @@ class _VoiceWebSocketSession:
             self.audio_store.write_input_wav(pcm, paths.input_wav)
             await self._send_json({"type": "stt", "state": "start"})
             stt_started = time.perf_counter()
-            if self.stt_pipeline.realtime_asr is not None:
+            forced = getattr(self, "_forced_user_text", None)
+            if forced is not None:
+                text = str(forced).strip()
+                try:
+                    await self.stt_pipeline.finish()
+                except Exception:
+                    pass
+                stt_ms = 0
+            elif self.stt_pipeline.realtime_asr is not None:
                 text = (await self.stt_pipeline.finish()) or ""
+                stt_ms = _elapsed_ms(stt_started)
             else:
                 text = await self.stt.transcribe(paths.input_wav)
-            stt_ms = _elapsed_ms(stt_started)
+                stt_ms = _elapsed_ms(stt_started)
             await self._send_json(
                 {"type": "stt", "state": "final", "text": text, "elapsed_ms": stt_ms}
             )
