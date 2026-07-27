@@ -166,11 +166,20 @@ def test_asr_read_loop_swallows_idle_timeout():
             return msg
 
     async def run():
+        ends = []
+
+        async def on_end(reason, text):
+            ends.append((reason, text))
+
         session = TencentRealtimeASRSession(
             ProviderConfig(type="tencent-realtime"),
             on_result=lambda _result: None,
+            on_end=on_end,
         )
         session._websocket = FakeWebSocket()
+        session._last_text = "你好"
         await session._read_loop()
+        return ends
 
-    asyncio.run(run())
+    ends = asyncio.run(run())
+    assert ends == [("idle", "你好")]

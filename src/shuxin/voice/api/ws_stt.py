@@ -29,23 +29,34 @@ class SpeechTranscriber:
         self.realtime_asr: TencentRealtimeASRSession | None = None
         self.realtime_stt_started: float = 0.0
 
-    async def start(self) -> None:
-        """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
+    async def start(self) -> str:
+        """在录音开始时启动腾讯云实时 ASR。返回 started|skipped。"""
         if self.session._agent_init_task is not None:
             await self.session._agent_init_task
         if self.session.device is None:
             self.session.device = await self.session.repo.get_device(self.session.device_id)
         if self.session.device is None or not is_tencent_realtime_stt(self.session.device.stt):
-            return
+            logger.info(
+                "[SOFT-VOICE] asr_skip device=%s reason=not_tencent_realtime",
+                self.session.device_id,
+            )
+            return "skipped"
         if self.realtime_asr is not None:
             await self.realtime_asr.close()
         self.realtime_stt_started = time.perf_counter()
         self.realtime_asr = TencentRealtimeASRSession(
             self.session.device.stt,
             on_result=self._handle_realtime_asr_result,
+            on_end=self._handle_realtime_asr_end,
         )
         await self.realtime_asr.start()
         await self.session._send_json({"type": "stt", "state": "stream_start"})
+        logger.info(
+            "[SOFT-VOICE] asr_started device=%s client=%s",
+            self.session.device_id,
+            self.session.client_id,
+        )
+        return "started"
 
     async def send_audio(self, pcm_frame: bytes) -> None:
         """向上行 ASR 音频流发送 PCM 数据块。"""
@@ -57,6 +68,11 @@ class SpeechTranscriber:
         if self.realtime_asr is not None:
             try:
                 text = await self.realtime_asr.finish()
+                logger.info(
+                    "[SOFT-VOICE] asr_finish text_len=%s device=%s",
+                    len(text or ""),
+                    self.session.device_id,
+                )
                 return text
             finally:
                 self.realtime_asr = None
@@ -68,6 +84,22 @@ class SpeechTranscriber:
             await self.realtime_asr.close()
             self.realtime_asr = None
 
+    async def _handle_realtime_asr_end(self, reason: str, text: str) -> None:
+        cleaned = str(text or "").strip()
+        logger.info(
+            "[SOFT-VOICE] asr_%s last_text_len=%s device=%s",
+            reason,
+            len(cleaned),
+            self.session.device_id,
+        )
+        if reason == "idle" and cleaned:
+            asyncio.create_task(
+                self.session._trigger_continuous_turn(
+                    cleaned,
+                    source="asr_idle_fallback",
+                )
+            )
+
     async def _handle_realtime_asr_result(
         self,
         result: TencentRealtimeASRResult,
@@ -78,6 +110,14 @@ class SpeechTranscriber:
             state = "sentence_final"
         if result.is_stream_final:
             state = "stream_final"
+        text = str(result.text or "")
+        if state in {"sentence_final", "stream_final"}:
+            logger.info(
+                "[SOFT-VOICE] asr %s text_len=%s device=%s",
+                state,
+                len(text.strip()),
+                self.session.device_id,
+            )
         await self.session._send_json(
             {
                 "type": "stt",
@@ -86,8 +126,10 @@ class SpeechTranscriber:
                 "elapsed_ms": _elapsed_ms(self.realtime_stt_started),
             }
         )
-        if result.is_sentence_final and str(result.text or "").strip():
-            # Fire-and-forget continuous turn (soft call mode)
+        if result.is_sentence_final and text.strip():
             asyncio.create_task(
-                self.session._trigger_continuous_turn(str(result.text))
+                self.session._trigger_continuous_turn(
+                    text,
+                    source="sentence_final",
+                )
             )

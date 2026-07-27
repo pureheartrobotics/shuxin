@@ -124,10 +124,12 @@ class TencentRealtimeASRSession:
         config: ProviderConfig,
         *,
         on_result: Callable[[TencentRealtimeASRResult], Awaitable[None]],
+        on_end: Callable[[str, str], Awaitable[None]] | None = None,
         chunk_bytes: int = PCM_16K_200MS_BYTES,
     ) -> None:
         self.config = config
         self.on_result = on_result
+        self.on_end = on_end
         self.chunk_bytes = chunk_bytes
         self._websocket = None
         self._reader_task: asyncio.Task | None = None
@@ -214,8 +216,18 @@ class TencentRealtimeASRSession:
             self._websocket = None
         self._buffer.clear()
 
+    async def _emit_end(self, reason: str) -> None:
+        if self.on_end is None:
+            return
+        try:
+            await self.on_end(reason, self.final_text)
+        except Exception as exc:
+            logger.warning("Tencent ASR on_end(%s) failed: %s", reason, exc)
+
     async def _read_loop(self) -> None:
         assert self._websocket is not None
+        end_reason = "done"
+        cancelled = False
         try:
             async for message in self._websocket:
                 if isinstance(message, bytes):
@@ -225,6 +237,7 @@ class TencentRealtimeASRSession:
                 except RuntimeError as exc:
                     if is_benign_asr_idle_error(str(exc)):
                         logger.warning("Tencent ASR idle timeout: %s", exc)
+                        end_reason = "idle"
                         break
                     raise
                 if result.text:
@@ -233,11 +246,19 @@ class TencentRealtimeASRSession:
                     self._final_parts.append(result.final_text)
                 await self.on_result(result)
                 if result.is_stream_final:
+                    end_reason = "stream_final"
                     break
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception as exc:
             if is_benign_asr_idle_error(str(exc)):
                 logger.warning("Tencent ASR read loop idle: %s", exc)
-                return
-            logger.warning("Tencent ASR read loop error: %s", exc)
+                end_reason = "idle"
+            else:
+                logger.warning("Tencent ASR read loop error: %s", exc)
+                end_reason = "error"
+        finally:
+            # idle/error：continuous 可用已有识别文本兜底出轮；cancel 不通知
+            if not cancelled and end_reason in {"idle", "error"}:
+                await self._emit_end(end_reason)
