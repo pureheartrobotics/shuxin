@@ -108,6 +108,13 @@ async function load() {
     dailyLeft.value =
       quota.daily_allowance_left != null ? Number(quota.daily_allowance_left) : null;
     quotaExhausted.value = Boolean(quota.exhausted);
+    try {
+      if (uni.getStorageSync("shuxin_partners_dirty") === "1") {
+        uni.removeStorageSync("shuxin_partners_dirty");
+      }
+    } catch {
+      /* ignore */
+    }
   } catch (e: any) {
     uni.showToast({ title: e.message || "加载失败", icon: "none" });
   }

@@ -23,7 +23,10 @@
     <view v-if="showResult && result" class="result" :class="{ pop: showResult }">
       <text class="result-title">{{ result.display_name }}</text>
       <text class="result-mbti">{{ result.mbti }}</text>
-      <button class="secondary" @click="goChat">开始聊天</button>
+      <view class="result-actions">
+        <button class="ghost" @click="goPartners">查看伙伴</button>
+        <button class="secondary" @click="goChat">开始聊天</button>
+      </view>
     </view>
   </view>
 </template>
@@ -135,6 +138,11 @@ async function onDraw() {
     const companion = res.companion || {};
     result.value = companion;
     remaining.value = Number(res.free_gacha_remaining ?? remaining.value);
+    try {
+      uni.setStorageSync("shuxin_partners_dirty", "1");
+    } catch {
+      /* ignore */
+    }
     await animateReels(companion.mbti || (res.letters || []).join(""));
   } catch (e: any) {
     clearSpinTimers();
@@ -143,6 +151,10 @@ async function onDraw() {
   } finally {
     busy.value = false;
   }
+}
+
+function goPartners() {
+  uni.switchTab({ url: "/pages/partners/partners" });
 }
 
 function goChat() {
@@ -246,7 +258,21 @@ onShow(loadConfig);
 }
 .result-title { display: block; font-size: 40rpx; font-weight: 800; color: #1c1b19; }
 .result-mbti { display: block; margin: 12rpx 0 28rpx; color: #7a6f62; letter-spacing: 6rpx; }
+.result-actions {
+  display: flex;
+  gap: 16rpx;
+  justify-content: center;
+}
+.ghost {
+  flex: 1;
+  background: #e4eee8;
+  color: #2f604f;
+  border-radius: 999rpx;
+  border: none;
+  font-weight: 600;
+}
 .secondary {
+  flex: 1;
   background: #2f604f;
   color: #fff;
   border-radius: 999rpx;
