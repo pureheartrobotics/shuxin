@@ -1,5 +1,6 @@
 /**
- * 小程序软设备 Voice WebSocket 客户端（PCM 上行 / mp3 下行，对齐 web-demo）。
+ * 小程序软设备 Voice WebSocket：PCM 上行 / 分句 mp3 下行。
+ * continuous 模式：sentence_final 由服务端出轮；播音时关麦，播完再听。
  */
 const API_BASE = import.meta.env.VITE_SHUXIN_API_BASE || "http://localhost:8765";
 
@@ -10,24 +11,34 @@ function wsBaseFromHttp(httpBase: string): string {
 }
 
 export type SoftVoiceHandlers = {
-  onStt?: (text: string) => void;
+  onStt?: (text: string, state: string) => void;
   onDelta?: (text: string) => void;
   onReply?: (text: string) => void;
+  onThinking?: () => void;
+  onTtsIdle?: () => void;
   onError?: (message: string) => void;
   onReady?: () => void;
   onBusy?: (busy: boolean) => void;
 };
+
+type PlayItem = { path: string };
 
 export class SoftVoiceSession {
   private socketTask: UniApp.SocketTask | null = null;
   private ready = false;
   private listening = false;
   private recorder: UniApp.RecorderManager | null = null;
-  private mp3Chunks: ArrayBuffer[] = [];
+  private sentenceChunks: ArrayBuffer[] = [];
+  private playQueue: PlayItem[] = [];
+  private playing = false;
+  private sessionTtsActive = false;
+  private autoResumeListen = false;
+  private conversationMode: "push_to_talk" | "continuous" = "push_to_talk";
   private handlers: SoftVoiceHandlers;
   private deviceId: string;
   private deviceSecret: string;
   private companionId: string;
+  private currentAudio: UniApp.InnerAudioContext | null = null;
 
   constructor(
     creds: { device_id: string; device_secret: string },
@@ -40,8 +51,10 @@ export class SoftVoiceSession {
     this.handlers = handlers;
   }
 
-  async connect(): Promise<void> {
+  async connect(opts?: { conversationMode?: "push_to_talk" | "continuous" }): Promise<void> {
     if (this.socketTask) return;
+    this.conversationMode = opts?.conversationMode || "push_to_talk";
+    this.autoResumeListen = this.conversationMode === "continuous";
     const url = `${wsBaseFromHttp(API_BASE.replace(/\/$/, ""))}/ws/voice`;
     await new Promise<void>((resolve, reject) => {
       const task = uni.connectSocket({
@@ -57,6 +70,7 @@ export class SoftVoiceSession {
             device_secret: this.deviceSecret,
             client_id: "soft-miniprogram",
             companion_id: this.companionId,
+            conversation_mode: this.conversationMode,
             audio_params: { format: "pcm", sample_rate: 16000, channels: 1 },
           }),
         });
@@ -69,7 +83,6 @@ export class SoftVoiceSession {
         this.handleMessage(msg.data);
         if (this.ready) resolve();
       });
-      // 超时保护
       setTimeout(() => {
         if (!this.ready) reject(new Error("voice hello timeout"));
       }, 8000);
@@ -79,8 +92,7 @@ export class SoftVoiceSession {
 
   private handleMessage(raw: string | ArrayBuffer) {
     if (typeof raw !== "string") {
-      // mp3 binary chunk
-      this.mp3Chunks.push(raw as ArrayBuffer);
+      this.sentenceChunks.push(raw as ArrayBuffer);
       return;
     }
     let data: any;
@@ -96,7 +108,16 @@ export class SoftVoiceSession {
       return;
     }
     if (t === "stt" && ["partial", "final", "sentence_final", "stream_final"].includes(data.state)) {
-      if (data.text) this.handlers.onStt?.(String(data.text));
+      if (data.text) this.handlers.onStt?.(String(data.text), String(data.state));
+      if (data.state === "sentence_final" && this.conversationMode === "continuous") {
+        this.stopRecorderOnly();
+      }
+      return;
+    }
+    if (t === "agent" && data.state === "thinking") {
+      this.stopRecorderOnly();
+      this.handlers.onThinking?.();
+      this.handlers.onBusy?.(true);
       return;
     }
     if (t === "agent" && data.state === "delta" && data.text) {
@@ -107,19 +128,38 @@ export class SoftVoiceSession {
       this.handlers.onReply?.(String(data.text));
       return;
     }
-    if (t === "tts" && data.state === "start") {
-      this.mp3Chunks = [];
+    if (t === "tts" && data.state === "sentence_start") {
+      this.sentenceChunks = [];
+      this.sessionTtsActive = true;
       this.handlers.onBusy?.(true);
+      this.stopRecorderOnly();
+      return;
+    }
+    if (t === "tts" && data.state === "sentence_stop") {
+      void this.enqueueSentenceMp3();
+      return;
+    }
+    if (t === "tts" && data.state === "start") {
+      this.sentenceChunks = [];
+      this.sessionTtsActive = true;
+      this.handlers.onBusy?.(true);
+      this.stopRecorderOnly();
       return;
     }
     if (t === "tts" && data.state === "stop") {
-      this.handlers.onBusy?.(false);
-      void this.playCollectedMp3();
+      this.sessionTtsActive = false;
+      // 若还有句缓冲（兼容整段下发），入队
+      if (this.sentenceChunks.length) {
+        void this.enqueueSentenceMp3().then(() => this.maybeResumeAfterTts());
+      } else {
+        this.maybeResumeAfterTts();
+      }
       return;
     }
     if (t === "error" || (t === "agent" && data.state === "error")) {
       this.handlers.onError?.(String(data.message || data.error_kind || "voice error"));
       this.handlers.onBusy?.(false);
+      this.sessionTtsActive = false;
     }
   }
 
@@ -138,9 +178,11 @@ export class SoftVoiceSession {
   }
 
   startListen() {
-    if (!this.ready || !this.recorder || this.listening) return;
+    if (!this.ready || !this.recorder || this.listening || this.playing || this.sessionTtsActive) {
+      return;
+    }
     this.listening = true;
-    this.mp3Chunks = [];
+    this.sentenceChunks = [];
     this.handlers.onBusy?.(true);
     this.socketTask?.send({ data: JSON.stringify({ type: "listen", state: "start" }) });
     this.recorder.start({
@@ -164,13 +206,25 @@ export class SoftVoiceSession {
     this.socketTask?.send({ data: JSON.stringify({ type: "listen", state: "stop" }) });
   }
 
-  private async playCollectedMp3() {
-    if (!this.mp3Chunks.length) return;
+  private stopRecorderOnly() {
+    if (!this.listening) return;
+    this.listening = false;
     try {
-      const total = this.mp3Chunks.reduce((n, b) => n + b.byteLength, 0);
+      this.recorder?.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private async enqueueSentenceMp3() {
+    if (!this.sentenceChunks.length) return;
+    const chunks = this.sentenceChunks;
+    this.sentenceChunks = [];
+    try {
+      const total = chunks.reduce((n, b) => n + b.byteLength, 0);
       const merged = new Uint8Array(total);
       let offset = 0;
-      for (const chunk of this.mp3Chunks) {
+      for (const chunk of chunks) {
         merged.set(new Uint8Array(chunk), offset);
         offset += chunk.byteLength;
       }
@@ -178,21 +232,78 @@ export class SoftVoiceSession {
       const userDataPath =
         (typeof wx !== "undefined" && (wx as any).env && (wx as any).env.USER_DATA_PATH) ||
         `${uni.env.USER_DATA_PATH || ""}`;
-      const path = `${userDataPath}/soft-tts-${Date.now()}.mp3`;
+      const path = `${userDataPath}/soft-tts-${Date.now()}-${Math.random().toString(16).slice(2)}.mp3`;
       fs.writeFileSync(path, merged.buffer as any, "binary");
-      const audio = uni.createInnerAudioContext();
-      audio.src = path;
-      audio.autoplay = true;
-      audio.onEnded(() => audio.destroy());
-      audio.onError(() => audio.destroy());
+      this.playQueue.push({ path });
+      void this.pumpPlayQueue();
     } catch (e: any) {
       this.handlers.onError?.(e?.message || "播放失败");
-    } finally {
-      this.mp3Chunks = [];
+    }
+  }
+
+  private async pumpPlayQueue() {
+    if (this.playing) return;
+    const next = this.playQueue.shift();
+    if (!next) {
+      this.maybeResumeAfterTts();
+      return;
+    }
+    this.playing = true;
+    this.handlers.onBusy?.(true);
+    await new Promise<void>((resolve) => {
+      try {
+        const audio = uni.createInnerAudioContext();
+        this.currentAudio = audio;
+        audio.src = next.path;
+        audio.obeyMuteSwitch = false;
+        audio.autoplay = true;
+        const done = () => {
+          try {
+            audio.destroy();
+          } catch {
+            /* ignore */
+          }
+          if (this.currentAudio === audio) this.currentAudio = null;
+          resolve();
+        };
+        audio.onEnded(done);
+        audio.onError(() => {
+          this.handlers.onError?.("播放失败");
+          done();
+        });
+        try {
+          audio.play();
+        } catch {
+          done();
+        }
+      } catch {
+        resolve();
+      }
+    });
+    this.playing = false;
+    void this.pumpPlayQueue();
+  }
+
+  private maybeResumeAfterTts() {
+    if (this.sessionTtsActive || this.playing || this.playQueue.length) return;
+    this.handlers.onBusy?.(false);
+    this.handlers.onTtsIdle?.();
+    if (this.autoResumeListen && this.ready) {
+      this.startListen();
     }
   }
 
   close() {
+    this.autoResumeListen = false;
+    this.sessionTtsActive = false;
+    this.playQueue = [];
+    try {
+      this.currentAudio?.stop();
+      this.currentAudio?.destroy();
+    } catch {
+      /* ignore */
+    }
+    this.currentAudio = null;
     try {
       this.recorder?.stop();
     } catch {
