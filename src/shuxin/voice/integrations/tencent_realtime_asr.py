@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import random
 import time
@@ -15,9 +16,12 @@ from urllib.parse import quote, urlencode
 
 from shuxin.voice.config.config import ProviderConfig
 
+logger = logging.getLogger("shuxin.voice.integrations.tencent_realtime_asr")
+
 ASR_HOST = "asr.cloud.tencent.com"
 ASR_PATH_TEMPLATE = "/asr/v2/{appid}"
 PCM_16K_200MS_BYTES = 6400
+ASR_FINISH_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass
@@ -31,6 +35,12 @@ class TencentRealtimeASRResult:
 
 def is_tencent_realtime_stt(config: ProviderConfig) -> bool:
     return (config.type or "").lower() in {"tencent-realtime", "tencent-asr-realtime"}
+
+
+def is_benign_asr_idle_error(message: str) -> bool:
+    """句末停麦后腾讯侧常见空闲超时，finish/close 时应吞掉。"""
+    text = str(message or "")
+    return ("超过15秒未发送音频" in text) or ("未发送音频数据" in text)
 
 
 def build_tencent_realtime_asr_url(
@@ -155,14 +165,37 @@ class TencentRealtimeASRSession:
     async def finish(self) -> str:
         if self._websocket is None:
             return self.final_text
-        if self._buffer:
-            await self._websocket.send(bytes(self._buffer))
-            self._buffer.clear()
-        await self._websocket.send(json.dumps({"type": "end"}))
-        if self._reader_task is not None:
-            await self._reader_task
-        await self._websocket.close()
-        self._websocket = None
+        try:
+            if self._buffer:
+                await self._websocket.send(bytes(self._buffer))
+                self._buffer.clear()
+            await self._websocket.send(json.dumps({"type": "end"}))
+            if self._reader_task is not None:
+                try:
+                    await asyncio.wait_for(
+                        self._reader_task,
+                        timeout=ASR_FINISH_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Tencent ASR finish timed out; cancelling reader")
+                    self._reader_task.cancel()
+                    try:
+                        await self._reader_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                except Exception as exc:
+                    if is_benign_asr_idle_error(str(exc)):
+                        logger.warning("Tencent ASR idle while finishing: %s", exc)
+                    else:
+                        logger.warning("Tencent ASR finish reader error: %s", exc)
+        finally:
+            self._reader_task = None
+            if self._websocket is not None:
+                try:
+                    await self._websocket.close()
+                except Exception:
+                    pass
+                self._websocket = None
         return self.final_text
 
     async def close(self) -> None:
@@ -170,24 +203,41 @@ class TencentRealtimeASRSession:
             self._reader_task.cancel()
             try:
                 await self._reader_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
             self._reader_task = None
         if self._websocket is not None:
-            await self._websocket.close()
+            try:
+                await self._websocket.close()
+            except Exception:
+                pass
             self._websocket = None
         self._buffer.clear()
 
     async def _read_loop(self) -> None:
         assert self._websocket is not None
-        async for message in self._websocket:
-            if isinstance(message, bytes):
-                continue
-            result = parse_tencent_realtime_asr_message(message)
-            if result.text:
-                self._last_text = result.text
-            if result.is_sentence_final and result.final_text:
-                self._final_parts.append(result.final_text)
-            await self.on_result(result)
-            if result.is_stream_final:
-                break
+        try:
+            async for message in self._websocket:
+                if isinstance(message, bytes):
+                    continue
+                try:
+                    result = parse_tencent_realtime_asr_message(message)
+                except RuntimeError as exc:
+                    if is_benign_asr_idle_error(str(exc)):
+                        logger.warning("Tencent ASR idle timeout: %s", exc)
+                        break
+                    raise
+                if result.text:
+                    self._last_text = result.text
+                if result.is_sentence_final and result.final_text:
+                    self._final_parts.append(result.final_text)
+                await self.on_result(result)
+                if result.is_stream_final:
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if is_benign_asr_idle_error(str(exc)):
+                logger.warning("Tencent ASR read loop idle: %s", exc)
+                return
+            logger.warning("Tencent ASR read loop error: %s", exc)
