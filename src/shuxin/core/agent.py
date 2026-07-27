@@ -131,7 +131,14 @@ class Agent:
         config: 配置对象。为 ``None`` 时自动从默认路径加载。
     """
 
-    def __init__(self, config: Optional[Config] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        *,
+        memory_data_dir: Optional[str] = None,
+        memory_user_id: Optional[str] = None,
+        defer_mem0_writes: bool = False,
+    ) -> None:
         self.config = config or Config.load()
         self.context = AgentContext()
 
@@ -140,7 +147,10 @@ class Agent:
         self.identity = IdentityEngine()
         self.llm = LLMProvider()
         self.memory = MemoryManager(
-            data_dir=str(Path(self.config.shuxin_home) / "memory")
+            data_dir=memory_data_dir
+            or str(Path(self.config.shuxin_home) / "memory"),
+            mem0_user_id=memory_user_id,
+            defer_mem0_writes=defer_mem0_writes,
         )
         self.plugins = PluginManager()
 

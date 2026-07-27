@@ -127,11 +127,12 @@ def test_low_semantic_query_bypass(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_get_facts_summary_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import time
     monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    monkeypatch.setenv("SHUXIN_MEM0_SEARCH_TIMEOUT_MS", "50")
     mem = MemoryManager(data_dir=str(tmp_path / "users" / "alice" / "memory"))
     mem._last_mem0_results = ["user likes tea"]
 
     def _slow_search(query):
-        time.sleep(2.0)
+        time.sleep(0.2)
         return ["user likes cookies"]
 
     mem._search_mem0 = _slow_search
@@ -144,4 +145,76 @@ def test_get_facts_summary_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     # It should timeout and fallback to _last_mem0_results (likes tea)
     assert "user likes tea" in summary
     assert "user likes cookies" not in summary
-    assert elapsed < 1.2
+    assert elapsed < 0.15
+
+
+def test_deferred_mem0_stores_ordered_turns_only_when_flushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """语音通话中只积累短期原文，检查点再顺序提炼长期记忆。"""
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(
+        data_dir=str(tmp_path / "users" / "alice" / "companions" / "c1" / "memory"),
+        mem0_user_id="alice::companion::c1",
+        defer_mem0_writes=True,
+        mem0_checkpoint_turns=2,
+    )
+    calls: list[tuple[list[dict[str, str]], str]] = []
+
+    class _FakeMem0:
+        def add(self, messages, *, user_id, **kwargs):
+            calls.append((messages, user_id))
+            return {"results": []}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+
+    mem.add_message("user", "我叫小明")
+    mem.add_message("assistant", "你好，小明")
+    mem.add_message("user", "我养了一只猫")
+    mem.add_message("assistant", "它叫什么？")
+
+    assert calls == []
+    assert mem.flush_deferred_mem0(force=False) == 2
+    assert calls == [
+        (
+            [
+                {"role": "user", "content": "我叫小明"},
+                {"role": "assistant", "content": "你好，小明"},
+                {"role": "user", "content": "我养了一只猫"},
+                {"role": "assistant", "content": "它叫什么？"},
+            ],
+            "alice::companion::c1",
+        )
+    ]
+    assert mem.flush_deferred_mem0(force=True) == 0
+
+
+def test_deferred_mem0_keeps_turns_when_flush_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SHUXIN_MEM0_ENABLED", "1")
+    mem = MemoryManager(
+        data_dir=str(tmp_path / "users" / "alice" / "memory"),
+        defer_mem0_writes=True,
+        mem0_checkpoint_turns=1,
+    )
+    attempts = 0
+
+    class _FakeMem0:
+        def add(self, messages, *, user_id, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary failure")
+            return {"results": []}
+
+    mem._mem0_client = _FakeMem0()
+    mem._mem0_init_attempted = True
+    mem.add_message("user", "记住我喜欢茶")
+    mem.add_message("assistant", "记住了")
+
+    assert mem.flush_deferred_mem0(force=False) == 0
+    assert mem.deferred_mem0_turn_count == 1
+    assert mem.flush_deferred_mem0(force=True) == 1
+    assert mem.deferred_mem0_turn_count == 0

@@ -91,7 +91,14 @@ class FactMemory:
 class MemoryManager:
     """记忆管理器 — 短期记忆 + Mem0/Qdrant 或 facts.json 长期记忆。"""
 
-    def __init__(self, data_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        data_dir: Optional[str] = None,
+        *,
+        mem0_user_id: Optional[str] = None,
+        defer_mem0_writes: bool = False,
+        mem0_checkpoint_turns: int = 5,
+    ) -> None:
         if data_dir:
             self.data_dir = Path(data_dir)
         else:
@@ -107,12 +114,30 @@ class MemoryManager:
         self.facts: Dict[str, FactMemory] = {}
         self._lock = threading.Lock()
 
-        self._user_id = _user_id_from_data_dir(self.data_dir)
+        self._user_id = (
+            str(mem0_user_id).strip()
+            if mem0_user_id and str(mem0_user_id).strip()
+            else _user_id_from_data_dir(self.data_dir)
+        )
         self._last_user_text: str = ""
         self._pending_user_text: str = ""
+        self._defer_mem0_writes = bool(defer_mem0_writes)
+        self._mem0_checkpoint_turns = max(1, int(mem0_checkpoint_turns))
+        self._deferred_mem0_turns: List[tuple[str, str]] = []
+        self._mem0_flush_lock = threading.Lock()
         self._mem0_client: Any = None
         self._mem0_init_attempted = False
         self._mem0_top_k = max(1, int(os.environ.get("SHUXIN_MEM0_SEARCH_TOP_K", "8") or "8"))
+        try:
+            self._mem0_search_timeout_ms = max(
+                1,
+                int(
+                    os.environ.get("SHUXIN_MEM0_SEARCH_TIMEOUT_MS", "2500")
+                    or "2500"
+                ),
+            )
+        except (TypeError, ValueError):
+            self._mem0_search_timeout_ms = 2500
         # 搜索结果缓存：{query: (timestamp, results)}，减少重复 embedding API 调用
         self._mem0_search_cache: Dict[str, tuple] = {}
         self._mem0_cache_lock = threading.Lock()
@@ -241,6 +266,68 @@ class MemoryManager:
         else:
             _MEM0_EXECUTOR.submit(_run)
 
+    @property
+    def deferred_mem0_turn_count(self) -> int:
+        with self._lock:
+            return len(self._deferred_mem0_turns)
+
+    @property
+    def mem0_user_id(self) -> str:
+        return self._user_id
+
+    @property
+    def defer_mem0_writes(self) -> bool:
+        return self._defer_mem0_writes
+
+    @property
+    def mem0_checkpoint_turns(self) -> int:
+        return self._mem0_checkpoint_turns
+
+    def flush_deferred_mem0(self, *, force: bool = False) -> int:
+        """按对话顺序把语音会话待处理轮次交给 Mem0 提炼。
+
+        非强制模式仅在达到检查点轮数时执行；失败时保留队列供断线 flush 重试。
+        """
+        if not self._defer_mem0_writes or not self._mem0_enabled():
+            return 0
+        with self._mem0_flush_lock:
+            with self._lock:
+                pending = len(self._deferred_mem0_turns)
+                if pending == 0 or (not force and pending < self._mem0_checkpoint_turns):
+                    return 0
+                turns = list(self._deferred_mem0_turns)
+
+            self._ensure_mem0()
+            if self._mem0_client is None:
+                return 0
+            messages: List[Dict[str, str]] = []
+            for user_text, assistant_text in turns:
+                messages.extend(
+                    [
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": assistant_text},
+                    ]
+                )
+            try:
+                self._mem0_client.add(messages, user_id=self._user_id)
+            except Exception as exc:
+                logger.warning(
+                    "[Mem0-Flush] status=fail namespace=%s turns=%s error=%s",
+                    self._user_id,
+                    len(turns),
+                    exc,
+                )
+                return 0
+
+            with self._lock:
+                del self._deferred_mem0_turns[: len(turns)]
+            logger.warning(
+                "[Mem0-Flush] status=ok namespace=%s turns=%s",
+                self._user_id,
+                len(turns),
+            )
+            return len(turns)
+
     def _is_low_semantic_query(self, query: str) -> bool:
         q = query.strip()
         if len(q) < 5:
@@ -365,18 +452,28 @@ class MemoryManager:
             text = content.strip()
             self._last_user_text = text
             self._pending_user_text = text
-            if self._mem0_enabled() and self._should_sync_mem0_add(text):
+            if (
+                self._mem0_enabled()
+                and not self._defer_mem0_writes
+                and self._should_sync_mem0_add(text)
+            ):
                 self._ensure_mem0()
                 self._mem0_add_text(text, infer=False, metadata={"source": "explicit_user"})
         elif role == "assistant" and self._mem0_enabled():
             user_text = self._pending_user_text
             self._pending_user_text = ""
             if user_text:
-                self._enqueue_turn_add(
-                    user_text,
-                    content,
-                    sync=self._should_sync_mem0_add(user_text),
-                )
+                if self._defer_mem0_writes:
+                    with self._lock:
+                        self._deferred_mem0_turns.append(
+                            (user_text.strip(), content.strip())
+                        )
+                else:
+                    self._enqueue_turn_add(
+                        user_text,
+                        content,
+                        sync=self._should_sync_mem0_add(user_text),
+                    )
 
     def get_recent(self, n: int = 10) -> List[MemoryEntry]:
         with self._lock:
@@ -441,11 +538,27 @@ class MemoryManager:
                 hits = []
             else:
                 from concurrent.futures import TimeoutError
+                started = time.monotonic()
                 future = _MEM0_EXECUTOR.submit(self._search_mem0, query)
                 try:
-                    hits = future.result(timeout=0.8)
+                    hits = future.result(
+                        timeout=self._mem0_search_timeout_ms / 1000.0
+                    )
+                    logger.warning(
+                        "[Mem0-Search] search_ms=%s hits=%s timed_out=0 namespace=%s",
+                        int((time.monotonic() - started) * 1000),
+                        len(hits),
+                        self._user_id,
+                    )
                 except TimeoutError:
-                    logger.warning("[Mem0-Timeout] 长期记忆检索超时(>800ms)，降级复用历史记忆以保证 TTFT 体验")
+                    logger.warning(
+                        "[Mem0-Search] search_ms=%s hits=%s timed_out=1 "
+                        "timeout_ms=%s namespace=%s",
+                        int((time.monotonic() - started) * 1000),
+                        len(self._last_mem0_results),
+                        self._mem0_search_timeout_ms,
+                        self._user_id,
+                    )
                     hits = self._last_mem0_results
 
             if hits:
