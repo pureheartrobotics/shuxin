@@ -28,6 +28,9 @@ class _FakeCompanions:
     async def record_text_turn(self, **kwargs):
         return None
 
+    async def after_companion_turn(self, **kwargs):
+        return {}
+
     async def get_engagement_for_user(self, *, user_id: str, companion_id=None):
         return {
             "quota": {"remain_yuan": 9, "exhausted": False, "daily_allowance_left": 1.5},
@@ -99,7 +102,7 @@ def test_chat_text_merges_user_llm_into_soft_device(monkeypatch) -> None:
         repo = _FakeRepo(device)
         app.state.repo = repo
         with patch(
-            "shuxin.voice.api.routers.companions.VoiceService",
+            "shuxin.voice.api.routers.text_chat.VoiceService",
             return_value=fake_service,
         ):
             res = client.post(

@@ -176,7 +176,7 @@ def test_chat_text_includes_engagement(monkeypatch):
     fake_agent.chat.return_value = "嗨"
     fake_agent.last_usage = {"prompt_tokens": 10, "completion_tokens": 5}
 
-    with patch("shuxin.voice.service.VoiceService") as VS:
+    with patch("shuxin.voice.api.routers.text_chat.VoiceService") as VS:
         inst = VS.return_value
         inst.create_agent.return_value = fake_agent
         from shuxin.voice.server import create_app
