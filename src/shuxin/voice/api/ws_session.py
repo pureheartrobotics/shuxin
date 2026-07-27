@@ -444,9 +444,23 @@ class _VoiceWebSocketSession:
         if self.conversation_mode != "continuous":
             return
         if self.turn_in_progress or not self.listening:
+            logger.info(
+                "[SOFT-TURN] skip text_len=%s turn_in_progress=%s listening=%s device=%s",
+                len(cleaned),
+                self.turn_in_progress,
+                self.listening,
+                self.device_id,
+            )
             return
         self.listening = False
         self.turn_in_progress = True
+        logger.info(
+            "[SOFT-TURN] start text_len=%s device=%s companion=%s client=%s",
+            len(cleaned),
+            self.device_id,
+            self.companion_id,
+            self.client_id,
+        )
         try:
             # 结束当前 ASR 会话，避免播音回采；客户端会在 TTS 后重新 listen start
             try:
@@ -715,6 +729,14 @@ class _VoiceWebSocketSession:
             await self._send_json(
                 {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
             )
+            logger.info(
+                "[SOFT-TURN] reply_len=%s speech=%s error_kind=%s device=%s companion=%s",
+                len(reply or ""),
+                "yes" if speech_path is not None else "pending",
+                error_kind or "",
+                self.device_id,
+                self.companion_id,
+            )
 
             if speech_path is None and reply:
                 tts_started = time.perf_counter()
@@ -731,6 +753,13 @@ class _VoiceWebSocketSession:
             if speech_path is None:
                 speech_path = paths.reply_mp3
                 speech_path.write_bytes(b"")
+            logger.info(
+                "[SOFT-TURN] done reply_len=%s speech_bytes=%s error_kind=%s device=%s",
+                len(reply or ""),
+                speech_path.stat().st_size if speech_path.exists() else 0,
+                error_kind or "",
+                self.device_id,
+            )
             map_tool_ms = (
                 int(self.agent.context.metadata.get("map_tool_ms") or 0)
                 if self.agent is not None
