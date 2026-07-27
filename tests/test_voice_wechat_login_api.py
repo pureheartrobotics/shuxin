@@ -7,6 +7,7 @@ from shuxin.voice.server import create_app
 
 def test_wechat_login_returns_app_session_without_session_key(monkeypatch) -> None:
     monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
+    monkeypatch.delenv("SHUXIN_WECHAT_MOCK_OPENID", raising=False)
     app = create_app()
 
     with TestClient(app) as client:
@@ -16,8 +17,31 @@ def test_wechat_login_returns_app_session_without_session_key(monkeypatch) -> No
     data = response.json()
     assert data["session_token"]
     assert data["expires_at"]
-    assert data["user_id"].startswith("wx_")
+    assert data["user_id"] == "wx_mock_dev_user"
     assert "session_key" not in data
+
+
+def test_wechat_mock_openid_stable_across_codes(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
+    monkeypatch.delenv("SHUXIN_WECHAT_MOCK_OPENID", raising=False)
+    app = create_app()
+
+    with TestClient(app) as client:
+        a = client.post("/api/wechat/login", json={"wx_code": "code-aaa"}).json()
+        b = client.post("/api/wechat/login", json={"wx_code": "code-bbb"}).json()
+
+    assert a["user_id"] == b["user_id"] == "wx_mock_dev_user"
+
+
+def test_wechat_mock_openid_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("SHUXIN_WECHAT_MOCK", "1")
+    monkeypatch.setenv("SHUXIN_WECHAT_MOCK_OPENID", "wx_custom_stable")
+    app = create_app()
+
+    with TestClient(app) as client:
+        data = client.post("/api/wechat/login", json={"wx_code": "any"}).json()
+
+    assert data["user_id"] == "wx_custom_stable"
 
 
 def test_device_routes_accept_session_token_while_keeping_wx_code(monkeypatch) -> None:

@@ -45,6 +45,7 @@ pnpm install
   ```bash
   SHUXIN_API_BASE=https://your-domain.com ../../scripts/wechat_miniprogram_dev.sh
   ```
+- **正式用户登录（关 Mock）**：运维清单见 [`docs/WECHAT_MINIPROGRAM.md`](../../docs/WECHAT_MINIPROGRAM.md)「正式用户登录（关 Mock）」——`SHUXIN_WECHAT_MOCK=0`、重建 voice 容器、合法域名与自测步骤。
 
 ### 3. 导入微信开发者工具
 

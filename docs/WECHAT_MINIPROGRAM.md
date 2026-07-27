@@ -3,7 +3,7 @@
 **受众**：小程序开发者、提审运营、固件联调  
 **代码目录**：`apps/wechat-miniprogram/`  
 **开发指南**（编译、Mock、工厂 QA）：[`apps/wechat-miniprogram/README.md`](../apps/wechat-miniprogram/README.md)  
-**易错清单（必读）**：[`WECHAT_PITFALLS.md`](WECHAT_PITFALLS.md) · Obsidian：`knowledge/shuxin/微信小程序/易错清单.md`
+
 
 ---
 

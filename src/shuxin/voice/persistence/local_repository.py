@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -12,6 +11,7 @@ from shuxin.voice.persistence.time_display import format_beijing_iso
 from shuxin.voice.persistence.memory_summary import should_merge_summary
 from shuxin.voice.persistence.storage import UserVoiceStorage
 from shuxin.voice.persistence.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
+from shuxin.voice.persistence.base_repo import _openid_from_wx_code
 
 
 class VoiceLocalRepository:
@@ -33,10 +33,7 @@ class VoiceLocalRepository:
         self.mall = MallLocalRepository(parent=self)
 
     async def create_wechat_session(self, *, wx_code: str) -> dict[str, Any]:
-        code = str(wx_code or "").strip()
-        if not code:
-            raise PermissionError("wx_code is required")
-        user_id = f"wx_{hashlib.sha256(code.encode('utf-8')).hexdigest()[:24]}"
+        user_id = await _openid_from_wx_code(wx_code)
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(days=30)
         expires_str = format_beijing_iso(expires_at)

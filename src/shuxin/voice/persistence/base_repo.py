@@ -245,7 +245,9 @@ async def _openid_from_wx_code(wx_code: str) -> str:
         raise PermissionError("wx_code is required")
 
     if os.environ.get("SHUXIN_WECHAT_MOCK", "").lower() in {"1", "true", "yes"}:
-        return validate_user_id(f"wx_{_hash_secret(code)[:24]}")
+        # Stable mock identity so DevTools clear-cache + re-login keeps companions.
+        mock_openid = (os.environ.get("SHUXIN_WECHAT_MOCK_OPENID") or "wx_mock_dev_user").strip()
+        return validate_user_id(mock_openid)
 
     app_id = os.environ.get("SHUXIN_WECHAT_APPID") or os.environ.get("WECHAT_MINIPROGRAM_APPID", "")
     app_secret = os.environ.get("SHUXIN_WECHAT_SECRET") or os.environ.get("WECHAT_MINIPROGRAM_SECRET", "")
