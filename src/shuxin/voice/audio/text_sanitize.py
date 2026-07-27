@@ -59,8 +59,19 @@ def strip_markdown_for_tts(text: str) -> str:
 
 
 def prepare_speakable_text(text: str) -> str:
-    """TTS 合成前的最终可读文本：去括弧动作 + 去 Markdown。"""
-    return strip_markdown_for_tts(clean_action_text(text)).strip()
+    """TTS 合成前的最终可读文本：去括弧动作 + 去 Markdown；无实质可读内容则空串。"""
+    cleaned = strip_markdown_for_tts(clean_action_text(text)).strip()
+    if not has_readable_tts_text(cleaned):
+        return ""
+    return cleaned
+
+
+_READABLE_TTS_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+
+
+def has_readable_tts_text(text: str) -> bool:
+    """火山等 TTS 需要至少一字/字母/数字；纯引号标点会触发 3011 No readable text。"""
+    return bool(_READABLE_TTS_RE.search(text or ""))
 
 
 def has_unclosed_parenthesis(text: str) -> bool:

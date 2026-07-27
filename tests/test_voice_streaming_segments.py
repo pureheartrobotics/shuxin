@@ -86,3 +86,15 @@ def test_prepare_speakable_text_weather_example() -> None:
 
 def test_prepare_speakable_text_action_only_is_empty() -> None:
     assert prepare_speakable_text("（查到结果后，抬头看向你）") == ""
+
+
+def test_prepare_speakable_text_punctuation_only_is_empty() -> None:
+    from shuxin.voice.audio.text_sanitize import has_readable_tts_text
+
+    assert prepare_speakable_text('"') == ""
+    assert prepare_speakable_text("「」") == ""
+    assert prepare_speakable_text("...") == ""
+    assert prepare_speakable_text("！！！") == ""
+    assert not has_readable_tts_text('"')
+    assert has_readable_tts_text("你好")
+    assert prepare_speakable_text('他说："你好"。') == '他说："你好"。'
