@@ -848,6 +848,14 @@ class _VoiceWebSocketSession:
             await self._send_json(
                 {"type": "agent", "state": "reply", "text": reply, "elapsed_ms": agent_ms}
             )
+            # 对齐 /voice-demo 页面日志：完整 raw reply（可含括弧动作），不截断
+            logger.warning(
+                "[SOFT-VOICE] agent_reply device=%s companion=%s elapsed_ms=%s text=%s",
+                self.device_id,
+                self.companion_id,
+                agent_ms,
+                reply or "",
+            )
             logger.warning(
                 "[SOFT-VOICE] llm_done reply_len=%s error_kind=%s ttft_ms=%s device=%s companion=%s",
                 len(reply or ""),

@@ -85,16 +85,19 @@ class TtsSentenceSegmenter:
             output_path = base_path.with_name(
                 f"{base_path.stem}-{sentence_index:03d}{base_path.suffix}"
             )
+        clean_text = prepare_speakable_text(text)
+        speakable = bool(clean_text)
         await self.session._send_json(
             {
                 "type": "tts",
                 "state": "sentence_start",
                 "text": text,
                 "index": sentence_index,
+                "speakable": speakable,
+                "skipped": not speakable,
                 "total_elapsed_ms": _elapsed_ms(turn_started),
             }
         )
-        clean_text = prepare_speakable_text(text)
         if not clean_text:
             logger.warning(
                 "[SOFT-VOICE] tts_sentence idx=%s speakable_len=0 status=skip device=%s",
@@ -109,6 +112,8 @@ class TtsSentenceSegmenter:
                     "state": "sentence_stop",
                     "text": text,
                     "index": sentence_index,
+                    "speakable": False,
+                    "skipped": True,
                     "elapsed_ms": 10,
                     "total_elapsed_ms": _elapsed_ms(turn_started),
                 }
@@ -139,6 +144,8 @@ class TtsSentenceSegmenter:
                     "state": "sentence_stop",
                     "text": text,
                     "index": sentence_index,
+                    "speakable": True,
+                    "skipped": False,
                     "elapsed_ms": _elapsed_ms(sentence_started),
                     "total_elapsed_ms": _elapsed_ms(turn_started),
                 }
@@ -163,6 +170,8 @@ class TtsSentenceSegmenter:
                     "state": "sentence_stop",
                     "text": text,
                     "index": sentence_index,
+                    "speakable": True,
+                    "skipped": False,
                     "elapsed_ms": 10,
                     "total_elapsed_ms": _elapsed_ms(turn_started),
                     "error_kind": "tts_failed",
