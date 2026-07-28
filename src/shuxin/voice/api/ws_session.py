@@ -443,6 +443,26 @@ class _VoiceWebSocketSession:
         self.companion_id = str(data.get("companion_id") or "").strip() or None
         requested_mode = str(data.get("conversation_mode") or "push_to_talk").strip().lower()
         self.conversation_mode = resolve_conversation_mode(self.client_id, requested_mode)
+        # 软伙伴语音：未签 18+ 不得进入对话
+        if self.companion_id and self.user_id:
+            try:
+                from shuxin.voice.age_consent import AGE_CONSENT_VERSION, age_consent_ok
+
+                checker = getattr(self.repo, "get_user_age_consent_meta", None)
+                if checker is not None:
+                    meta = await checker(self.user_id)
+                    if not age_consent_ok(meta):
+                        await self._send_json(
+                            {
+                                "type": "error",
+                                "error_kind": "age_consent_required",
+                                "message": "请先确认已年满 18 周岁",
+                                "age_consent_version": AGE_CONSENT_VERSION,
+                            }
+                        )
+                        return
+            except Exception as exc:
+                logger.warning("age consent check on hello failed: %s", exc)
         self.turn_in_progress = False
         self._continuous_turn_armed = False
         self._pcm_bytes = 0
@@ -828,6 +848,8 @@ class _VoiceWebSocketSession:
                         "first_agent_delta_ms": 0,
                         "first_tts_audio_ms": tts_total_ms,
                     },
+                    companion_id=self.companion_id or "",
+                    channel="voice",
                 )
                 return
 
@@ -1031,6 +1053,8 @@ class _VoiceWebSocketSession:
                     "total_elapsed_ms": _elapsed_ms(started),
                     "error_kind": error_kind or "",
                 },
+                companion_id=self.companion_id or "",
+                channel="voice",
             )
             self._schedule_memory_checkpoint()
 
@@ -1170,6 +1194,8 @@ class _VoiceWebSocketSession:
                     "tts_ms": tts_total_ms,
                     "total_elapsed_ms": _elapsed_ms(started),
                 },
+                companion_id=self.companion_id or "",
+                channel="voice",
             )
             self._schedule_memory_checkpoint()
 
@@ -1499,8 +1525,18 @@ class _VoiceWebSocketSession:
                         await asyncio.to_thread(self.agent._build_system_prompt)
                 except Exception as exc:
                     logger.warning("apply companion_id failed: %s", exc)
+                try:
+                    from shuxin.voice.api.routers.text_chat import _seed_agent_short_term
+                    from shuxin.voice.service import _voice_max_history
 
-    def _setup_agent_tool_callbacks(self) -> None:
+                    hist = await self.repo.list_companion_chat_history(
+                        user_id=self.user_id,
+                        companion_id=self.companion_id,
+                        limit=_voice_max_history(),
+                    )
+                    _seed_agent_short_term(self.agent, list(hist.get("turns") or []))
+                except Exception as exc:
+                    logger.info("seed voice short_term from history skipped: %s", exc)
         if self.agent is None:
             return
         try:

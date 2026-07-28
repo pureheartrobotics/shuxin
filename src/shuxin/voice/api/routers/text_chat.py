@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
+from shuxin.core.memory import MemoryEntry
+from shuxin.voice.age_consent import AGE_CONSENT_VERSION, age_consent_ok
 from shuxin.voice.billing.text_billing import (
     estimate_chars_to_prompt_tokens,
     estimate_minutes_by_typing_speed,
@@ -16,7 +20,7 @@ from shuxin.voice.billing.text_billing import (
 )
 from shuxin.voice.config.config import merge_llm_device_config
 from shuxin.voice.integrations.dmx_client import default_platform_llm_config
-from shuxin.voice.service import VoiceService
+from shuxin.voice.service import VoiceService, _voice_max_history
 
 logger = logging.getLogger("shuxin.voice.api.companions")
 
@@ -26,6 +30,46 @@ class TextChatPrepError(Exception):
         super().__init__(str(payload.get("detail") or payload.get("error") or "error"))
         self.payload = payload
         self.status_code = status_code
+
+
+async def _assert_age_consent(repo: Any, user_id: str) -> None:
+    checker = getattr(repo, "get_user_age_consent_meta", None)
+    if checker is None:
+        return
+    meta = await checker(user_id)
+    if age_consent_ok(meta):
+        return
+    raise TextChatPrepError(
+        {
+            "error": "age_consent_required",
+            "detail": "请先确认已年满 18 周岁",
+            "age_consent_version": AGE_CONSENT_VERSION,
+        },
+        403,
+    )
+
+
+def _seed_agent_short_term(agent: Any, turns: List[Dict[str, Any]]) -> None:
+    """把历史回合注入 short_term，不触发 Mem0 写入。"""
+    memory = getattr(agent, "memory", None)
+    if memory is None:
+        return
+    max_n = _voice_max_history()
+    selected = list(turns)[-max_n:]
+    now = datetime.now().isoformat()
+    for turn in selected:
+        user_text = str(turn.get("user_text") or "").strip()
+        reply_text = str(turn.get("reply_text") or "").strip()
+        if user_text:
+            memory.short_term.append(
+                MemoryEntry(role="user", content=user_text, timestamp=now)
+            )
+        if reply_text:
+            memory.short_term.append(
+                MemoryEntry(role="assistant", content=reply_text, timestamp=now)
+            )
+        if len(memory.short_term) > memory.max_short_term:
+            memory.short_term = memory.short_term[-memory.max_short_term :]
 
 
 async def prepare_text_chat(repo, *, session_token: str, companion_id: str, text: str) -> Dict[str, Any]:
@@ -38,6 +82,7 @@ async def prepare_text_chat(repo, *, session_token: str, companion_id: str, text
         raise ValueError("text is required")
 
     user_id = await repo.companions._user_id_from_session(session_token)
+    await _assert_age_consent(repo, user_id)
     companion = await repo.companions.get_companion_for_user(
         user_id=user_id, companion_id=companion_id
     )
@@ -146,6 +191,28 @@ async def prepare_text_chat(repo, *, session_token: str, companion_id: str, text
         pass
     agent.initialize()
 
+    # 注入该伙伴最近原文，保证文字跨请求短期连续
+    try:
+        hist = await repo.list_companion_chat_history(
+            user_id=user_id,
+            companion_id=companion_id,
+            limit=_voice_max_history(),
+        )
+        _seed_agent_short_term(agent, list(hist.get("turns") or []))
+    except Exception as exc:
+        logger.info("seed text short_term skipped: %s", exc)
+
+    session_id = "text-{}-{}".format(companion_id, uuid.uuid4().hex[:12])
+    try:
+        await repo.ensure_session(
+            session_id=session_id,
+            user_id=user_id,
+            device_id=soft_id,
+            client_id="soft-miniprogram-text",
+        )
+    except Exception as exc:
+        logger.info("ensure_session for text chat skipped: %s", exc)
+
     return {
         "user_id": user_id,
         "companion": companion,
@@ -157,6 +224,8 @@ async def prepare_text_chat(repo, *, session_token: str, companion_id: str, text
         "estimate_token": estimate_token,
         "estimate_typing": estimate_typing,
         "agent": agent,
+        "user_settings": user_settings,
+        "session_id": session_id,
     }
 
 
@@ -215,6 +284,28 @@ async def finalize_text_chat_billing(
         )
     except Exception as exc:
         logger.info("after_companion_turn skipped: %s", exc)
+
+    # 与语音共用 conversation_events，供历史与短期回填
+    user_settings = ctx.get("user_settings")
+    if user_settings is not None:
+        try:
+            await repo.record_turn(
+                user_settings=user_settings,
+                device_id=soft_id,
+                client_id="soft-miniprogram-text",
+                session_id=str(ctx.get("session_id") or uuid.uuid4().hex),
+                turn_id=uuid.uuid4().hex,
+                user_text=text,
+                reply_text=str(reply or ""),
+                input_audio=None,
+                reply_audio=None,
+                timings={},
+                companion_id=companion_id,
+                channel="text",
+            )
+        except Exception as exc:
+            logger.warning("text record_turn failed: %s", exc)
+
     engagement: dict = {}
     try:
         engagement = await repo.companions.get_engagement_for_user(
@@ -242,6 +333,13 @@ async def finalize_text_chat_billing(
 
 
 def shutdown_agent(agent: Any) -> None:
+    """先强制 flush Mem0，再释放 Agent（文本请求结束与语音挂断对齐）。"""
+    try:
+        memory = getattr(agent, "memory", None)
+        if memory is not None and hasattr(memory, "flush_deferred_mem0"):
+            memory.flush_deferred_mem0(force=True)
+    except Exception as exc:
+        logger.warning("text Mem0 flush failed: %s", exc)
     try:
         agent.shutdown()
     except Exception:

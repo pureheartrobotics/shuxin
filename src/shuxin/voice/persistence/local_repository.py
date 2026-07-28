@@ -70,6 +70,8 @@ class VoiceLocalRepository:
         return await self.get_user_quota_by_user_id(session["user_id"])
 
     async def get_user_profile_by_session(self, session_token: str) -> dict[str, Any]:
+        from shuxin.voice.age_consent import AGE_CONSENT_VERSION, age_consent_ok
+
         selected = str(session_token or "").strip()
         session = self.wechat_sessions.get(selected)
         if not session:
@@ -84,8 +86,39 @@ class VoiceLocalRepository:
             "avatar_url": str(meta.get("avatar_url") or ""),
             "avatar_key": str(meta.get("avatar_key") or ""),
             "roles": {"factory_qa": False},
+            "age_consent": {
+                "required_version": AGE_CONSENT_VERSION,
+                "agreed": age_consent_ok(meta),
+            },
             "quota": quota_payload,
         }
+
+    async def get_user_age_consent_meta(self, user_id: str) -> dict[str, Any]:
+        return dict(getattr(self, "user_metadata", {}).get(user_id) or {})
+
+    async def set_user_age_consent_by_session(
+        self,
+        session_token: str,
+        *,
+        version: str = "",
+    ) -> dict[str, Any]:
+        from shuxin.voice.age_consent import (
+            AGE_CONSENT_META_KEY,
+            AGE_CONSENT_VERSION,
+            build_age_consent_record,
+        )
+
+        ver = str(version or "").strip() or AGE_CONSENT_VERSION
+        if ver != AGE_CONSENT_VERSION:
+            raise ValueError("unsupported age consent version")
+        profile = await self.get_user_profile_by_session(session_token)
+        user_id = profile["user_id"]
+        if not hasattr(self, "user_metadata"):
+            self.user_metadata = {}
+        meta = dict(self.user_metadata.get(user_id) or {})
+        meta[AGE_CONSENT_META_KEY] = build_age_consent_record(version=ver)
+        self.user_metadata[user_id] = meta
+        return await self.get_user_profile_by_session(session_token)
 
     async def update_user_profile_by_session(
         self,
@@ -262,6 +295,8 @@ class VoiceLocalRepository:
         reply_audio: Path | None,
         timings: dict[str, int],
         warning: str = "",
+        companion_id: str = "",
+        channel: str = "",
     ) -> None:
         storage = UserVoiceStorage(self.shuxin_home, self.out_dir, user_settings.user_id)
         await storage.record_turn(
@@ -276,6 +311,23 @@ class VoiceLocalRepository:
             reply_audio=reply_audio,
             timings=timings,
             warning=warning,
+            companion_id=companion_id,
+            channel=channel,
+        )
+
+    async def list_companion_chat_history(
+        self,
+        *,
+        user_id: str,
+        companion_id: str,
+        limit: int = 50,
+        before: str = "",
+    ) -> dict:
+        storage = UserVoiceStorage(self.shuxin_home, self.out_dir, user_id)
+        return storage.list_companion_chat_history(
+            companion_id=companion_id,
+            limit=limit,
+            before=before,
         )
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:

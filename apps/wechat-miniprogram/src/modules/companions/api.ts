@@ -200,3 +200,27 @@ export async function ackCare(care_key: string, companion_id?: string) {
     },
   });
 }
+
+export async function fetchChatHistory(companion_id: string, limit = 50) {
+  const session_token = requireSession();
+  return request("/api/chat/history", {
+    method: "POST",
+    data: { session_token, companion_id, limit },
+  });
+}
+
+export async function postAgeConsent(version: string) {
+  const session_token = requireSession();
+  return request("/api/users/me/age-consent", {
+    method: "POST",
+    data: { session_token, version },
+  });
+}
+
+export async function fetchUserMe() {
+  const session_token = requireSession();
+  return request("/api/users/me", {
+    method: "POST",
+    data: { session_token },
+  });
+}

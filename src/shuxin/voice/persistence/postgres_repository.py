@@ -240,8 +240,10 @@ class VoicePostgresRepository:
         reply_text: str,
         input_audio: Path | None,
         reply_audio: Path | None,
-        timings: dict[str, int],
+        timings: dict[str, Any],
         warning: str = "",
+        companion_id: str = "",
+        channel: str = "",
     ) -> None:
         await self.memory.record_turn(
             user_settings=user_settings,
@@ -255,6 +257,23 @@ class VoicePostgresRepository:
             reply_audio=reply_audio,
             timings=timings,
             warning=warning,
+            companion_id=companion_id,
+            channel=channel,
+        )
+
+    async def list_companion_chat_history(
+        self,
+        *,
+        user_id: str,
+        companion_id: str,
+        limit: int = 50,
+        before: str = "",
+    ) -> dict[str, Any]:
+        return await self.memory.list_companion_chat_history(
+            user_id=user_id,
+            companion_id=companion_id,
+            limit=limit,
+            before=before,
         )
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:
@@ -386,6 +405,19 @@ class VoicePostgresRepository:
             session_token,
             nickname=nickname,
             avatar_key=avatar_key,
+        )
+
+    async def get_user_age_consent_meta(self, user_id: str) -> dict[str, Any]:
+        return await self.billing.get_user_age_consent_meta(user_id)
+
+    async def set_user_age_consent_by_session(
+        self,
+        session_token: str,
+        *,
+        version: str = "",
+    ) -> dict[str, Any]:
+        return await self.billing.set_user_age_consent_by_session(
+            session_token, version=version
         )
 
     async def clear_user_avatar_by_session(self, session_token: str) -> dict[str, Any]:

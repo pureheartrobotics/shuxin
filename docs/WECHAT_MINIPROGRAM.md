@@ -39,6 +39,23 @@ bash scripts/wechat_miniprogram_dev.sh         # 开发监听 → dist/dev/mp-we
 
 版本 bump 时更新 `POLICY_VERSION`，旧用户须重新勾选。
 
+### 2.1 年满 18 岁确认（进入聊天前）
+
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| 确认页 | `pages/legal/age.vue` | 年满 18 周岁声明；须主动勾选 |
+| 本地状态 | `utils/policy.ts` | `AGE_POLICY_VERSION`、`isAgeAgreed()` / `markAgeAgreed()` |
+| 服务端 | `POST /api/users/me/age-consent`；`users.metadata.age_consent` | 防绕过；`/api/users/me` 返回 `age_consent.agreed` |
+| 门控 | `pages/chat/chat.vue`；文字 `prepare_text_chat`；软语音 hello | 未同意不可发文字/进语音 |
+
+账号级签一次；bump `AGE_POLICY_VERSION` 后须重签。
+
+### 2.2 同伙伴文字/语音历史
+
+- `POST /api/chat/history`：按 `companion_id` 返回文字+语音气泡（`conversation_events.metadata.companion_id`）。
+- 文字回合结束后 `record_turn` + `flush_deferred_mem0`，与语音共用长期记忆命名空间 `{user_id}::companion::{companion_id}`。
+- 聊天页进页拉历史，列表微信式累加，不因重进清空。
+
 ---
 
 ## 3. 蓝牙配网 — 微信隐私 API

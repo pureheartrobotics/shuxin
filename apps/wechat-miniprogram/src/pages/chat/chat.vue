@@ -50,10 +50,22 @@
     <view v-if="careBanner" class="care-banner" @click="dismissCareBanner">
       <text>{{ careBanner }}</text>
     </view>
-    <scroll-view scroll-y class="msgs" :scroll-into-view="scrollId">
-      <view v-for="(m, i) in messages" :key="i" :id="'m' + i" class="bubble" :class="m.role">
-        <text>{{ m.text }}</text>
+    <scroll-view scroll-y class="msgs" :scroll-into-view="scrollId" scroll-with-animation>
+      <view v-if="!messages.length" class="empty-hint">
+        <text>和 {{ name }} 的对话会像微信一样保存在这里</text>
       </view>
+      <view
+        v-for="(m, i) in messages"
+        :key="'m' + i + '-' + m.role"
+        :id="'m' + i"
+        class="bubble-row"
+        :class="m.role"
+      >
+        <view class="bubble" :class="m.role">
+          <text selectable>{{ m.text }}</text>
+        </view>
+      </view>
+      <view id="m-bottom" class="scroll-anchor" />
     </scroll-view>
     <view v-if="statusHint" class="hint">{{ statusHint }}</view>
     <view v-if="streakNudge" class="nudge">{{ streakNudge }}</view>
@@ -84,7 +96,9 @@ import {
   ackCare,
   chatText,
   chatTextStream,
+  fetchChatHistory,
   fetchEngagement,
+  fetchUserMe,
   softCredentials,
 } from "../../modules/companions/api";
 import { SoftVoiceSession } from "../../modules/companions/voice-ws";
@@ -102,6 +116,7 @@ import {
   setPrivacyGateHandler,
 } from "../../utils/privacy";
 import { formatPointsLabel } from "../../utils/companion-points";
+import { isAgeAgreed, markAgeAgreed } from "../../utils/policy";
 
 /** 语音气泡累计 raw，展示时再 strip，避免流式半括弧闪一下 */
 let voiceAssistantRaw = "";
@@ -111,7 +126,7 @@ const mbti = ref("");
 const name = ref("");
 const draft = ref("");
 const messages = ref<{ role: string; text: string }[]>([]);
-const scrollId = ref("m0");
+const scrollId = ref("m-bottom");
 const busy = ref(false);
 const mode = ref<"text" | "voice">("text");
 const statusHint = ref("");
@@ -124,6 +139,7 @@ const careKey = ref("");
 const streakNudge = ref("");
 const relationHeader = ref("");
 const milestoneHeader = ref("");
+const ageBlocked = ref(false);
 
 let voice: SoftVoiceSession | null = null;
 let softCreds: { device_id: string; device_secret: string } | null = null;
@@ -131,6 +147,22 @@ let pendingEnterVoice = false;
 let streamAssistantIndex = -1;
 let voiceUserBubbleIndex = -1;
 let voiceAssistantIndex = -1;
+let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scrollToBottom(force = false) {
+  const go = () => {
+    scrollId.value = "";
+    setTimeout(() => {
+      scrollId.value = "m-bottom";
+    }, 16);
+  };
+  if (force) {
+    go();
+    return;
+  }
+  if (scrollTimer) clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(go, 80);
+}
 
 function isQuotaExhaustedMessage(raw: string) {
   return (
@@ -142,7 +174,6 @@ function isQuotaExhaustedMessage(raw: string) {
 
 function pushMessage(role: string, text: string) {
   messages.value.push({ role, text });
-  scrollId.value = "m" + (messages.value.length - 1);
   return messages.value.length - 1;
 }
 
@@ -150,14 +181,37 @@ function appendToMessage(index: number, text: string) {
   if (index < 0 || index >= messages.value.length) return;
   const cur = messages.value[index];
   messages.value.splice(index, 1, { role: cur.role, text: cur.text + text });
-  scrollId.value = "m" + index;
 }
 
 function setMessage(index: number, text: string) {
   if (index < 0 || index >= messages.value.length) return;
   const cur = messages.value[index];
   messages.value.splice(index, 1, { role: cur.role, text });
-  scrollId.value = "m" + index;
+}
+
+function redirectToAgeGate() {
+  ageBlocked.value = true;
+  const ret = encodeURIComponent(
+    `/pages/chat/chat?companion_id=${encodeURIComponent(companionId.value)}&mbti=${encodeURIComponent(mbti.value)}&name=${encodeURIComponent(name.value)}`
+  );
+  uni.redirectTo({ url: `/pages/legal/age?return_url=${ret}` });
+}
+
+async function ensureAgeConsent(): Promise<boolean> {
+  if (isAgeAgreed()) {
+    return true;
+  }
+  try {
+    const me: any = await fetchUserMe();
+    if (me?.age_consent?.agreed) {
+      markAgeAgreed();
+      return true;
+    }
+  } catch {
+    /* fall through to gate */
+  }
+  redirectToAgeGate();
+  return false;
 }
 
 function applyEngagement(eng: any) {
@@ -226,6 +280,20 @@ onLoad(async (query: any) => {
   setPrivacyGateHandler(async () => {
     showPrivacyGate.value = true;
   });
+  const okAge = await ensureAgeConsent();
+  if (!okAge) {
+    return;
+  }
+  try {
+    const hist: any = await fetchChatHistory(companionId.value, 50);
+    const items = Array.isArray(hist?.messages) ? hist.messages : [];
+    messages.value = items
+      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && String(m.text || "").trim())
+      .map((m: any) => ({ role: String(m.role), text: String(m.text) }));
+    scrollToBottom(true);
+  } catch {
+    /* history optional on first open */
+  }
   try {
     const eng: any = await fetchEngagement(companionId.value);
     applyEngagement(eng);
@@ -251,7 +319,14 @@ onUnmounted(() => {
 
 function sendText() {
   const text = draft.value.trim();
-  if (!text || !companionId.value || busy.value || quotaBlocked.value || mode.value !== "text") {
+  if (
+    !text ||
+    !companionId.value ||
+    busy.value ||
+    quotaBlocked.value ||
+    ageBlocked.value ||
+    mode.value !== "text"
+  ) {
     return;
   }
   pushMessage("user", text);
@@ -259,6 +334,7 @@ function sendText() {
   busy.value = true;
   statusHint.value = "回复中…";
   streamAssistantIndex = pushMessage("assistant", "");
+  scrollToBottom(true);
 
   const finishOk = (res: any) => {
     if (streamAssistantIndex >= 0 && !(messages.value[streamAssistantIndex]?.text || "").trim()) {
@@ -273,9 +349,16 @@ function sendText() {
     }
     busy.value = false;
     streamAssistantIndex = -1;
+    scrollToBottom(true);
   };
 
   const fail = (e: any) => {
+    if (e instanceof ApiError && (e.code === "age_consent_required" || e.body?.error === "age_consent_required")) {
+      redirectToAgeGate();
+      busy.value = false;
+      streamAssistantIndex = -1;
+      return;
+    }
     if (e instanceof ApiError && e.code === "quota_exhausted") {
       applyEngagement(e.body?.engagement || { quota: e.body?.quota });
       promptQuotaPaywall(e.detail);
@@ -289,11 +372,13 @@ function sendText() {
     }
     busy.value = false;
     streamAssistantIndex = -1;
+    scrollToBottom(true);
   };
 
   chatTextStream(companionId.value, text, {
     onDelta: (piece) => {
       if (streamAssistantIndex >= 0) appendToMessage(streamAssistantIndex, piece);
+      scrollToBottom();
     },
     onDone: (body) => finishOk(body),
     onError: (err) => {
@@ -306,7 +391,8 @@ function sendText() {
 }
 
 async function enterVoiceCall() {
-  if (quotaBlocked.value || busy.value || mode.value === "voice") return;
+  if (quotaBlocked.value || busy.value || mode.value === "voice" || ageBlocked.value) return;
+  if (!(await ensureAgeConsent())) return;
   if (!softCreds?.device_id || !softCreds?.device_secret) {
     statusHint.value = "语音通道未就绪";
     return;
@@ -580,34 +666,58 @@ function onPrivacyDenied() {
   flex: 1;
   padding: 20rpx 28rpx;
   height: 0;
+  box-sizing: border-box;
+}
+.empty-hint {
+  padding: 48rpx 24rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #9a9186;
+  line-height: 1.5;
+}
+.bubble-row {
+  display: flex;
+  margin-bottom: 22rpx;
+}
+.bubble-row.user {
+  justify-content: flex-end;
+}
+.bubble-row.assistant {
+  justify-content: flex-start;
 }
 .bubble {
   max-width: 78%;
-  margin-bottom: 24rpx;
   padding: 22rpx 28rpx;
   border-radius: 28rpx;
   font-size: 30rpx;
   line-height: 1.55;
+  word-break: break-word;
   animation: bubble-in 0.28s ease-out;
 }
 .bubble.user {
-  margin-left: auto;
-  background: #2f604f;
+  background: linear-gradient(145deg, #3d7a64 0%, #2f604f 100%);
   color: #fffaf3;
-  border-bottom-right-radius: 12rpx;
+  border-bottom-right-radius: 10rpx;
+  box-shadow: 0 6rpx 18rpx rgba(47, 96, 79, 0.18);
 }
 .bubble.assistant {
   background: #fffaf3;
   color: #25211c;
-  border: 1rpx solid rgba(231, 223, 212, 0.85);
-  border-bottom-left-radius: 12rpx;
+  border: 1rpx solid rgba(210, 200, 186, 0.9);
+  border-bottom-left-radius: 10rpx;
+  box-shadow: 0 4rpx 14rpx rgba(74, 58, 40, 0.05);
+}
+.scroll-anchor {
+  height: 2rpx;
 }
 @keyframes bubble-in {
   from {
     opacity: 0;
+    transform: translateY(8rpx);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 }
 .hint {
@@ -619,8 +729,9 @@ function onPrivacyDenied() {
   display: flex;
   align-items: center;
   gap: 16rpx;
-  padding: 18rpx 28rpx 40rpx;
-  background: transparent;
+  padding: 18rpx 28rpx calc(24rpx + env(safe-area-inset-bottom));
+  background: rgba(247, 244, 239, 0.94);
+  border-top: 1rpx solid rgba(231, 223, 212, 0.85);
 }
 .input {
   flex: 1;
