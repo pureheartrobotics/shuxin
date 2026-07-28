@@ -14,6 +14,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from shuxin.voice.age_consent import (
+    AGE_CONSENT_META_KEY,
+    AGE_CONSENT_VERSION,
+    age_consent_ok,
+    build_age_consent_record,
+)
 from shuxin.voice.billing.companion_points import format_plan_description_minutes
 from shuxin.voice.config.payment_config import (
     DEFAULT_CREDIT_RATIO,
@@ -641,6 +647,10 @@ class BillingRepository(BaseRepository):
             "roles": {
                 "factory_qa": str(meta.get("factory_role") or "").lower() == "true",
             },
+            "age_consent": {
+                "required_version": AGE_CONSENT_VERSION,
+                "agreed": age_consent_ok(meta),
+            },
         }
         if quota is not None:
             out["quota"] = quota
@@ -694,6 +704,56 @@ class BillingRepository(BaseRepository):
                     meta.pop("avatar_key", None)
                     meta.pop("avatar_updated_at", None)
 
+            await conn.execute(
+                """
+                UPDATE users
+                SET metadata = $2::jsonb, updated_at = now()
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+                json.dumps(meta, ensure_ascii=False),
+            )
+        return self._profile_payload(user_id=user_id, meta=meta)
+
+    async def get_user_age_consent_meta(self, user_id: str) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT metadata
+                FROM users
+                WHERE user_id = $1 AND deleted_at IS NULL
+                """,
+                user_id,
+            )
+        if row is None:
+            return {}
+        return _json_obj(row["metadata"])
+
+    async def set_user_age_consent_by_session(
+        self,
+        session_token: str,
+        *,
+        version: str = "",
+    ) -> dict[str, Any]:
+        ver = str(version or "").strip() or AGE_CONSENT_VERSION
+        if ver != AGE_CONSENT_VERSION:
+            raise ValueError("unsupported age consent version")
+        async with self.pool.acquire() as conn:
+            user_id = await self.parent._user_id_from_wechat_auth(
+                conn, session_token=session_token
+            )
+            row = await conn.fetchrow(
+                """
+                SELECT metadata
+                FROM users
+                WHERE user_id = $1 AND deleted_at IS NULL AND enabled = true
+                """,
+                user_id,
+            )
+            if row is None:
+                raise PermissionError("user is disabled or not found")
+            meta = _json_obj(row["metadata"])
+            meta[AGE_CONSENT_META_KEY] = build_age_consent_record(version=ver)
             await conn.execute(
                 """
                 UPDATE users

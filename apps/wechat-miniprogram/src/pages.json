@@ -95,6 +95,14 @@
         "navigationBarBackgroundColor": "#f5f1ea",
         "navigationBarTextStyle": "black"
       }
+    },
+    {
+      "path": "pages/legal/age",
+      "style": {
+        "navigationBarTitleText": "年龄确认",
+        "navigationBarBackgroundColor": "#f3ebe1",
+        "navigationBarTextStyle": "black"
+      }
     }
   ],
   "subPackages": [

@@ -49,6 +49,28 @@ async def user_me(request: Request, repo=Depends(get_repo)):
     return JSONResponse(await repo.get_user_profile_by_session(session_token))
 
 
+@router.post("/api/users/me/age-consent")
+async def user_age_consent(request: Request, repo=Depends(get_repo)):
+    try:
+        payload = await request.json()
+        session_token = str(payload.get("session_token") or "")
+        if not session_token:
+            raise ValueError("session_token is required")
+        return JSONResponse(
+            await repo.set_user_age_consent_by_session(
+                session_token,
+                version=str(payload.get("version") or ""),
+            )
+        )
+    except PermissionError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=401)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.exception("age consent failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @router.post("/api/users/upload-token")
 async def user_upload_token(request: Request, repo=Depends(get_repo)):
     """Issue Qiniu upload token for the logged-in user's ugc_avatar only."""
