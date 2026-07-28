@@ -52,9 +52,18 @@ class MemoryRepository(BaseRepository):
         reply_text: str,
         input_audio: Path | None,
         reply_audio: Path | None,
-        timings: dict[str, int],
+        timings: dict[str, Any],
         warning: str = "",
+        companion_id: str = "",
+        channel: str = "",
     ) -> None:
+        meta: dict[str, Any] = {"timings": timings, "warning": warning}
+        cid = str(companion_id or "").strip()
+        ch = str(channel or "").strip()
+        if cid:
+            meta["companion_id"] = cid
+        if ch:
+            meta["channel"] = ch
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -72,7 +81,7 @@ class MemoryRepository(BaseRepository):
                     turn_id,
                     user_text,
                     reply_text,
-                    json.dumps({"timings": timings, "warning": warning}, ensure_ascii=False),
+                    json.dumps(meta, ensure_ascii=False),
                 )
                 for kind, path, media_type, compressed in [
                     ("input", input_audio, "audio/wav", False),
@@ -97,6 +106,101 @@ class MemoryRepository(BaseRepository):
                     warning,
                     user_text=user_text,
                 )
+
+    async def list_companion_chat_history(
+        self,
+        *,
+        user_id: str,
+        companion_id: str,
+        limit: int = 50,
+        before: str = "",
+    ) -> dict[str, Any]:
+        """按 companion_id 拉取文字+语音回合，展平为气泡列表（时间正序）。"""
+        cid = str(companion_id or "").strip()
+        uid = str(user_id or "").strip()
+        if not uid or not cid:
+            return {"messages": [], "companion_id": cid}
+        lim = max(1, min(int(limit or 50), 100))
+        before_ts = str(before or "").strip() or None
+        async with self.pool.acquire() as conn:
+            if before_ts:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_text, reply_text, metadata, created_at
+                    FROM conversation_events
+                    WHERE user_id = $1
+                      AND deleted_at IS NULL
+                      AND event_type = 'conversation_turn'
+                      AND metadata->>'companion_id' = $2
+                      AND created_at < $3::timestamptz
+                    ORDER BY created_at DESC
+                    LIMIT $4
+                    """,
+                    uid,
+                    cid,
+                    before_ts,
+                    lim,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_text, reply_text, metadata, created_at
+                    FROM conversation_events
+                    WHERE user_id = $1
+                      AND deleted_at IS NULL
+                      AND event_type = 'conversation_turn'
+                      AND metadata->>'companion_id' = $2
+                    ORDER BY created_at DESC
+                    LIMIT $3
+                    """,
+                    uid,
+                    cid,
+                    lim,
+                )
+        messages: list[dict[str, Any]] = []
+        turns: list[dict[str, Any]] = []
+        for row in reversed(list(rows)):
+            meta = _json_obj(row["metadata"])
+            created = row["created_at"]
+            created_s = (
+                created.isoformat().replace("+00:00", "Z")
+                if hasattr(created, "isoformat")
+                else str(created or "")
+            )
+            channel = str(meta.get("channel") or "").strip()
+            user_text = str(row["user_text"] or "").strip()
+            reply_text = str(row["reply_text"] or "").strip()
+            turns.append(
+                {
+                    "user_text": user_text,
+                    "reply_text": reply_text,
+                    "created_at": created_s,
+                    "channel": channel,
+                }
+            )
+            if user_text:
+                messages.append(
+                    {
+                        "role": "user",
+                        "text": user_text,
+                        "created_at": created_s,
+                        "channel": channel,
+                    }
+                )
+            if reply_text:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "text": reply_text,
+                        "created_at": created_s,
+                        "channel": channel,
+                    }
+                )
+        return {
+            "companion_id": cid,
+            "messages": messages,
+            "turns": turns,
+        }
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:
         async with self.pool.acquire() as conn:

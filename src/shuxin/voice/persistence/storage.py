@@ -115,8 +115,17 @@ class UserVoiceStorage:
         reply_audio: Path | None,
         timings: dict[str, int],
         warning: str = "",
+        companion_id: str = "",
+        channel: str = "",
     ) -> None:
         """记录一轮对话事件、音频附件、简单事实和共享记忆摘要。"""
+        meta: dict = {"timings": timings, "warning": warning}
+        cid = str(companion_id or "").strip()
+        ch = str(channel or "").strip()
+        if cid:
+            meta["companion_id"] = cid
+        if ch:
+            meta["channel"] = ch
         async with self._lock:
             now = _now()
             with self._connect() as conn:
@@ -137,10 +146,7 @@ class UserVoiceStorage:
                         "conversation_turn",
                         user_text,
                         reply_text,
-                        json.dumps(
-                            {"timings": timings, "warning": warning},
-                            ensure_ascii=False,
-                        ),
+                        json.dumps(meta, ensure_ascii=False),
                         now,
                     ),
                 )
@@ -169,6 +175,87 @@ class UserVoiceStorage:
                     warning=warning,
                     user_text=user_text,
                 )
+
+    def list_companion_chat_history(
+        self,
+        *,
+        companion_id: str,
+        limit: int = 50,
+        before: str = "",
+    ) -> dict:
+        cid = str(companion_id or "").strip()
+        if not cid:
+            return {"messages": [], "turns": [], "companion_id": cid}
+        lim = max(1, min(int(limit or 50), 100))
+        before_ts = str(before or "").strip()
+        with self._connect() as conn:
+            if before_ts:
+                rows = conn.execute(
+                    """
+                    SELECT user_text, reply_text, metadata_json, created_at
+                    FROM events
+                    WHERE user_id = ? AND deleted_at IS NULL
+                      AND event_type = 'conversation_turn'
+                      AND json_extract(metadata_json, '$.companion_id') = ?
+                      AND created_at < ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (self.user_id, cid, before_ts, lim),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT user_text, reply_text, metadata_json, created_at
+                    FROM events
+                    WHERE user_id = ? AND deleted_at IS NULL
+                      AND event_type = 'conversation_turn'
+                      AND json_extract(metadata_json, '$.companion_id') = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (self.user_id, cid, lim),
+                ).fetchall()
+        messages = []
+        turns = []
+        for row in reversed(list(rows)):
+            try:
+                meta = json.loads(row[2] or "{}")
+            except json.JSONDecodeError:
+                meta = {}
+            if not isinstance(meta, dict):
+                meta = {}
+            created_s = str(row[3] or "")
+            channel = str(meta.get("channel") or "").strip()
+            user_text = str(row[0] or "").strip()
+            reply_text = str(row[1] or "").strip()
+            turns.append(
+                {
+                    "user_text": user_text,
+                    "reply_text": reply_text,
+                    "created_at": created_s,
+                    "channel": channel,
+                }
+            )
+            if user_text:
+                messages.append(
+                    {
+                        "role": "user",
+                        "text": user_text,
+                        "created_at": created_s,
+                        "channel": channel,
+                    }
+                )
+            if reply_text:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "text": reply_text,
+                        "created_at": created_s,
+                        "channel": channel,
+                    }
+                )
+        return {"companion_id": cid, "messages": messages, "turns": turns}
 
     async def status(self, user_settings: UserSettings) -> dict[str, Any]:
         """返回用户当前音频额度、已用空间、后台任务和告警摘要。"""

@@ -225,6 +225,37 @@ async def chat_text(request: Request, repo=Depends(get_repo)):
         return _err(exc, status=500)
 
 
+@router.post("/api/chat/history")
+async def chat_history(request: Request, repo=Depends(get_repo)):
+    """同一 companion 的文字+语音气泡历史（微信式进页恢复）。"""
+    try:
+        payload = await request.json()
+        session_token = str(payload.get("session_token") or "")
+        companion_id = str(payload.get("companion_id") or "").strip()
+        if not companion_id:
+            raise ValueError("companion_id is required")
+        user_id = await repo.companions._user_id_from_session(session_token)
+        await repo.companions.get_companion_for_user(
+            user_id=user_id, companion_id=companion_id
+        )
+        limit = int(payload.get("limit") or 50)
+        before = str(payload.get("before") or "")
+        data = await repo.list_companion_chat_history(
+            user_id=user_id,
+            companion_id=companion_id,
+            limit=limit,
+            before=before,
+        )
+        return JSONResponse(data)
+    except PermissionError as exc:
+        return _err(exc, status=401)
+    except ValueError as exc:
+        return _err(exc, status=400)
+    except Exception as exc:
+        logger.exception("chat history failed")
+        return _err(exc, status=500)
+
+
 @router.post("/api/chat/text/stream")
 async def chat_text_stream(request: Request, repo=Depends(get_repo)):
     """NDJSON stream: delta lines then one done (or error) line. Same billing as /api/chat/text."""
