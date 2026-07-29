@@ -1537,6 +1537,8 @@ class _VoiceWebSocketSession:
                     _seed_agent_short_term(self.agent, list(hist.get("turns") or []))
                 except Exception as exc:
                     logger.info("seed voice short_term from history skipped: %s", exc)
+
+    def _setup_agent_tool_callbacks(self) -> None:
         if self.agent is None:
             return
         try:

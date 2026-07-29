@@ -70,6 +70,8 @@ def test_ensure_runtime_inits_agent_when_device_prefetched() -> None:
     assert session.tts is fake_tts
     session.service.create_agent.assert_called_once()
     mock_agent.initialize.assert_called_once()
+    assert hasattr(_VoiceWebSocketSession, "_setup_agent_tool_callbacks")
+    assert mock_agent.tool_loop_callbacks is not None
 
 
 def test_play_pending_device_intro_leaves_agent_ready_for_chat() -> None:
