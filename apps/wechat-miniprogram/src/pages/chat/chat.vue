@@ -50,7 +50,13 @@
     <view v-if="careBanner" class="care-banner" @click="dismissCareBanner">
       <text>{{ careBanner }}</text>
     </view>
-    <scroll-view scroll-y class="msgs" :scroll-into-view="scrollId" scroll-with-animation>
+    <scroll-view
+      scroll-y
+      class="msgs"
+      :style="{ height: msgsHeight + 'px' }"
+      :scroll-into-view="scrollId"
+      scroll-with-animation
+    >
       <view v-if="!messages.length" class="empty-hint">
         <text>和 {{ name }} 的对话会像微信一样保存在这里</text>
       </view>
@@ -61,7 +67,7 @@
         class="bubble-row"
         :class="m.role"
       >
-        <view class="bubble" :class="m.role">
+        <view v-if="(m.text || '').trim()" class="bubble" :class="m.role">
           <text selectable>{{ m.text }}</text>
         </view>
       </view>
@@ -76,21 +82,28 @@
         :maxlength="500"
         placeholder="说点什么（最多500字）"
         confirm-type="send"
-        :disabled="quotaBlocked || busy"
+        :disabled="quotaBlocked || busy || !chatReady"
         @confirm="sendText"
       />
-      <button class="send" size="mini" :disabled="busy || quotaBlocked" @click="sendText">发送</button>
+      <button
+        class="send"
+        size="mini"
+        :disabled="busy || quotaBlocked || !chatReady"
+        @tap="sendText"
+      >
+        发送
+      </button>
     </view>
     <view v-if="quotaBlocked" class="paywall">
       <text>陪伴点已用尽，充值后继续聊</text>
-      <button size="mini" class="pay-btn" @click="goRecharge">去充值</button>
+      <button size="mini" class="pay-btn" @tap="goRecharge">去充值</button>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { onUnmounted, ref } from "vue";
-import { onLoad } from "@dcloudio/uni-app";
+import { nextTick, onUnmounted, ref } from "vue";
+import { onLoad, onReady } from "@dcloudio/uni-app";
 import { ApiError } from "../../core/http";
 import {
   ackCare,
@@ -127,6 +140,8 @@ const name = ref("");
 const draft = ref("");
 const messages = ref<{ role: string; text: string }[]>([]);
 const scrollId = ref("m-bottom");
+const msgsHeight = ref(400);
+const chatReady = ref(false);
 const busy = ref(false);
 const mode = ref<"text" | "voice">("text");
 const statusHint = ref("");
@@ -148,6 +163,42 @@ let streamAssistantIndex = -1;
 let voiceUserBubbleIndex = -1;
 let voiceAssistantIndex = -1;
 let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function estimateMsgsHeight() {
+  try {
+    const sys = uni.getSystemInfoSync();
+    const bottom = Number(sys.safeAreaInsets?.bottom || 0);
+    // header + composer + hint 粗估，真机再 selector 精修
+    msgsHeight.value = Math.max(220, Math.floor(sys.windowHeight - 230 - bottom));
+  } catch {
+    msgsHeight.value = 400;
+  }
+}
+
+function layoutMsgsHeight() {
+  estimateMsgsHeight();
+  nextTick(() => {
+    const q = uni.createSelectorQuery();
+    q.select(".header").boundingClientRect();
+    q.select(".care-banner").boundingClientRect();
+    q.select(".hint").boundingClientRect();
+    q.select(".nudge").boundingClientRect();
+    q.select(".composer").boundingClientRect();
+    q.select(".paywall").boundingClientRect();
+    q.exec((rects: any[]) => {
+      let used = 0;
+      for (const r of rects || []) {
+        if (r && typeof r.height === "number") used += r.height;
+      }
+      try {
+        const sys = uni.getSystemInfoSync();
+        msgsHeight.value = Math.max(220, Math.floor(sys.windowHeight - used));
+      } catch {
+        /* keep estimate */
+      }
+    });
+  });
+}
 
 function scrollToBottom(force = false) {
   const go = () => {
@@ -271,11 +322,16 @@ function promptQuotaPaywall(detail?: string) {
   });
 }
 
+onReady(() => {
+  layoutMsgsHeight();
+});
+
 onLoad(async (query: any) => {
   companionId.value = decodeURIComponent(query?.companion_id || "");
   mbti.value = decodeURIComponent(query?.mbti || "");
   name.value = decodeURIComponent(query?.name || "伙伴");
   statusHint.value = "文字聊天可直接发送";
+  estimateMsgsHeight();
   privacyContractName.value = await loadPrivacyContractName();
   setPrivacyGateHandler(async () => {
     showPrivacyGate.value = true;
@@ -287,13 +343,18 @@ onLoad(async (query: any) => {
   try {
     const hist: any = await fetchChatHistory(companionId.value, 50);
     const items = Array.isArray(hist?.messages) ? hist.messages : [];
-    messages.value = items
-      .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && String(m.text || "").trim())
-      .map((m: any) => ({ role: String(m.role), text: String(m.text) }));
-    scrollToBottom(true);
+    // 仅在本地尚无消息时灌入历史，避免覆盖用户已发送的气泡
+    if (messages.value.length === 0) {
+      messages.value = items
+        .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && String(m.text || "").trim())
+        .map((m: any) => ({ role: String(m.role), text: String(m.text) }));
+      scrollToBottom(true);
+    }
   } catch {
     /* history optional on first open */
   }
+  chatReady.value = true;
+  layoutMsgsHeight();
   try {
     const eng: any = await fetchEngagement(companionId.value);
     applyEngagement(eng);
@@ -309,6 +370,7 @@ onLoad(async (query: any) => {
   } catch {
     softCreds = null;
   }
+  layoutMsgsHeight();
 });
 
 onUnmounted(() => {
@@ -322,6 +384,7 @@ function sendText() {
   if (
     !text ||
     !companionId.value ||
+    !chatReady.value ||
     busy.value ||
     quotaBlocked.value ||
     ageBlocked.value ||
@@ -333,12 +396,17 @@ function sendText() {
   draft.value = "";
   busy.value = true;
   statusHint.value = "回复中…";
-  streamAssistantIndex = pushMessage("assistant", "");
+  // 首个 delta / 最终 reply 再插入 assistant，避免空气泡导致真机滚动/裁切异常
+  streamAssistantIndex = -1;
   scrollToBottom(true);
+  layoutMsgsHeight();
 
   const finishOk = (res: any) => {
-    if (streamAssistantIndex >= 0 && !(messages.value[streamAssistantIndex]?.text || "").trim()) {
-      setMessage(streamAssistantIndex, String(res.reply || "…"));
+    const reply = String(res.reply || "…");
+    if (streamAssistantIndex < 0) {
+      streamAssistantIndex = pushMessage("assistant", reply);
+    } else if (!(messages.value[streamAssistantIndex]?.text || "").trim()) {
+      setMessage(streamAssistantIndex, reply);
     }
     applyEngagement(res.engagement);
     const nudge = res.engagement?.streak?.nudge;
@@ -350,6 +418,7 @@ function sendText() {
     busy.value = false;
     streamAssistantIndex = -1;
     scrollToBottom(true);
+    layoutMsgsHeight();
   };
 
   const fail = (e: any) => {
@@ -377,7 +446,11 @@ function sendText() {
 
   chatTextStream(companionId.value, text, {
     onDelta: (piece) => {
-      if (streamAssistantIndex >= 0) appendToMessage(streamAssistantIndex, piece);
+      if (streamAssistantIndex < 0) {
+        streamAssistantIndex = pushMessage("assistant", piece);
+      } else {
+        appendToMessage(streamAssistantIndex, piece);
+      }
       scrollToBottom();
     },
     onDone: (body) => finishOk(body),
@@ -553,7 +626,8 @@ function onPrivacyDenied() {
 
 <style scoped>
 .page {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background:
@@ -663,10 +737,10 @@ function onPrivacyDenied() {
   border-radius: 999rpx;
 }
 .msgs {
-  flex: 1;
+  flex-shrink: 0;
   padding: 20rpx 28rpx;
-  height: 0;
   box-sizing: border-box;
+  width: 100%;
 }
 .empty-hint {
   padding: 48rpx 24rpx;
