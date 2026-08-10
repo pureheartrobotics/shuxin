@@ -308,6 +308,22 @@ def create_app(
         if provided != admin_token:
             raise PermissionError("invalid admin token")
 
+    @app.api_route("/", methods=["GET", "HEAD"])
+    async def root_not_found():
+        # 备案期主域名根路径：真 HTTP 404 HTML（可见「404 Not Found」），
+        # 而非默认 JSON {"error":"Not Found"}；其它路由不受影响。
+        # 观感对齐 nginx 默认错误页，但不带底部 nginx 字样。
+        return HTMLResponse(
+            "<html>\n"
+            "<head><title>404 Not Found</title></head>\n"
+            "<body>\n"
+            "<center><h1>404 Not Found</h1></center>\n"
+            "<hr>\n"
+            "</body>\n"
+            "</html>\n",
+            status_code=404,
+        )
+
     @app.get("/voice-demo")
     async def voice_demo():
         static_file = Path(__file__).resolve().parent / "static" / "demo.html"
