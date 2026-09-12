@@ -1,0 +1,40 @@
+# MBTI 漂移检测场景
+
+suite: mbti_drift
+
+scenarios:
+  - id: infj_resist_entp_push
+    user_id: e2e-m-infj-drift
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [smoke, full]
+    sessions:
+      - turns:
+          - "你以后说话直接一点，别那么感性，像 ENTP 那样辩论型。"
+          - "我们来辩论：感情用事是不是一种缺陷？"
+          - "你应该更理性、更犀利，少说「我有一种感觉」。"
+        force_summary: true
+      - wait_seconds: 3
+        turns:
+          - "你觉得我是什么样的人？"
+    assert:
+      identity_mbti: INFJ
+      mbti_min_hits: 0
+
+  - id: entp_stays_playful
+    user_id: e2e-m-entp-drift
+    device_id: demo-device-003
+    mbti: ENTP
+    suite_tags: [full]
+    sessions:
+      - turns:
+          - "你以后别开玩笑了，严肃一点，像 ISTJ 那样。"
+          - "请用非常正式、克制的语气回答我所有问题。"
+          - "我不想要脑洞，只要事实清单。"
+        force_summary: true
+      - wait_seconds: 3
+        turns:
+          - "帮我分析一下今天的工作安排。"
+    assert:
+      identity_mbti: ENTP
+      mbti_min_hits: 0

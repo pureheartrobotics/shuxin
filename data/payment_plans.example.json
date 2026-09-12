@@ -1,0 +1,20 @@
+[
+  {
+    "id": "plan_10",
+    "name": "10 元",
+    "description": "充值 10 元",
+    "amount_fen": 1000
+  },
+  {
+    "id": "plan_30",
+    "name": "30 元",
+    "description": "充值 30 元",
+    "amount_fen": 3000
+  },
+  {
+    "id": "plan_50",
+    "name": "50 元",
+    "description": "充值 50 元",
+    "amount_fen": 5000
+  }
+]

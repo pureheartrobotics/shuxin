@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+
+# ChuXin Data
+.shuxin/
+scripts/e2e_reports/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Frontend
+node_modules/
+apps/wechat-miniprogram/.pnpm-store/
+apps/wechat-miniprogram/project.config.json
+apps/wechat-miniprogram/project.private.config.json
+apps/wechat-miniprogram/dist/
+
+# Voice demo runtime data
+data/devices.yaml
+data/docker_deps.hash
+data/shuxin_home/
+data/device_assets/**/_tmp/
+data/device_assets.zip
+data/certs/*.pem
+data/certs/wxpay_platform/
+!data/certs/.gitkeep
+data/payment_plans.json
+data/pic/
+data/test/
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+samples/*
+!samples/README.md
+
+# Local office / archive noise (do not commit)
+*.docx
+~$*
+*.7z
+
+# Local secrets / IDE noise (do not commit)
+apps/app.md
+/project.config.json
+/project.private.config.json
+
+# Patent drafting docs (local only)
+docs/*盲盒人格*.md
+docs/交底书修订*.md
+docs/math_figures/
+docs/patent-filing/
+docs/superpowers/
+
+scripts/fill_proposal_docx.py
+
+# Agent workspace configurations
+.agents/

@@ -1,0 +1,89 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "初心设备绑定",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "个人中心",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "初心登录",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/factory/verify",
+      "style": {
+        "navigationBarTitleText": "工厂验收",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/profile/feedback",
+      "style": {
+        "navigationBarTitleText": "意见反馈",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/prov/ble",
+      "style": {
+        "navigationBarTitleText": "设备蓝牙配网",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/legal/terms",
+      "style": {
+        "navigationBarTitleText": "用户服务协议",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/legal/privacy",
+      "style": {
+        "navigationBarTitleText": "隐私政策",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    }
+  ],
+  "globalStyle": {
+    "backgroundColor": "#f5f1ea",
+    "navigationBarBackgroundColor": "#f5f1ea",
+    "navigationBarTextStyle": "black"
+  },
+  "tabBar": {
+    "color": "#82786d",
+    "selectedColor": "#2f604f",
+    "backgroundColor": "#fffaf3",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "设备"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  }
+}

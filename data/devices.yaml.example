@@ -1,0 +1,52 @@
+default_device_id: demo-device-001
+
+defaults:
+  stt:
+    type: tencent-realtime
+    appid: ${TENCENT_ASR_APPID}
+    model: 16k_zh
+    output_dir: outputs
+  tts:
+    type: volcengine-clone
+    profile_id: shuxin
+    encoding: mp3
+    output_dir: outputs
+
+devices:
+  demo-device-001:
+    llm:
+      provider: ${DEMO_LLM_PROVIDER}
+      model: ${DEMO_LLM_MODEL}
+      base_url: ${DEMO_LLM_BASE_URL}
+      api_key: ${DEMO_LLM_API_KEY}
+  demo-device-streaming-001:
+    stt:
+      type: streaming-local
+      model_dir: models/paraformer-zh-streaming
+      output_dir: outputs
+    tts:
+      type: volcengine-clone
+      profile_id: shuxin
+      encoding: mp3
+      output_dir: outputs
+    llm:
+      provider: ${DEMO_LLM_PROVIDER}
+      model: ${DEMO_LLM_MODEL}
+      base_url: ${DEMO_LLM_BASE_URL}
+      api_key: ${DEMO_LLM_API_KEY}
+  demo-device-tencent-realtime-001:
+    stt:
+      type: tencent-realtime
+      appid: ${TENCENT_ASR_APPID}
+      model: 16k_zh
+      output_dir: outputs
+    tts:
+      type: volcengine-clone
+      profile_id: shuxin
+      encoding: mp3
+      output_dir: outputs
+    llm:
+      provider: ${DEMO_LLM_PROVIDER}
+      model: ${DEMO_LLM_MODEL}
+      base_url: ${DEMO_LLM_BASE_URL}
+      api_key: ${DEMO_LLM_API_KEY}

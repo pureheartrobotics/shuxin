@@ -1,0 +1,11 @@
+# 生产叠加：去掉 src/scripts/tests 热挂载，仅保留数据目录（与 docker-compose.yml 联用）。
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml bash scripts/redeploy_docker.sh
+#
+services:
+  shuxin-voice-demo:
+    volumes:
+      - ${SHUXIN_HOST_DATA_DIR:-./data}:/app/data
+      - ${SHUXIN_HOST_MODELS_DIR:-./models}:/app/models
+      - ${SHUXIN_HOST_SAMPLES_DIR:-./samples}:/app/samples
+      - ${SHUXIN_HOST_OUTPUTS_DIR:-./outputs}:/app/outputs

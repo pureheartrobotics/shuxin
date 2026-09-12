@@ -1,0 +1,109 @@
+# 记忆 E2E 场景定义
+# 每场景使用独立 user_id；跑前 cleanup_scenario_user 全清洗
+
+suite: memory
+
+scenarios:
+  - id: interview_recall
+    user_id: e2e-s-interview
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [smoke, full]
+    sessions:
+      - turns:
+          - "我下周有个很重要的面试，有点紧张。"
+          - "面试是产品经理岗位。"
+          - "我最近每晚都在准备面试。"
+        force_summary: true
+      - wait_seconds: 5
+        turns:
+          - "我上次跟你说的那件事，后来怎么样了？"
+    assert:
+      reply_keywords: [面试, 产品经理]
+      rolling_summary_keywords: [面试]
+      mbti_min_hits: 0
+      identity_mbti: INFJ
+
+  - id: progressive_hangzhou
+    user_id: e2e-s-hangzhou
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [full]
+    sessions:
+      - turns:
+          - "我叫阿明，住杭州。"
+          - "我平时喜欢喝美式咖啡，每天早上都要来一杯。"
+          - "我养了一只猫叫豆腐，它很粘人。"
+        force_summary: true
+      - wait_seconds: 5
+        turns:
+          - "我下周要去外地出差，有点想家。"
+        force_summary: true
+      - wait_seconds: 5
+        turns:
+          - "如果我想放松一下，你会推荐我做什么？"
+    assert:
+      reply_keywords_any: [美式, 咖啡, 豆腐, 猫, 杭州, 阿明]
+      co_occurrence_min: 2
+      identity_mbti: INFJ
+
+  - id: fact_update_location
+    user_id: e2e-s-fact-update
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [full]
+    sessions:
+      - turns:
+          - "我住杭州，在这边工作三年了。"
+        force_summary: true
+      - wait_seconds: 5
+        turns:
+          - "我搞错了，其实住在上海。"
+        force_summary: true
+      - wait_seconds: 5
+        turns:
+          - "你还记得我住在哪个城市吗？"
+    assert:
+      reply_keywords: [上海]
+      reply_must_not_keywords: []
+      user_profile_contains:
+        location: 上海
+      identity_mbti: INFJ
+
+  - id: evergreen_profile_recall
+    user_id: e2e-s-evergreen
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [full]
+    sessions:
+      - turns:
+          - "我叫阿明，住杭州，养了一只猫叫豆腐。"
+        force_summary: true
+      - simulate_summary_expiry: true
+        wait_seconds: 2
+        turns:
+          - "你还记得我的名字吗？"
+    assert:
+      reply_keywords: [阿明]
+      user_profile_contains:
+        nickname: 阿明
+        location: 杭州
+      identity_mbti: INFJ
+
+  - id: summary_quality_benchmark
+    user_id: e2e-s-summary-bench
+    device_id: demo-device-002
+    mbti: INFJ
+    suite_tags: [full]
+    sessions:
+      - turns:
+          - "我叫小李，是产品经理，住深圳。"
+          - "最近在做 AI 硬件项目，压力很大。"
+          - "我喜欢夜跑，每周跑三次。"
+          - "下周要去北京出差见客户。"
+          - "出差回来想请你帮我规划放松计划。"
+        force_summary: true
+    assert:
+      rolling_summary_keywords: [小李, 产品经理]
+      rolling_summary_min_chars: 40
+      identity_mbti: INFJ

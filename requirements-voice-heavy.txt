@@ -1,0 +1,8 @@
+# Heavy Docker tier — torch / ASR stack (change rarely).
+# § voice-audio
+numpy==1.26.4
+pydub==0.25.1
+soundfile==0.13.1
+# § voice-asr
+funasr==1.2.7
+modelscope==1.32.0

@@ -1,0 +1,147 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shuxin-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shuxin}
+      POSTGRES_USER: ${POSTGRES_USER:-shuxin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shuxin_dev_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - shuxin_postgres_data:/var/lib/postgresql/data
+    networks:
+      - shuxin_backend
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    container_name: shuxin-qdrant
+    volumes:
+      - shuxin_qdrant_data:/qdrant/storage
+    healthcheck:
+      # qdrant/qdrant 镜像无 wget/curl；用 bash /dev/tcp 探测 /readyz
+      test:
+        - CMD-SHELL
+        - >
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333
+          && printf "GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3
+          && head -c 256 <&3 | grep -q "all shards are ready"'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # 本地默认 6335 避免与本机已有 Qdrant(6333) 冲突；生产部署见 docs/DEPLOY_SERVER.md
+    ports:
+      - "${QDRANT_HTTP_PORT:-6335}:6333"
+    networks:
+      - shuxin_backend
+
+  shuxin-voice-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shuxin-voice-demo:latest
+    container_name: shuxin-voice-demo-pg
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      SHUXIN_HOME: /app/data/shuxin_home
+      VOICE_DEVICE_CONFIG: /app/data/devices.yaml
+      SHUXIN_USERS_CONFIG: /app/data/users.yaml
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shuxin}:${POSTGRES_PASSWORD:-shuxin_dev_password}@postgres:5432/${POSTGRES_DB:-shuxin}
+      SHUXIN_DB_POOL_MIN: ${SHUXIN_DB_POOL_MIN:-1}
+      SHUXIN_DB_POOL_MAX: ${SHUXIN_DB_POOL_MAX:-10}
+      SHUXIN_LLM_TIMEOUT_SECONDS: ${SHUXIN_LLM_TIMEOUT_SECONDS:-60}
+      SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS: ${SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS:-5}
+      SHUXIN_ADMIN_TOKEN: ${SHUXIN_ADMIN_TOKEN:-dev-admin-token}
+      SHUXIN_MINIAPP_ADMIN_TOKEN: ${SHUXIN_MINIAPP_ADMIN_TOKEN:-}
+      SHUXIN_DEVICE_SHARED_SECRET: ${SHUXIN_DEVICE_SHARED_SECRET:-dev-device-secret}
+      SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY: ${SHUXIN_DEVICE_SECRET_ENCRYPTION_KEY:-}
+      SHUXIN_WECHAT_MOCK: ${SHUXIN_WECHAT_MOCK:-1}
+      SHUXIN_WECHAT_APPID: ${SHUXIN_WECHAT_APPID:-}
+      SHUXIN_WECHAT_SECRET: ${SHUXIN_WECHAT_SECRET:-}
+      SHUXIN_WXPAY_MCHID: ${SHUXIN_WXPAY_MCHID:-}
+      SHUXIN_WXPAY_API_V3_KEY: ${SHUXIN_WXPAY_API_V3_KEY:-}
+      SHUXIN_WXPAY_CERT_SERIAL_NO: ${SHUXIN_WXPAY_CERT_SERIAL_NO:-}
+      SHUXIN_WXPAY_PRIVATE_KEY_PATH: ${SHUXIN_WXPAY_PRIVATE_KEY_PATH:-/app/data/certs/wxpay_private_key.pem}
+      SHUXIN_WXPAY_PLATFORM_CERT_DIR: ${SHUXIN_WXPAY_PLATFORM_CERT_DIR:-/app/data/certs/wxpay_platform}
+      SHUXIN_WXPAY_PUBLIC_KEY_PATH: ${SHUXIN_WXPAY_PUBLIC_KEY_PATH:-}
+      SHUXIN_WXPAY_PUBLIC_KEY: ${SHUXIN_WXPAY_PUBLIC_KEY:-}
+      SHUXIN_WXPAY_PUBLIC_KEY_ID: ${SHUXIN_WXPAY_PUBLIC_KEY_ID:-}
+      SHUXIN_WXPAY_NOTIFY_URL: ${SHUXIN_WXPAY_NOTIFY_URL:-}
+      SHUXIN_PAYMENT_PLANS_FILE: ${SHUXIN_PAYMENT_PLANS_FILE:-/app/data/payment_plans.json}
+      SHUXIN_PAYMENT_PLANS: ${SHUXIN_PAYMENT_PLANS:-}
+      DEMO_LLM_PROVIDER: ${DEMO_LLM_PROVIDER:-openai-compatible}
+      DEMO_LLM_MODEL: ${DEMO_LLM_MODEL:-deepseek-chat}
+      DEMO_LLM_BASE_URL: ${DEMO_LLM_BASE_URL:-}
+      DEMO_LLM_API_KEY: ${DEMO_LLM_API_KEY:-}
+      DMX_SYSTEM_TOKEN: ${DMX_SYSTEM_TOKEN:-}
+      DMX_API_USER_ID: ${DMX_API_USER_ID:-}
+      DMX_API_BASE_URL: ${DMX_API_BASE_URL:-https://www.dmxapi.cn}
+      SHUXIN_LLM_DEFAULT_PROVIDER: ${SHUXIN_LLM_DEFAULT_PROVIDER:-openai-compatible}
+      SHUXIN_LLM_DEFAULT_MODEL: ${SHUXIN_LLM_DEFAULT_MODEL:-deepseek-chat}
+      SHUXIN_VOICE_TEST_MODE: ${SHUXIN_VOICE_TEST_MODE:-0}
+      VOLCENGINE_TTS_API_KEY: ${VOLCENGINE_TTS_API_KEY:-}
+      VOLCENGINE_TTS_VOICE_TYPE: ${VOLCENGINE_TTS_VOICE_TYPE:-}
+      VOLCENGINE_TTS_API_URL: ${VOLCENGINE_TTS_API_URL:-https://openspeech.bytedance.com/api/v1/tts}
+      VOICE_TTS_PROFILES_CONFIG: ${VOICE_TTS_PROFILES_CONFIG:-/app/data/tts_profiles.yaml}
+      SHUXIN_TTS_TIMEOUT_SECONDS: ${SHUXIN_TTS_TIMEOUT_SECONDS:-30}
+      SHUXIN_TTS_CONNECT_TIMEOUT_SECONDS: ${SHUXIN_TTS_CONNECT_TIMEOUT_SECONDS:-5}
+      SHUXIN_TTS_EFFECT: ${SHUXIN_TTS_EFFECT:-karen}
+      TENCENT_ASR_APPID: ${TENCENT_ASR_APPID:-}
+      TENCENTCLOUD_SECRET_ID: ${TENCENTCLOUD_SECRET_ID:-}
+      TENCENTCLOUD_SECRET_KEY: ${TENCENTCLOUD_SECRET_KEY:-}
+      SHUXIN_MEM0_ENABLED: ${SHUXIN_MEM0_ENABLED:-1}
+      SHUXIN_QDRANT_HOST: ${SHUXIN_QDRANT_HOST:-qdrant}
+      SHUXIN_QDRANT_PORT: ${SHUXIN_QDRANT_PORT:-6333}
+      SHUXIN_QDRANT_COLLECTION: ${SHUXIN_QDRANT_COLLECTION:-shuxin_memories}
+      SHUXIN_QDRANT_API_KEY: ${SHUXIN_QDRANT_API_KEY:-}
+      SHUXIN_EMBED_MODEL: ${SHUXIN_EMBED_MODEL:-text-embedding-3-small}
+      SHUXIN_EMBED_DIMS: ${SHUXIN_EMBED_DIMS:-1536}
+      SHUXIN_MEM0_SEARCH_TOP_K: ${SHUXIN_MEM0_SEARCH_TOP_K:-8}
+      SHUXIN_AUDIO_RETENTION_HOURS: ${SHUXIN_AUDIO_RETENTION_HOURS:-12}
+      SHUXIN_AUDIO_RETENTION_INTERVAL_SEC: ${SHUXIN_AUDIO_RETENTION_INTERVAL_SEC:-1800}
+      SHUXIN_FACTORY_VERIFY_LOG_RETENTION_DAYS: ${SHUXIN_FACTORY_VERIFY_LOG_RETENTION_DAYS:-15}
+      SHUXIN_BAIDU_MAP_AK: ${SHUXIN_BAIDU_MAP_AK:-}
+      # 默认关闭百度地图 MCP（成本）；恢复设 SHUXIN_MAP_TOOLS_ENABLED=1
+      SHUXIN_MAP_TOOLS_ENABLED: ${SHUXIN_MAP_TOOLS_ENABLED:-0}
+      SHUXIN_MAP_MCP_URL: ${SHUXIN_MAP_MCP_URL:-https://mcp.map.baidu.com/mcp}
+      SHUXIN_MAP_MCP_TIMEOUT_SECONDS: ${SHUXIN_MAP_MCP_TIMEOUT_SECONDS:-3}
+      SHUXIN_MAP_MAX_TOOL_ROUNDS: ${SHUXIN_MAP_MAX_TOOL_ROUNDS:-1}
+      SHUXIN_MAP_GATE_ENABLED: ${SHUXIN_MAP_GATE_ENABLED:-1}
+      SHUXIN_MAP_DEFAULT_REGION: ${SHUXIN_MAP_DEFAULT_REGION:-}
+      SHUXIN_RTC_CALL_ENABLED: ${SHUXIN_RTC_CALL_ENABLED:-0}
+      BAIDU_RTC_APP_ID: ${BAIDU_RTC_APP_ID:-}
+      BAIDU_RTC_APP_KEY: ${BAIDU_RTC_APP_KEY:-}
+      BAIDU_RTC_SERVER_URL: ${BAIDU_RTC_SERVER_URL:-wss://rtc.exp.bcelive.com/janus}
+      BAIDU_RTC_TOKEN_TTL_SECONDS: ${BAIDU_RTC_TOKEN_TTL_SECONDS:-3600}
+      SHUXIN_CALL_RING_TIMEOUT_SECONDS: ${SHUXIN_CALL_RING_TIMEOUT_SECONDS:-30}
+    ports:
+      - "${VOICE_DEMO_PORT:-8765}:8765"
+    volumes:
+      - ./src:/app/src
+      # 挂载脚本目录，便于容器内下载/更新语音模型。
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+      # 阶段 A：宿主机路径可用 SHUXIN_HOST_* 指到大磁盘（见 .env.example、docs/DEPLOY_SERVER.md）
+      - ${SHUXIN_HOST_DATA_DIR:-./data}:/app/data
+      - ${SHUXIN_HOST_MODELS_DIR:-./models}:/app/models
+      - ${SHUXIN_HOST_SAMPLES_DIR:-./samples}:/app/samples
+      - ${SHUXIN_HOST_OUTPUTS_DIR:-./outputs}:/app/outputs
+    working_dir: /app
+    command: ["python", "-m", "shuxin.voice.server", "--host", "0.0.0.0", "--port", "8765"]
+    networks:
+      - shuxin_backend
+
+volumes:
+  shuxin_postgres_data:
+  shuxin_qdrant_data:
+
+networks:
+  shuxin_backend:

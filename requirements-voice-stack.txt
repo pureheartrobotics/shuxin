@@ -1,0 +1,2 @@
+-r requirements-voice-heavy.txt
+-r requirements-voice-app.txt
