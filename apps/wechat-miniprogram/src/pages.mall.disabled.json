@@ -1,0 +1,64 @@
+{
+  "_comment": "商城暂时下线（审核空壳打回）。恢复时把本文件 pages + subPackages 合并回 src/pages.json，并在 tabBar 加回「商城」、个人中心恢复「商城订单」。",
+  "pages": [
+    {
+      "path": "pages/mall/index",
+      "style": {
+        "navigationBarTitleText": "初心商城",
+        "navigationBarBackgroundColor": "#f5f1ea",
+        "navigationBarTextStyle": "black"
+      }
+    }
+  ],
+  "subPackages": [
+    {
+      "root": "modules/mall/pages",
+      "pages": [
+        {
+          "path": "goods/detail",
+          "style": {
+            "navigationBarTitleText": "商品详情",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "cart/index",
+          "style": {
+            "navigationBarTitleText": "购物车",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "order/list",
+          "style": {
+            "navigationBarTitleText": "商城订单",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "order/confirm",
+          "style": {
+            "navigationBarTitleText": "确认订单",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        },
+        {
+          "path": "address/list",
+          "style": {
+            "navigationBarTitleText": "收货地址",
+            "navigationBarBackgroundColor": "#f5f1ea",
+            "navigationBarTextStyle": "black"
+          }
+        }
+      ]
+    }
+  ],
+  "tabBarItem": {
+    "pagePath": "pages/mall/index",
+    "text": "商城"
+  }
+}

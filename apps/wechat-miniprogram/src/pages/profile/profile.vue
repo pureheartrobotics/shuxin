@@ -41,13 +41,6 @@
       </view>
       <view class="row">
         <view>
-          <view class="label">商城订单</view>
-          <view class="value" style="font-weight: normal; font-size: 26rpx; color: #82786d; margin-top: 6rpx;">查看实体商品购买记录</view>
-        </view>
-        <button class="mini" @tap="openMallOrders">查看</button>
-      </view>
-      <view class="row">
-        <view>
           <view class="label">意见反馈</view>
           <view class="value" style="font-weight: normal; font-size: 26rpx; color: #82786d; margin-top: 6rpx;">提交您在使用中遇到的问题</view>
         </view>
@@ -137,10 +130,6 @@ function openTerms() {
 
 function openPrivacy() {
   uni.navigateTo({ url: "/pages/legal/privacy" });
-}
-
-function openMallOrders() {
-  uni.navigateTo({ url: "/modules/mall/pages/order/list" });
 }
 
 function openFactoryVerify() {
