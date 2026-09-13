@@ -1,6 +1,7 @@
 # ESP32 小车 MCP 底盘控制对接
 
-分支：`feature/voice-auth-gate`
+分支：`esp32`（从 `master` 拉出）。  
+RK3566 板端客户端在 `feature/rk3566`，本分支不包含、也不改那套代码。
 
 ## 本地改动文件
 
@@ -77,7 +78,7 @@ chassis MCP call device=<device-id> tool=self.chassis.go_forward text=小车前�
 
 ## 注意事项
 
-- 当前 ESP32/TB6612 底盘走 MCP 工具链；不要同时使用 `apps/rk3566/scripts/drive.sh` 的 RK3566 直控底盘路径。
+- 当前 ESP32/TB6612 底盘走 MCP 工具链。RK3566 的 `apps/rk3566/scripts/drive.sh` 在 `feature/rk3566`，不要在本分支混用。
 - 本地尚未完成自动化测试：当前 Windows 环境没有可执行的 Python 解释器，部署环境应运行：
 
 ```bash
