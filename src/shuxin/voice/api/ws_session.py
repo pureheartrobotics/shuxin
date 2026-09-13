@@ -198,6 +198,10 @@ class _VoiceWebSocketSession:
         self.client_ip = _client_ip_from_websocket(websocket)
         self._location_cache: dict | None = None
         self._agent_init_task: Optional[asyncio.Task] = None
+        self._mcp_enabled = False
+        self._mcp_tools: set[str] = set()
+        self._mcp_request_id = 0
+        self._motion_stop_task: Optional[asyncio.Task] = None
 
         # 初始化独立管道处理器
         self.stt_pipeline = SpeechTranscriber(self)
@@ -210,6 +214,7 @@ class _VoiceWebSocketSession:
             "listen": self._handle_listen_msg,
             "abort": self._handle_abort_msg,
             "text_turn": self._handle_text_turn_msg,
+            "mcp": self._handle_mcp_msg,
             "factory_verify_ack": self._handle_factory_verify_ack_msg,
             "ping": self._handle_ping_msg,
         }
@@ -348,6 +353,9 @@ class _VoiceWebSocketSession:
             )
         )
         self.hardware_session = bool(data.get("device_code") or data.get("device_secret"))
+        features = data.get("features")
+        self._mcp_enabled = isinstance(features, dict) and bool(features.get("mcp"))
+        self._mcp_tools.clear()
         self.audio_params = _negotiate_audio_params(data.get("audio_params"))
         if (
             self.hardware_session
@@ -396,6 +404,8 @@ class _VoiceWebSocketSession:
                 "frame_duration": int(self.audio_params["frame_duration"]),
             }
         await self._send_json(hello_ok)
+        if self._mcp_enabled:
+            await self._start_mcp_discovery()
         vsr.register(self.device_id, self)
         if not self.factory_acceptance:
             self._agent_init_task = asyncio.create_task(self._ensure_runtime())
@@ -440,6 +450,100 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "error", "message": "text_turn requires text"})
             return
         await self._process_text_turn(text)
+
+    async def _start_mcp_discovery(self) -> None:
+        await self._send_mcp_request("initialize", {"capabilities": {}}, request_id=1)
+        await self._send_mcp_request("tools/list", {"cursor": ""}, request_id=2)
+
+    async def _send_mcp_request(
+        self, method: str, params: dict[str, Any], *, request_id: int | None = None
+    ) -> None:
+        if request_id is None:
+            self._mcp_request_id = max(self._mcp_request_id, 2) + 1
+            request_id = self._mcp_request_id
+        await self._send_json(
+            {
+                "type": "mcp",
+                "payload": {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                },
+            }
+        )
+
+    async def _handle_mcp_msg(self, data: dict[str, Any]) -> None:
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            logger.warning("invalid MCP payload from device=%s", self.device_id)
+            return
+        error = payload.get("error")
+        if isinstance(error, dict):
+            logger.warning("device MCP error device=%s error=%s", self.device_id, error)
+            return
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return
+        tools = result.get("tools")
+        if isinstance(tools, list):
+            names = {
+                str(tool.get("name"))
+                for tool in tools
+                if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+            }
+            self._mcp_tools.update(names)
+            logger.info("device MCP tools discovered device=%s tools=%s", self.device_id, sorted(names))
+            next_cursor = result.get("nextCursor")
+            if isinstance(next_cursor, str) and next_cursor:
+                await self._send_mcp_request("tools/list", {"cursor": next_cursor})
+
+    @staticmethod
+    def _chassis_action_from_text(text: str) -> tuple[str, float] | None:
+        compact = re.sub(r"\s+", "", text or "")
+        if re.search(r"(停下|停车|停止|站住|别动|取消|^停[，。！! ]?)", compact):
+            return "stop", 0.0
+        if re.search(r"(后退|往后|向后|倒车|退后)", compact):
+            action = "go_back"
+        elif re.search(r"(左转|向左转|往左转|向左|往左)", compact):
+            action = "turn_left"
+        elif re.search(r"(右转|向右转|往右转|向右|往右)", compact):
+            action = "turn_right"
+        elif re.search(r"(前进|往前走|向前走|向前|过来|走近|走过来|开过来)", compact):
+            action = "go_forward"
+        else:
+            return None
+        seconds = 0.8 if re.search(r"(一点点|一点|一下|稍微)", compact) else 1.5
+        match = re.search(r"(\d+)\s*秒", compact)
+        if match:
+            seconds = min(float(match.group(1)), 4.0)
+        return action, seconds
+
+    async def _dispatch_chassis_motion(self, text: str, *, schedule_stop: bool = True) -> bool:
+        parsed = self._chassis_action_from_text(text)
+        if parsed is None or not self._mcp_enabled:
+            return False
+        action, duration = parsed
+        tool_name = f"self.chassis.{action}"
+        if tool_name not in self._mcp_tools:
+            logger.warning("chassis tool unavailable device=%s tool=%s", self.device_id, tool_name)
+            return False
+        current_task = asyncio.current_task()
+        if self._motion_stop_task and self._motion_stop_task is not current_task:
+            self._motion_stop_task.cancel()
+            self._motion_stop_task = None
+        await self._send_mcp_request("tools/call", {"name": tool_name, "arguments": {}})
+        logger.info("chassis MCP call device=%s tool=%s text=%s", self.device_id, tool_name, text)
+        if action != "stop" and schedule_stop:
+            self._motion_stop_task = asyncio.create_task(self._stop_chassis_after(duration))
+        return True
+
+    async def _stop_chassis_after(self, duration: float) -> None:
+        try:
+            await asyncio.sleep(duration)
+            await self._dispatch_chassis_motion("停止", schedule_stop=False)
+        except asyncio.CancelledError:
+            return
 
     async def _handle_factory_verify_ack_msg(self, data: dict[str, Any]) -> None:
         verify_id = str(data.get("verify_id") or "")
@@ -509,6 +613,7 @@ class _VoiceWebSocketSession:
             await self._send_json(
                 {"type": "stt", "state": "final", "text": text, "elapsed_ms": stt_ms}
             )
+            await self._dispatch_chassis_motion(text)
 
             from shuxin.integrations.voice_call.dispatch import try_dispatch_call_intent
 
@@ -774,6 +879,7 @@ class _VoiceWebSocketSession:
             paths.input_wav.parent.mkdir(parents=True, exist_ok=True)
             paths.input_wav.write_bytes(b"")
             await self._send_json({"type": "stt", "state": "final", "text": text, "elapsed_ms": 0})
+            await self._dispatch_chassis_motion(text)
 
             agent_started = time.perf_counter()
             await self._send_json({"type": "agent", "state": "thinking"})

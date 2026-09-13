@@ -93,3 +93,32 @@ async def test_auth_gate_allows_authenticated_listen() -> None:
     assert any(m.get("type") == "listen" and m.get("state") == "start" for m in ws.sent_messages)
     assert session.listening
     session._start_realtime_asr_if_needed.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_mcp_chassis_motion_is_discovered_and_dispatched() -> None:
+    ws = MockWebSocket()
+    session = _VoiceWebSocketSession(
+        websocket=ws,
+        service=MagicMock(),
+        repo=MagicMock(),
+        shuxin_home=Path("/tmp"),
+        default_device_id="demo-device-001",
+        out_dir=Path("/tmp"),
+    )
+    session._mcp_enabled = True
+
+    await session._handle_mcp_msg(
+        {
+            "payload": {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"tools": [{"name": "self.chassis.go_forward"}]},
+            }
+        }
+    )
+    await session._dispatch_chassis_motion("小车前进")
+
+    calls = [message for message in ws.sent_messages if message.get("type") == "mcp"]
+    assert calls[-1]["payload"]["method"] == "tools/call"
+    assert calls[-1]["payload"]["params"]["name"] == "self.chassis.go_forward"
