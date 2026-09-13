@@ -125,7 +125,23 @@ container: none
 {"type":"ping"}
 ```
 
-工厂验收回传（收到服务端 `factory_verify` 后立即发送）：
+### 3.1 ESP32 MCP 底盘（语音控车）
+
+量产 RK3566 不走这条；ESP32/TB6612 在 `esp32` 分支启用。设备 `hello` 增加：
+
+```json
+{"type":"hello","device_code":"...","device_secret":"...","client_id":"esp32-car","features":{"mcp":true},"audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
+```
+
+`client_id` 可省略。浏览器 `/voice-demo` 不传 `features.mcp`，不会开车。服务端 `hello ok` 会带回 `"features":{"mcp":true}`，随后下发 MCP `initialize` →（等设备 result）→ `tools/list`。STT 命中前进/后退/转向/停车后，服务端直接 `tools/call`（不等 LLM），到期再 `self.chassis.stop`。报文与口令见 [`MCP_CHASSIS_HANDOFF.md`](../MCP_CHASSIS_HANDOFF.md)。
+
+设备上行 MCP 响应：
+
+```json
+{"type":"mcp","payload":{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"self.chassis.go_forward"}]}}}
+```
+
+工厂验收：
 
 ```json
 {"type":"factory_verify_ack","verify_id":"<原样回传服务端下发的 verify_id>","status":"ok"}

@@ -122,3 +122,4 @@ async def test_mcp_chassis_motion_is_discovered_and_dispatched() -> None:
     calls = [message for message in ws.sent_messages if message.get("type") == "mcp"]
     assert calls[-1]["payload"]["method"] == "tools/call"
     assert calls[-1]["payload"]["params"]["name"] == "self.chassis.go_forward"
+    await session.mcp.reset()

@@ -85,3 +85,5 @@ class SpeechTranscriber:
                 "elapsed_ms": _elapsed_ms(self.realtime_stt_started),
             }
         )
+        if result.is_sentence_final and result.text:
+            await self.session._dispatch_chassis_motion(result.text)
