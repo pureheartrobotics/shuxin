@@ -1,4 +1,4 @@
-"""舒心 LLM 提供者抽象层
+"""初心 LLM 提供者抽象层
 
 对标 Hermes 的 provider 系统，支持多模型后端切换。
 
@@ -22,17 +22,87 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("shuxin.llm")
 
+DEFAULT_LLM_READ_TIMEOUT_SECONDS = 60.0
+DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS = 5.0
+LLM_TIMEOUT_ENV = "SHUXIN_LLM_TIMEOUT_SECONDS"
+LLM_CONNECT_TIMEOUT_ENV = "SHUXIN_LLM_CONNECT_TIMEOUT_SECONDS"
+
+
+def _get_llm_read_timeout_seconds() -> float:
+    """Return the LLM read timeout configured for low-latency voice use."""
+    raw = os.environ.get(LLM_TIMEOUT_ENV, str(DEFAULT_LLM_READ_TIMEOUT_SECONDS))
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "无效的 %s=%r，使用默认 %.1fs",
+            LLM_TIMEOUT_ENV,
+            raw,
+            DEFAULT_LLM_READ_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_LLM_READ_TIMEOUT_SECONDS
+    if timeout <= 0:
+        logger.warning(
+            "无效的 %s=%r，使用默认 %.1fs",
+            LLM_TIMEOUT_ENV,
+            raw,
+            DEFAULT_LLM_READ_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_LLM_READ_TIMEOUT_SECONDS
+    return timeout
+
+
+def _get_llm_connect_timeout_seconds() -> float:
+    raw = os.environ.get(
+        LLM_CONNECT_TIMEOUT_ENV,
+        str(DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS
+    if timeout <= 0:
+        return DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS
+    return timeout
+
+
+def _get_llm_timeout() -> Any:
+    """Build granular httpx timeouts so connect failures fail fast."""
+    import httpx
+
+    return httpx.Timeout(
+        connect=_get_llm_connect_timeout_seconds(),
+        read=_get_llm_read_timeout_seconds(),
+        write=10.0,
+        pool=2.0,
+    )
+
 
 @dataclass
 class LLMMessage:
     """LLM 消息。
 
     Attributes:
-        role: 消息角色 (system, user, assistant)。
+        role: 消息角色 (system, user, assistant, tool)。
         content: 消息内容。
+        tool_calls: assistant 消息附带的工具调用列表。
+        tool_call_id: tool 角色消息对应的调用 ID。
+        name: tool 角色消息对应的工具名。
     """
     role: str
-    content: str
+    content: str = ""
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+@dataclass
+class LLMToolCall:
+    """标准化的工具调用描述。"""
+
+    id: str
+    name: str
+    arguments: str
 
 
 @dataclass
@@ -43,12 +113,14 @@ class LLMResponse:
         content: 响应文本内容。
         model: 使用的模型名称。
         usage: Token 使用统计。
-        finish_reason: 结束原因 (stop, length, content_filter 等)。
+        finish_reason: 结束原因 (stop, length, content_filter, tool_calls 等)。
+        tool_calls: 模型请求的工具调用列表。
     """
     content: str
     model: str = ""
     usage: Dict[str, int] = field(default_factory=dict)
     finish_reason: str = ""
+    tool_calls: Optional[List[LLMToolCall]] = None
 
 
 class BaseLLMProvider(ABC):
@@ -175,10 +247,16 @@ class OpenAIProvider(BaseLLMProvider):
             ) from e
 
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL", "")
+        self.base_url = _normalize_openai_base_url(
+            base_url or os.environ.get("OPENAI_BASE_URL", "")
+        )
         self.model = model
 
-        client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+        client_kwargs: Dict[str, Any] = {
+            "api_key": self.api_key,
+            "timeout": _get_llm_timeout(),
+            "max_retries": 0,
+        }
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
 
@@ -197,7 +275,11 @@ class OpenAIProvider(BaseLLMProvider):
             with self._lock:
                 if self._async_client is None:
                     from openai import AsyncOpenAI
-                    client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
+                    client_kwargs: Dict[str, Any] = {
+                        "api_key": self.api_key,
+                        "timeout": _get_llm_timeout(),
+                        "max_retries": 0,
+                    }
                     if self.base_url:
                         client_kwargs["base_url"] = self.base_url
                     self._async_client = AsyncOpenAI(**client_kwargs)
@@ -207,22 +289,48 @@ class OpenAIProvider(BaseLLMProvider):
     def _to_openai_messages(
         messages: List[LLMMessage],
         system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
-        """将内部消息格式转换为 OpenAI API 格式。
-
-        Args:
-            messages: 内部消息列表。
-            system_prompt: 可选的系统提示。
-
-        Returns:
-            List[Dict[str, str]]: OpenAI 格式的消息列表。
-        """
-        result: List[Dict[str, str]] = []
+    ) -> List[Dict[str, Any]]:
+        """将内部消息格式转换为 OpenAI API 格式。"""
+        result: List[Dict[str, Any]] = []
         if system_prompt:
             result.append({"role": "system", "content": system_prompt})
         for msg in messages:
-            result.append({"role": msg.role, "content": msg.content})
+            if msg.role == "tool":
+                result.append(
+                    {
+                        "role": "tool",
+                        "content": msg.content,
+                        "tool_call_id": msg.tool_call_id or "",
+                    }
+                )
+                continue
+            payload: Dict[str, Any] = {
+                "role": msg.role,
+                "content": msg.content or "",
+            }
+            if msg.tool_calls:
+                payload["tool_calls"] = msg.tool_calls
+            result.append(payload)
         return result
+
+    @staticmethod
+    def _parse_tool_calls(message: Any) -> Optional[List[LLMToolCall]]:
+        raw_calls = getattr(message, "tool_calls", None)
+        if not raw_calls:
+            return None
+        parsed: List[LLMToolCall] = []
+        for item in raw_calls:
+            function = getattr(item, "function", None)
+            if function is None:
+                continue
+            parsed.append(
+                LLMToolCall(
+                    id=str(getattr(item, "id", "") or ""),
+                    name=str(getattr(function, "name", "") or ""),
+                    arguments=str(getattr(function, "arguments", "") or "{}"),
+                )
+            )
+        return parsed or None
 
     def chat(
         self,
@@ -258,8 +366,9 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             choice = response.choices[0]
+            tool_calls = self._parse_tool_calls(choice.message)
             return LLMResponse(
-                content=choice.message.content or "",
+                content=strip_dsml_blocks(choice.message.content or ""),
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -267,6 +376,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "total_tokens": response.usage.total_tokens if response.usage else 0,
                 },
                 finish_reason=choice.finish_reason or "",
+                tool_calls=tool_calls,
             )
         except Exception as e:
             logger.error("LLM 同步调用失败 [model=%s]: %s", self.model, e)
@@ -306,8 +416,9 @@ class OpenAIProvider(BaseLLMProvider):
                 **kwargs,
             )
             choice = response.choices[0]
+            tool_calls = self._parse_tool_calls(choice.message)
             return LLMResponse(
-                content=choice.message.content or "",
+                content=strip_dsml_blocks(choice.message.content or ""),
                 model=response.model,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -315,6 +426,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "total_tokens": response.usage.total_tokens if response.usage else 0,
                 },
                 finish_reason=choice.finish_reason or "",
+                tool_calls=tool_calls,
             )
         except Exception as e:
             logger.error("LLM 异步调用失败 [model=%s]: %s", self.model, e)
@@ -355,12 +467,100 @@ class OpenAIProvider(BaseLLMProvider):
                 stream=True,
                 **kwargs,
             )
+            think_filter = _ThinkTagFilter()
+            dsml_filter = _DsmlStreamFilter()
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                if not chunk.choices:
+                    continue
+                raw = _openai_stream_delta_text(chunk.choices[0].delta)
+                piece = think_filter.feed(raw) if raw else ""
+                piece = dsml_filter.feed(piece) if piece else ""
+                if piece:
+                    yield piece
         except Exception as e:
             logger.error("LLM 流式调用失败 [model=%s]: %s", self.model, e)
             raise
+
+
+def _normalize_openai_base_url(base_url: str) -> str:
+    """Ensure OpenAI-compatible clients target the /v1 API prefix."""
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if url.endswith("/v1"):
+        return url
+    return f"{url}/v1"
+
+
+_THINK_OPEN = "<" + "think" + ">"
+_THINK_CLOSE = "</" + "think" + ">"
+
+
+def _DsmlStreamFilter():
+    """Lazy import to avoid integrations ↔ core cycles at module load."""
+    from shuxin.integrations.location.dsml import DsmlStreamFilter
+
+    return DsmlStreamFilter()
+
+
+def strip_dsml_blocks(text: str) -> str:
+    from shuxin.integrations.location.dsml import strip_dsml_blocks as _strip
+
+    return _strip(text)
+
+
+class _ThinkTagFilter:
+    """State machine: strip `` blocks from streamed content."""
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""
+
+    @staticmethod
+    def _partial_tag_suffix(text: str, tag: str) -> int:
+        max_keep = min(len(text), len(tag) - 1)
+        for keep in range(max_keep, 0, -1):
+            if text.endswith(tag[:keep]):
+                return keep
+        return 0
+
+    def feed(self, text: str) -> str:
+        """Feed a chunk; return speakable text (may be empty)."""
+        self._buf += text
+        out_parts: list[str] = []
+        while True:
+            if self._in_think:
+                end = self._buf.find(_THINK_CLOSE)
+                if end == -1:
+                    keep = self._partial_tag_suffix(self._buf, _THINK_CLOSE)
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                self._buf = self._buf[end + len(_THINK_CLOSE) :]
+                self._in_think = False
+            else:
+                start = self._buf.find(_THINK_OPEN)
+                if start == -1:
+                    keep = self._partial_tag_suffix(self._buf, _THINK_OPEN)
+                    out_parts.append(self._buf[: len(self._buf) - keep])
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                out_parts.append(self._buf[:start])
+                self._buf = self._buf[start + len(_THINK_OPEN) :]
+                self._in_think = True
+        return "".join(out_parts)
+
+
+def _openai_stream_delta_text(delta: Any) -> str:
+    """Extract speakable text from OpenAI-compatible stream deltas.
+
+    reasoning_content (DeepSeek-R1/QwQ etc.) is never user-facing; log at DEBUG only.
+    """
+    reasoning = getattr(delta, "reasoning_content", None) or ""
+    if reasoning:
+        logger.debug("[LLM-REASONING] %.120s", reasoning)
+
+    content = getattr(delta, "content", None) or ""
+    return content
 
 
 class AnthropicProvider(BaseLLMProvider):

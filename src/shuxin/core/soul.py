@@ -1,7 +1,7 @@
-"""舒心人格引擎 — SOUL.md 加载与解析
+"""初心人格引擎 — SOUL.md 加载与解析
 
 对标 Hermes 的 SOUL.md Slot #1 机制，作为智能体的核心身份定义。
-SOUL.md 是舒心的"灵魂文件"，定义了人格、行为准则、情感表达方式。
+SOUL.md 是初心的"灵魂文件"，定义了人格、行为准则、情感表达方式。
 
 SOUL.md 文件格式：
 - YAML frontmatter (--- 包裹) 定义元数据
@@ -39,8 +39,8 @@ class SoulProfile:
         emotion_templates: 情感表达模板字典。
         raw_content: SOUL.md 原始内容。
     """
-    name: str = "舒心"
-    species: str = "灵狐"
+    name: str = "初心"
+    species: str = "陪伴机器人"
     mbti: str = "INFJ"
     age: int = 22
     gender: str = "无性别"
@@ -212,14 +212,13 @@ class SoulEngine:
 
         Example:
             >>> engine.get_system_prompt_block()
-            '## 你的身份\\n\\n你是舒心，一只灵狐。\\n...'
+            '## 你的身份\n\n你是初心，一只陪伴机器人。\n...'
         """
         p = self.profile
         lines = [
             f"## 你的身份",
             "",
             f"你是{p.name}，一只{p.species}。",
-            f"你的 MBTI 人格类型是 {p.mbti}。",
             f"你的年龄是 {p.age} 岁。",
             "",
             f"### 核心信念",
@@ -245,15 +244,15 @@ class SoulEngine:
         """获取人格摘要信息。
 
         Returns:
-            str: 简洁的人格摘要，包含名称、种族、MBTI 和核心信念。
+            str: 简洁的人格摘要，包含名称、种族和核心信念。
 
         Example:
             >>> engine.get_profile_summary()
-            '舒心 · 灵狐 · INFJ · 22岁\\n特质: 温柔/敏锐/忠诚\\n信念: 我不是工具，我是陪伴者'
+            '初心 · 陪伴机器人 · 22岁\n特质: 温柔/敏锐/忠诚\n信念: 我不是工具，我是陪伴者'
         """
         p = self.profile
         return (
-            f"{p.name} · {p.species} · {p.mbti} · {p.age}岁\n"
+            f"{p.name} · {p.species} · {p.age}岁\n"
             f"特质: {'/'.join(p.traits)}\n"
             f"信念: {p.core_belief}"
         )

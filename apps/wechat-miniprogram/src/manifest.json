@@ -1,0 +1,20 @@
+{
+  "name": "初心",
+  "appid": "wxda3acb8842b5c9f4",
+  "description": "初心陪伴机器人设备绑定端",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "mp-weixin": {
+    "appid": "wxda3acb8842b5c9f4",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true,
+    "__usePrivacyCheck__": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于在 Android 上搜索附近蓝牙设备以完成配网"
+      }
+    }
+  }
+}

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChuXin Voice Demo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7f9; color: #20242a; }
+    main { max-width: 880px; margin: 0 auto; padding: 28px 18px 40px; }
+    h1 { font-size: 28px; margin: 0 0 18px; }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+    input { height: 38px; padding: 0 10px; border: 1px solid #cfd6df; border-radius: 6px; min-width: 220px; }
+    button { height: 40px; padding: 0 16px; border: 0; border-radius: 6px; background: #1b6ef3; color: white; cursor: pointer; }
+    button:disabled { background: #9aa7b6; cursor: not-allowed; }
+    #record { background: #d63847; min-width: 160px; }
+    #record.recording { background: #9f1d2b; }
+    .panel { background: white; border: 1px solid #e1e6ec; border-radius: 8px; padding: 16px; margin-top: 12px; }
+    .row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; padding: 7px 0; border-bottom: 1px solid #eef1f4; }
+    .row:last-child { border-bottom: 0; }
+    .label { color: #657080; }
+    #log { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; max-height: 280px; overflow: auto; }
+    .hint { color: #657080; font-size: 13px; }
+    .llm-warn { color: #b8453f; font-weight: 600; }
+    select { font: inherit; }
+    #callPanel { display: none; border-color: #1b6ef3; }
+    #callPanel.active { display: block; }
+    #callPanel .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    #callPanel button.reject { background: #d63847; }
+    #callPanel button.end { background: #5a6572; }
+    .brtc-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    #brtcSdkBanner { display: none; margin: 0 0 12px; padding: 10px 12px; border-radius: 6px; background: #fde8e6; color: #8a1f1a; font-size: 14px; font-weight: 600; }
+    #brtcSdkBanner.show { display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ChuXin 语音测试台</h1>
+    <div id="brtcSdkBanner" role="alert">百度 BRTC Web SDK 未加载：通话接通后也不会有声音。请 Ctrl+Shift+R 硬刷新，或检查网络能否访问 baidu CDN /voice-static。</div>
+    <p class="hint" style="margin:0 0 12px;color:#657080;font-size:14px">测试用户 API：在 /admin「用户」Tab 点击<strong>配置 LLM</strong>（微信 wx_ 用户也需单独配置）→ 绑定设备 → 本页 Admin Token → 加载设备 → 连接。<strong>当前真人通话主路径为 Web↔Web</strong>：用 <code>http://127.0.0.1:8765/voice-demo</code>（localhost 才能开麦）；两窗分别连 CALLER / CALLEE，主叫说「打电话给小明」，被叫接听；同机请戴耳机。语音走<strong>百度 RTC</strong>（不经舒心带宽）；通话中请保持 WS，挂断用「挂断」按钮。日志应有 <code>BRTC joined</code>；stub 则 Ctrl+Shift+R。步骤见仓库 <code>docs/RTC_WEB_CALL_LAB.md</code>。</p>
+    <div class="toolbar">
+      <input id="adminToken" type="password" placeholder="Admin Token" aria-label="admin token" />
+      <button id="loadTargets" type="button">加载设备</button>
+      <select id="testTarget" aria-label="test target" style="min-width:280px;height:38px;padding:0 8px;border:1px solid #cfd6df;border-radius:6px">
+        <option value="">选择用户与设备…</option>
+      </select>
+    </div>
+    <div class="toolbar">
+      <input id="deviceCode" value="{{DEFAULT_DEVICE_ID}}" aria-label="device code" />
+      <input id="deviceSecret" value="dev-device-secret" aria-label="device secret" placeholder="device secret" />
+      <input id="clientId" value="web-demo" aria-label="client id" />
+      <button id="connect">连接</button>
+      <button id="record" disabled>按住说话</button>
+    </div>
+    <div class="panel" id="callPanel">
+      <div class="row"><div class="label">通话状态</div><div id="callStatus">空闲</div></div>
+      <div class="row"><div class="label">对端</div><div id="callPeer">-</div></div>
+      <div class="row"><div class="label">媒体</div><div id="callMedia">待接通（需百度 Web SDK）</div></div>
+      <div class="actions">
+        <button type="button" id="callAccept" disabled>接听</button>
+        <button type="button" id="callReject" class="reject" disabled>拒绝</button>
+        <button type="button" id="callEnd" class="end" disabled>挂断</button>
+      </div>
+    </div>
+    <div class="brtc-hidden" aria-hidden="true">
+      <video id="brtc-local" playsinline autoplay muted></video>
+      <video id="brtc-remote" playsinline autoplay></video>
+    </div>
+    <div class="panel">
+      <div class="row"><div class="label">连接状态</div><div id="status">未连接</div></div>
+      <div class="row"><div class="label">绑定用户</div><div id="boundUser">-</div></div>
+      <div class="row"><div class="label">将使用 LLM</div><div id="llmPreview">-</div></div>
+      <div class="row"><div class="label">识别文本</div><div id="stt">-</div></div>
+      <div class="row"><div class="label">初心回复</div><div id="reply">-</div></div>
+      <div class="row"><div class="label">耗时</div><div id="timing">-</div></div>
+    </div>
+    <div class="panel"><div id="log"></div></div>
+  </main>
+  <!-- CDN + local cache-bust：旧占位 stub 不会被浏览器死缓存；任一源成功即可 -->
+  <script
+    src="https://brtc-sdk.cdn.bcebos.com/npm/baidurtc@1.2.22/baidu.rtc.sdk.js"
+    onerror="window.__brtcCdnFailed=true;console.error('[BRTC] CDN SDK failed to load');"
+  ></script>
+  <script
+    src="/voice-static/js/baidu.rtc.sdk.js?v=1.2.22"
+    onerror="window.__brtcLocalFailed=true;console.error('[BRTC] local SDK failed to load');"
+  ></script>
+  <script src="/voice-static/js/brtc_web_adapter.js?v=1.2.22"></script>
+  <script src="/voice-static/js/call_signaling.js?v=1.2.22"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const sttEl = document.getElementById('stt');
+    const replyEl = document.getElementById('reply');
+    const timingEl = document.getElementById('timing');
+    const boundUserEl = document.getElementById('boundUser');
+    const llmPreviewEl = document.getElementById('llmPreview');
+    const logEl = document.getElementById('log');
+    const connectBtn = document.getElementById('connect');
+    const recordBtn = document.getElementById('record');
+    const loadTargetsBtn = document.getElementById('loadTargets');
+    const adminTokenInput = document.getElementById('adminToken');
+    const testTargetSelect = document.getElementById('testTarget');
+    const deviceInput = document.getElementById('deviceCode');
+    const secretInput = document.getElementById('deviceSecret');
+    const clientInput = document.getElementById('clientId');
+    const callPanel = document.getElementById('callPanel');
+    const callStatusEl = document.getElementById('callStatus');
+    const callPeerEl = document.getElementById('callPeer');
+    const callAcceptBtn = document.getElementById('callAccept');
+    const callRejectBtn = document.getElementById('callReject');
+    const callEndBtn = document.getElementById('callEnd');
+    const callMediaEl = document.getElementById('callMedia');
+    let demoTargets = [];
+    let ws, audioContext, source, processor, stream;
+    let recording = false;
+    let recordingRequested = false;
+    let startingRecording = false;
+    let audioQueue = [];
+    let audioPlaying = false;
+    let callClient = null;
+
+    function log(line) {
+      logEl.textContent += `${new Date().toLocaleTimeString()} ${line}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    window.shuxinCallLog = log;
+
+    function brtcSdkReady() {
+      return typeof window.BRTC_Start === 'function' ||
+        (window.baidu && window.baidu.rtc && typeof window.baidu.rtc.BRTC_Start === 'function');
+    }
+    const brtcSdkBanner = document.getElementById('brtcSdkBanner');
+    if (brtcSdkReady()) {
+      log('Baidu BRTC Web SDK loaded (BRTC_Start ok)');
+      if (window.__brtcCdnFailed) log('Note: CDN failed; using local /voice-static SDK');
+      callMediaEl.textContent = 'SDK 已加载，待接通';
+      if (brtcSdkBanner) brtcSdkBanner.classList.remove('show');
+    } else {
+      log('Baidu BRTC Web SDK MISSING — calls will be stub (no audio). Hard-refresh (Ctrl+Shift+R).');
+      if (window.__brtcCdnFailed) log('CDN load failed');
+      if (window.__brtcLocalFailed) log('Local SDK load failed');
+      callMediaEl.textContent = 'SDK 未加载（stub）— 接通也无声';
+      if (brtcSdkBanner) brtcSdkBanner.classList.add('show');
+    }
+
+    function updateCallUi(ev) {
+      const kind = ev && ev.kind;
+      callPanel.classList.toggle('active', kind && kind !== 'idle');
+      if (kind === 'incoming') {
+        callStatusEl.textContent = '来电振铃';
+        callPeerEl.textContent = ev.callerHandle || ev.callerDeviceId || '-';
+        callMediaEl.textContent = brtcSdkReady() ? '接听后进百度 RTC 房' : 'SDK 未加载 → 将走 stub（无声音）';
+        callAcceptBtn.disabled = false;
+        callRejectBtn.disabled = false;
+        callEndBtn.disabled = true;
+      } else if (kind === 'outgoing') {
+        callStatusEl.textContent = '正在呼叫';
+        callPeerEl.textContent = ev.handle || '-';
+        callMediaEl.textContent = brtcSdkReady() ? '等待对方接听后进房' : 'SDK 未加载 → 将走 stub（无声音）';
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = false;
+      } else if (kind === 'connected') {
+        callStatusEl.textContent = ev.stub ? '通话中（媒体 stub）' : '通话中（真媒体）';
+        callPeerEl.textContent = ev.peerDeviceId || callPeerEl.textContent || '-';
+        callMediaEl.textContent = ev.stub
+          ? '!!! stub：只有信令，听不到对方。红条：硬刷新 Ctrl+Shift+R；仍失败则看 Console CDN/local SDK'
+          : '百度 RTC 已进房；请说话（同机建议戴耳机）';
+        if (ev.stub && brtcSdkBanner) brtcSdkBanner.classList.add('show');
+        if (!ev.stub && brtcSdkBanner) brtcSdkBanner.classList.remove('show');
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = false;
+        const remote = document.getElementById('brtc-remote');
+        if (remote && typeof remote.play === 'function') {
+          remote.play().catch(function () {});
+        }
+      } else {
+        callStatusEl.textContent = '空闲' + (ev && ev.reason ? ` (${ev.reason})` : '');
+        callPeerEl.textContent = '-';
+        callMediaEl.textContent = brtcSdkReady() ? 'SDK 已加载，待接通' : 'SDK 未加载（stub）';
+        callAcceptBtn.disabled = true;
+        callRejectBtn.disabled = true;
+        callEndBtn.disabled = true;
+        callPanel.classList.remove('active');
+      }
+      if (callClient && callClient.isAiSuspended()) {
+        recordBtn.disabled = true;
+      } else {
+        restoreReadyState();
+      }
+    }
+
+    function ensureCallClient() {
+      if (callClient) return callClient;
+      callClient = new CallSignaling({
+        sendJson: (obj) => {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+        },
+        onUi: updateCallUi,
+        log,
+        media: new BrtcWebAdapter(),
+      });
+      return callClient;
+    }
+
+    callAcceptBtn.onclick = () => ensureCallClient().accept();
+    callRejectBtn.onclick = () => ensureCallClient().reject();
+    callEndBtn.onclick = () => ensureCallClient().end();
+
+    const savedAdminToken = localStorage.getItem('shuxin_voice_demo_admin') || '';
+    if (savedAdminToken) adminTokenInput.value = savedAdminToken;
+
+    function formatLlmTarget(item) {
+      if (!item) return '-';
+      const model = item.llm_model || '未配置';
+      const base = item.llm_base_url || '默认';
+      const key = item.llm_api_key_configured ? '已配置' : '未配置';
+      return `${item.user_id} · model=${model} · base=${base} · key=${key}`;
+    }
+    function renderLlmPreview(item) {
+      if (!item) return '-';
+      const base = formatLlmTarget(item);
+      if (!item.llm_api_key_configured) {
+        return base + ' — 绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」';
+      }
+      return base;
+    }
+    function applyLlmPreviewStyle(item) {
+      if (!item || item.llm_api_key_configured) {
+        llmPreviewEl.className = '';
+        llmPreviewEl.style.color = '';
+        return;
+      }
+      llmPreviewEl.className = 'llm-warn';
+      llmPreviewEl.style.color = '#b8453f';
+    }
+
+    async function loadDemoTargets() {
+      const token = adminTokenInput.value.trim();
+      if (!token) {
+        log('请先填写 Admin Token');
+        return;
+      }
+      localStorage.setItem('shuxin_voice_demo_admin', token);
+      const res = await fetch('/admin/api/voice-demo/targets', {
+        headers: {'X-Admin-Token': token},
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        log(data.error || '加载设备失败');
+        return;
+      }
+      demoTargets = data.items || [];
+      testTargetSelect.innerHTML = '<option value="">选择用户与设备…</option>' + demoTargets.map((item, idx) => {
+        const online = item.online ? '在线' : '离线';
+        const model = item.llm_model || '未配置';
+        const agentLabel = item.agent_display_name || item.agent_id || 'shuxin';
+        const voice = item.tts_voice_type ? ` · 音色=${item.tts_voice_type}` : '';
+        return `<option value="${idx}">${item.user_id} · ${item.device_id} · Agent=${agentLabel}${voice} · ${model} · ${online}</option>`;
+      }).join('');
+      log(`已加载 ${demoTargets.length} 个可测试绑定`);
+      if (!demoTargets.length) log('没有 active 绑定或密钥不可读取，请在后台绑定设备并轮换密钥');
+    }
+
+    testTargetSelect.onchange = () => {
+      const item = demoTargets[Number(testTargetSelect.value)];
+      if (!item) {
+        llmPreviewEl.textContent = '-';
+        applyLlmPreviewStyle(null);
+        return;
+      }
+      deviceInput.value = item.device_code || item.device_id;
+      secretInput.value = item.device_secret || '';
+      llmPreviewEl.textContent = renderLlmPreview(item);
+      applyLlmPreviewStyle(item);
+      log(`已选择 ${item.user_id} -> ${item.device_id} · Agent=${item.agent_display_name || item.agent_id || 'shuxin'}`);
+      if (!item.llm_api_key_configured) {
+        log('绑定用户未配置 API Key，请先在 /admin 用户页点击「配置 LLM」后再对话');
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        log('正在切换目标设备，自动重新连接中...');
+        ws.close();
+        setTimeout(() => {
+          connectBtn.click();
+        }, 150);
+      }
+    };
+
+    loadTargetsBtn.onclick = () => loadDemoTargets();
+
+    function wsUrl() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${location.host}/ws/voice`;
+    }
+
+    function enqueueAudio(data) {
+      if (callClient && callClient.isAiSuspended()) {
+        return;
+      }
+      audioQueue.push(data);
+      playNextAudio();
+    }
+
+    function playNextAudio() {
+      if (audioPlaying || !audioQueue.length) return;
+      audioPlaying = true;
+      const blob = new Blob([audioQueue.shift()], {type: 'audio/mpeg'});
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        audioPlaying = false;
+        playNextAudio();
+      };
+      audio.play().catch(() => {
+        URL.revokeObjectURL(url);
+        audioPlaying = false;
+        playNextAudio();
+      });
+    }
+
+    connectBtn.onclick = () => {
+      if (recording || startingRecording) return;
+      const picked = demoTargets[Number(testTargetSelect.value)];
+      if (picked && !picked.llm_api_key_configured) {
+        log('警告：绑定用户未配置 API Key，对话将出现 connect_error/auth_error 或降级文案');
+        llmPreviewEl.textContent = renderLlmPreview(picked);
+        applyLlmPreviewStyle(picked);
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      ws = new WebSocket(wsUrl());
+      ws.binaryType = 'arraybuffer';
+      connectBtn.disabled = true;
+      statusEl.textContent = '连接中';
+      ws.onopen = () => {
+        statusEl.textContent = '已连接';
+        recordBtn.disabled = false;
+        connectBtn.disabled = false;
+        ws.send(JSON.stringify({
+          type: 'hello',
+          device_code: deviceInput.value,
+          device_secret: secretInput.value,
+          client_id: clientInput.value || 'web-demo'
+        }));
+      };
+      ws.onclose = async () => {
+        statusEl.textContent = '已断开';
+        recording = false;
+        startingRecording = false;
+        recordingRequested = false;
+        if (callClient) callClient.onWsClosed();
+        await cleanupAudio();
+        restoreReadyState();
+        connectBtn.disabled = false;
+      };
+      ws.onerror = async () => {
+        log('WebSocket error');
+        recording = false;
+        startingRecording = false;
+        recordingRequested = false;
+        if (callClient) callClient.onWsClosed();
+        await cleanupAudio();
+        restoreReadyState();
+        connectBtn.disabled = false;
+      };
+      ws.onmessage = (event) => {
+        if (typeof event.data !== 'string') {
+          enqueueAudio(event.data);
+          return;
+        }
+        const msg = JSON.parse(event.data);
+        if (ensureCallClient().handleMessage(msg)) {
+          log(JSON.stringify(msg));
+          return;
+        }
+        log(JSON.stringify(msg));
+        if (msg.type === 'factory_verify') {
+          ws.send(JSON.stringify({
+            type: 'factory_verify_ack',
+            verify_id: msg.verify_id,
+            status: 'ok'
+          }));
+          log('factory_verify_ack sent');
+          return;
+        }
+        if (msg.type === 'hello' && msg.state === 'ok') {
+          boundUserEl.textContent = `${msg.user_id || '-'} / ${msg.device_id || '-'}`;
+          const picked = demoTargets[Number(testTargetSelect.value)];
+          if (picked) {
+            llmPreviewEl.textContent = renderLlmPreview(picked);
+            applyLlmPreviewStyle(picked);
+          } else {
+            llmPreviewEl.textContent = '已连接';
+            applyLlmPreviewStyle(null);
+          }
+        }
+        if (msg.type === 'error') {
+          const errText = String(msg.message || '');
+          if (errText.includes('api_key')) {
+            log('LLM 未配置：请在 /admin 用户页为该绑定用户点击「配置 LLM」填写 API Key');
+          }
+          recording = false;
+          startingRecording = false;
+          recordingRequested = false;
+          restoreReadyState();
+        }
+        if (msg.type === 'agent' && msg.state === 'error' && msg.error_kind) {
+          const picked = demoTargets[Number(testTargetSelect.value)];
+          if (picked && !picked.llm_api_key_configured) {
+            log(`Agent 错误 (${msg.error_kind})：绑定用户可能未配置 API Key 或 Base URL 不可达`);
+          }
+        }
+        if (msg.type === 'stt' && ['partial', 'sentence_final', 'stream_final', 'final'].includes(msg.state)) sttEl.textContent = msg.text || '-';
+        if (msg.type === 'agent' && msg.state === 'delta') replyEl.textContent = (replyEl.textContent === '-' ? '' : replyEl.textContent) + (msg.text || '');
+        if (msg.type === 'agent' && msg.state === 'reply') replyEl.textContent = msg.text || '-';
+        if (msg.type === 'tts' && msg.state === 'stop') {
+          timingEl.textContent = `首字 ${msg.first_agent_delta_ms || '-'}ms · 首段语音 ${msg.first_tts_audio_ms || '-'}ms · 总耗时 ${msg.total_elapsed_ms}ms`;
+          recordBtn.disabled = false;
+          recordBtn.textContent = '按住说话';
+        }
+      };
+    };
+
+    async function startRecording() {
+      if (callClient && callClient.isAiSuspended()) {
+        log('通话中，已暂停 AI 录音');
+        return;
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('请先点击连接');
+        return;
+      }
+      if (recording || startingRecording) return;
+      recordingRequested = true;
+      startingRecording = true;
+      recordBtn.classList.add('recording');
+      recordBtn.textContent = '录音中';
+      connectBtn.disabled = true;
+      audioQueue = [];
+      audioPlaying = false;
+      sttEl.textContent = '-';
+      replyEl.textContent = '-';
+      timingEl.textContent = '-';
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        audioContext = new AudioContext();
+        source = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = (event) => {
+          if (!recording || ws.readyState !== WebSocket.OPEN) return;
+          const input = event.inputBuffer.getChannelData(0);
+          const pcm = downsampleToPcm16(input, audioContext.sampleRate, 16000);
+          if (pcm.byteLength) ws.send(pcm);
+        };
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        startingRecording = false;
+        if (!recordingRequested) {
+          await cleanupAudio();
+          restoreReadyState();
+          return;
+        }
+        recording = true;
+        ws.send(JSON.stringify({type: 'listen', state: 'start'}));
+      } catch (error) {
+        log(`麦克风启动失败: ${error.message || error}`);
+        startingRecording = false;
+        recordingRequested = false;
+        recording = false;
+        await cleanupAudio();
+        restoreReadyState();
+      }
+    }
+
+    async function stopRecording() {
+      if (!recording && !startingRecording && !recordingRequested) return;
+      recordingRequested = false;
+      if (startingRecording && !recording) {
+        recordBtn.textContent = '处理中';
+        return;
+      }
+      recording = false;
+      recordBtn.classList.remove('recording');
+      recordBtn.textContent = '处理中';
+      recordBtn.disabled = true;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'listen', state: 'stop'}));
+      }
+      await cleanupAudio();
+      connectBtn.disabled = false;
+    }
+
+    async function cleanupAudio() {
+      if (processor) processor.disconnect();
+      if (source) source.disconnect();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (audioContext) await audioContext.close();
+      processor = null;
+      source = null;
+      stream = null;
+      audioContext = null;
+    }
+
+    function restoreReadyState() {
+      recordBtn.classList.remove('recording');
+      recordBtn.textContent = '按住说话';
+      recordBtn.disabled = !ws || ws.readyState !== WebSocket.OPEN;
+      connectBtn.disabled = false;
+    }
+
+    recordBtn.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      recordBtn.setPointerCapture(event.pointerId);
+      startRecording();
+    });
+    recordBtn.addEventListener('pointerup', (event) => {
+      event.preventDefault();
+      stopRecording();
+    });
+    recordBtn.addEventListener('pointercancel', (event) => {
+      event.preventDefault();
+      stopRecording();
+    });
+    recordBtn.addEventListener('pointerleave', (event) => {
+      if (recording || startingRecording || recordingRequested) stopRecording();
+    });
+
+    function downsampleToPcm16(input, fromRate, toRate) {
+      const ratio = fromRate / toRate;
+      const length = Math.floor(input.length / ratio);
+      const output = new Int16Array(length);
+      for (let i = 0; i < length; i++) {
+        const sample = input[Math.floor(i * ratio)];
+        const clamped = Math.max(-1, Math.min(1, sample));
+        output[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      }
+      return output.buffer;
+    }
+  </script>
+</body>
+</html>

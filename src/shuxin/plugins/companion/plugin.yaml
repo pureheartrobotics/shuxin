@@ -1,7 +1,7 @@
 name: companion
 version: 1.0.0
-description: 舒心陪伴系统 — 自尊、情感、守护、用户建模
-author: ShuXin Team
+description: 初心陪伴系统 — 自尊、情感、守护、用户建模
+author: ChuXin Team
 kind: standalone
 hooks:
   - pre_llm_call

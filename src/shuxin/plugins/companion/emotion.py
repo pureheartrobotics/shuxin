@@ -1,4 +1,4 @@
-"""舒心情感引擎 — 基于 Plutchik 情绪轮
+"""初心情感引擎 — 基于 Plutchik 情绪轮
 
 6 个基本情绪维度 + 3 种复合情绪：
 - 基本: 喜悦 (joy)、悲伤 (sadness)、愤怒 (anger)、恐惧 (fear)、信任 (trust)、期待 (anticipation)
@@ -120,7 +120,7 @@ SILENT_TRUST_PENALTY: float = 0.15
 
 
 class EmotionEngine:
-    """情感引擎 — 管理舒心的情感状态。
+    """情感引擎 — 管理初心的情感状态。
 
     通过分析用户输入、自尊变化和沉默状态来更新情感维度。
     提供情感上下文用于系统提示注入。

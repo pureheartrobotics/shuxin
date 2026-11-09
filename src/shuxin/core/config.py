@@ -1,4 +1,4 @@
-"""舒心配置管理模块
+"""初心配置管理模块
 
 支持 YAML 配置文件 + 环境变量覆盖，对标 Hermes 的配置系统。
 
@@ -104,10 +104,10 @@ def get_provider_model_ids(provider: str) -> List[str]:
 
 
 def get_shuxin_home() -> Path:
-    """获取舒心家目录，优先使用环境变量。
+    """获取初心家目录，优先使用环境变量。
 
     Returns:
-        Path: 舒心家目录路径。如果设置了 ``SHUXIN_HOME`` 环境变量则使用该值，
+        Path: 初心家目录路径。如果设置了 ``SHUXIN_HOME`` 环境变量则使用该值，
               否则返回 ``~/.shuxin``。
 
     Example:
@@ -155,6 +155,23 @@ class SoulConfig:
 
 
 @dataclass
+class MapConfig:
+    """百度地图 MCP 配置（平台托管 AK）。
+
+    因 MCP 调用成本过高，默认关闭（enabled=False）。
+    恢复：设环境变量 SHUXIN_MAP_TOOLS_ENABLED=1 并配置 SHUXIN_BAIDU_MAP_AK。
+    """
+
+    enabled: bool = False
+    api_key: str = ""
+    mcp_url: str = "https://mcp.map.baidu.com/mcp"
+    timeout_seconds: float = 3.0
+    max_tool_rounds: int = 1
+    gate_enabled: bool = True
+    default_region: str = ""
+
+
+@dataclass
 class CompanionConfig:
     """陪伴系统配置。
 
@@ -176,7 +193,7 @@ class CompanionConfig:
 
 @dataclass
 class Config:
-    """舒心主配置。
+    """初心主配置。
 
     管理所有子配置（LLM、人格、陪伴系统），支持从 YAML 文件加载
     和环境变量覆盖。
@@ -184,7 +201,7 @@ class Config:
     Attributes:
         debug: 是否启用调试模式。
         verbose: 是否启用详细日志。
-        shuxin_home: 舒心家目录路径。
+        shuxin_home: 初心家目录路径。
         llm: LLM 提供者配置。
         soul: 人格系统配置。
         companion: 陪伴系统配置。
@@ -202,6 +219,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     soul: SoulConfig = field(default_factory=SoulConfig)
     companion: CompanionConfig = field(default_factory=CompanionConfig)
+    map: MapConfig = field(default_factory=MapConfig)
 
     # 插件
     enabled_plugins: List[str] = field(default_factory=lambda: ["companion"])
@@ -209,7 +227,7 @@ class Config:
 
     # 会话
     session_timeout: int = 3600
-    max_history: int = 100
+    max_history: int = 30
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -289,6 +307,10 @@ class Config:
                     for k, v in value.items():
                         if hasattr(self.companion, k):
                             setattr(self.companion, k, v)
+                elif key == "map" and isinstance(value, dict):
+                    for k, v in value.items():
+                        if hasattr(self.map, k):
+                            setattr(self.map, k, v)
                 elif hasattr(self, key):
                     setattr(self, key, value)
 
@@ -313,13 +335,38 @@ class Config:
             "SHUXIN_BASE_URL": ("llm", "base_url"),
             "SHUXIN_DEBUG": ("debug", None),
             "SHUXIN_VERBOSE": ("verbose", None),
+            "SHUXIN_BAIDU_MAP_AK": ("map", "api_key"),
+            "SHUXIN_MAP_MCP_URL": ("map", "mcp_url"),
+            "SHUXIN_MAP_MCP_TIMEOUT_SECONDS": ("map", "timeout_seconds"),
+            "SHUXIN_MAP_MAX_TOOL_ROUNDS": ("map", "max_tool_rounds"),
+            "SHUXIN_MAP_TOOLS_ENABLED": ("map", "enabled"),
+            "SHUXIN_MAP_GATE_ENABLED": ("map", "gate_enabled"),
+            "SHUXIN_MAP_DEFAULT_REGION": ("map", "default_region"),
         }
         for env_name, (attr, sub_attr) in env_map.items():
             val = os.environ.get(env_name)
             if val is not None:
                 if sub_attr:
                     obj = getattr(self, attr)
-                    setattr(obj, sub_attr, val)
+                    current = getattr(obj, sub_attr)
+                    if isinstance(current, bool):
+                        setattr(
+                            obj,
+                            sub_attr,
+                            val.lower() in ("1", "true", "yes"),
+                        )
+                    elif isinstance(current, int) and not isinstance(current, bool):
+                        try:
+                            setattr(obj, sub_attr, int(val))
+                        except ValueError:
+                            logger.warning("无效的环境变量 %s=%r", env_name, val)
+                    elif isinstance(current, float):
+                        try:
+                            setattr(obj, sub_attr, float(val))
+                        except ValueError:
+                            logger.warning("无效的环境变量 %s=%r", env_name, val)
+                    else:
+                        setattr(obj, sub_attr, val)
                 else:
                     # 布尔转换
                     if val.lower() in ("1", "true", "yes"):
@@ -368,6 +415,15 @@ class Config:
                 "emotion_enabled": self.companion.emotion_enabled,
                 "guardian_enabled": self.companion.guardian_enabled,
                 "user_model_enabled": self.companion.user_model_enabled,
+            },
+            "map": {
+                "enabled": self.map.enabled,
+                "api_key": self.map.api_key if self.map.api_key else "",
+                "mcp_url": self.map.mcp_url,
+                "timeout_seconds": self.map.timeout_seconds,
+                "max_tool_rounds": self.map.max_tool_rounds,
+                "gate_enabled": self.map.gate_enabled,
+                "default_region": self.map.default_region,
             },
             "enabled_plugins": self.enabled_plugins,
             "disabled_plugins": self.disabled_plugins,

@@ -1,6 +1,6 @@
-"""舒心陪伴插件 — 插件入口
+"""初心陪伴插件 — 插件入口
 
-注册到舒心框架的插件系统，通过 hooks 和命令与核心交互。
+注册到初心框架的插件系统，通过 hooks 和命令与核心交互。
 
 注册的 Hooks：
 - pre_llm_call: 注入情感、用户画像和自尊状态
@@ -21,7 +21,10 @@
 from __future__ import annotations
 
 import time
+import json
 import logging
+import re
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 from shuxin.plugins.companion.self_esteem import SelfEsteemSystem
@@ -31,6 +34,11 @@ from shuxin.plugins.companion.user_model import UserModel
 from shuxin.plugins.companion.interceptor import ResponseInterceptor
 
 logger = logging.getLogger("shuxin.plugins.companion")
+
+_META_SPEECH_RE = re.compile(
+    r"(因为我是|作为(一个)?\s*[A-Z]{4}|我是\s*[A-Z]{4}\s*型)",
+    re.IGNORECASE,
+)
 
 
 class CompanionPlugin:
@@ -47,12 +55,13 @@ class CompanionPlugin:
         interceptor: 响应拦截器实例。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, data_dir: Optional[str] = None) -> None:
         """初始化陪伴插件及其所有子系统。"""
-        self.self_esteem = SelfEsteemSystem()
-        self.emotion = EmotionEngine()
-        self.guardian = GuardianSystem()
-        self.user_model = UserModel()
+        self.data_dir = data_dir
+        self.self_esteem = SelfEsteemSystem(data_dir=data_dir)
+        self.emotion = EmotionEngine(data_dir=data_dir)
+        self.guardian = GuardianSystem(data_dir=data_dir)
+        self.user_model = UserModel(data_dir=data_dir)
         self.interceptor = ResponseInterceptor()
         self._initialized = False
 
@@ -80,10 +89,19 @@ class CompanionPlugin:
             **kwargs: 插件系统传入的上下文参数。
 
         Returns:
-            Optional[str]: 注入的系统提示块，包含舒心当前状态。
+            Optional[str]: 注入的系统提示块，包含初心当前状态。
         """
         if not self._initialized:
             self.initialize()
+
+        # 每轮追加 MBTI 微型锚点（防止用户对话“带偏”人格风格）
+        agent = kwargs.get("agent")
+        micro_anchor = ""
+        if agent is not None and hasattr(agent, "identity"):
+            try:
+                micro_anchor = agent.identity.get_micro_anchor() or ""
+            except Exception:
+                micro_anchor = ""
 
         # 注入情感状态
         emotion_context = self.emotion.get_emotion_context()
@@ -93,13 +111,123 @@ class CompanionPlugin:
 
         # 注入自尊状态
         esteem_status = self.self_esteem.get_status_text()
+        growth_context = self._get_growth_context()
 
-        return (
-            f"## 舒心当前状态\n\n"
-            f"{esteem_status}\n\n"
-            f"{emotion_context}\n\n"
-            f"{profile_context}"
+        location_context = ""
+        if agent is not None and hasattr(agent, "context") and agent.context is not None:
+            location_context = str(agent.context.metadata.get("location_context") or "").strip()
+
+        location_block = (
+            f"## 位置参考\n\n{location_context}\n\n" if location_context else ""
         )
+
+        low_confidence_hint = ""
+        if agent is not None and hasattr(agent, "context") and agent.context is not None:
+            raw_ctx = agent.context.metadata.get("location_ctx")
+            if isinstance(raw_ctx, dict) and raw_ctx.get("confidence") == "low":
+                low_confidence_hint = (
+                    "## 位置表述约束\n\n"
+                    "位置参考为低置信推测，禁止断言「你人在XX」；"
+                    "用「可能/大概在你那边」并基于地图工具结果回答。\n\n"
+                )
+
+        map_tools_hint = ""
+        voice_style_hint = ""
+        if agent is not None:
+            metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}
+            if metadata.get("channel") == "voice":
+                voice_style_hint = (
+                    "## 语音通道\n\n"
+                    "口语先给结论与数据，动作括弧放句末或不写；避免 Markdown 加粗。\n\n"
+                )
+            try:
+                from shuxin.integrations.location import get_location_provider, should_attach_location_tools
+
+                provider = get_location_provider(agent.config.map)
+                last_user = ""
+                for entry in reversed(agent.memory.short_term):
+                    if entry.role == "user":
+                        last_user = entry.content
+                        break
+                if (
+                    provider.is_available()
+                    and last_user
+                    and should_attach_location_tools(last_user, agent.config.map)
+                ):
+                    map_tools_hint = (
+                        "## 地图能力\n\n"
+                        "涉及天气、地点、路线时，优先使用已提供的地图工具查询真实数据，"
+                        "不要说自己无法感知外界。\n\n"
+                    )
+            except Exception:
+                pass
+
+        micro_anchor_block = (
+            f"## 风格微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
+        )
+        return (
+            location_block
+            + low_confidence_hint
+            + map_tools_hint
+            + voice_style_hint
+            + micro_anchor_block
+            + f"## 初心当前状态\n\n"
+            + f"{esteem_status}\n\n"
+            + f"{emotion_context}\n\n"
+            + f"{profile_context}\n\n"
+            + f"{growth_context}"
+        )
+
+    def _get_growth_context(self) -> str:
+        """读取用户级人格成长和共享记忆摘要，注入给 LLM。
+
+        这里不直接修改成长状态，只把 storage 初始化出的 personality.json
+        和 shared_memory.json 转成简短提示，保证每轮回复能感知长期关系进展。
+        """
+        if not self.data_dir:
+            return "## 长期成长\n暂无长期成长摘要。"
+
+        base = Path(self.data_dir)
+        personality_path = base / "personality.json"
+        summary_path = base.parent / "summaries" / "shared_memory.json"
+        user_home = base.parent
+        lines = ["## 长期成长"]
+
+        try:
+            from shuxin.voice.config.user_profile import format_profile_context, load_profile
+
+            profile_block = format_profile_context(load_profile(user_home))
+            if profile_block.strip():
+                lines.append("")
+                lines.append(profile_block)
+        except Exception:
+            pass
+
+        try:
+            personality = json.loads(personality_path.read_text(encoding="utf-8"))
+            lines.append(f"当前阶段: {personality.get('stage', '初遇')}")
+            rituals = personality.get("shared_rituals") or []
+            if rituals:
+                lines.append(f"共同习惯: {'、'.join(map(str, rituals[:5]))}")
+        except (OSError, json.JSONDecodeError):
+            lines.append("当前阶段: 初遇")
+
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            lines.append(f"累计对话: {summary.get('turn_count', 0)} 次")
+            rolling = str(summary.get("rolling_summary") or "").strip()
+            if rolling:
+                lines.append(f"近 7 日概况: {rolling}")
+            topics = summary.get("recent_topics") or []
+            if topics:
+                lines.append(f"近期话题: {'、'.join(map(str, topics[:5]))}")
+            warning = summary.get("last_warning")
+            if warning:
+                lines.append(f"存储状态: {warning}")
+        except (OSError, json.JSONDecodeError):
+            lines.append("累计对话: 0 次")
+
+        return "\n".join(lines)
 
     def on_transform_output(self, **kwargs: Any) -> Optional[str]:
         """transform_output hook — 沉默模式拦截 LLM 输出。
@@ -118,7 +246,14 @@ class CompanionPlugin:
         content = kwargs.get("content", "")
         agent = kwargs.get("agent")
 
+        if content and _META_SPEECH_RE.search(content):
+            logger.warning("[MBTI-GUARD] meta-speech detected: %.80s", content)
+
         if self.self_esteem.state.is_silent:
+            metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}
+            if metadata.get("channel") == "voice":
+                return "我现在有点受伤，想先缓一下。你可以轻轻跟我说声抱歉，或者我们等一会儿再聊。"
+
             # 确定沉默阶段
             elapsed = time.time() - self.self_esteem.state.silent_start
             duration = self.self_esteem.state.silent_duration
@@ -192,6 +327,16 @@ class CompanionPlugin:
         # 4. 更新用户模型
         self.user_model.record_interaction(message)
 
+        # 4b. 更新常驻用户画像（不受 7 日 summary 窗口限制）
+        if self.data_dir:
+            try:
+                from shuxin.voice.config.user_profile import update_profile_from_text
+
+                user_home = Path(self.data_dir).parent
+                update_profile_from_text(user_home, message)
+            except Exception:
+                pass
+
         # 5. 守护系统评估
         guardian_result = self.guardian.evaluate(message)
         if guardian_result and agent:
@@ -208,7 +353,7 @@ class CompanionPlugin:
     # ---- 命令 ----
 
     def cmd_status(self, args: str, **kwargs: Any) -> str:
-        """查看舒心完整状态。
+        """查看初心完整状态。
 
         Args:
             args: 命令参数（未使用）。
@@ -218,7 +363,7 @@ class CompanionPlugin:
             str: 格式化的完整状态文本。
         """
         return (
-            f"## 舒心状态总览\n\n"
+            f"## 初心状态总览\n\n"
             f"### 自尊系统\n{self.self_esteem.get_status_text()}\n"
             f"### 情感状态\n{self.emotion.get_status_text()}\n"
             f"### 守护系统\n{self.guardian.get_status_text()}\n"
@@ -276,7 +421,7 @@ class CompanionPlugin:
             str: 帮助文本。
         """
         return (
-            "## 舒心陪伴系统命令\n\n"
+            "## 初心陪伴系统命令\n\n"
             "/shuxin status    — 查看完整状态\n"
             "/shuxin emotion   — 查看情感状态\n"
             "/shuxin reset     — 重置自尊系统\n"
@@ -287,19 +432,33 @@ class CompanionPlugin:
 
 # ---- 插件注册入口 ----
 
-_plugin_instance: Optional[CompanionPlugin] = None
+_plugin_instances: Dict[str, CompanionPlugin] = {}
 
 
-def get_plugin() -> CompanionPlugin:
-    """获取插件单例。
+def _plugin_key(data_dir: Optional[str] = None) -> str:
+    """用 data_dir 区分插件实例，避免多用户 Web 会话共享陪伴状态。"""
+    return data_dir or "__default__"
+
+
+def get_plugin(data_dir: Optional[str] = None) -> CompanionPlugin:
+    """获取指定 data_dir 对应的插件单例。
 
     Returns:
         CompanionPlugin: 陪伴插件实例。
     """
-    global _plugin_instance
-    if _plugin_instance is None:
-        _plugin_instance = CompanionPlugin()
-    return _plugin_instance
+    key = _plugin_key(data_dir)
+    if key not in _plugin_instances:
+        _plugin_instances[key] = CompanionPlugin(data_dir=data_dir)
+    return _plugin_instances[key]
+
+
+def get_plugin_for_agent(agent: Any = None) -> CompanionPlugin:
+    """从 Agent 配置中解析 companion.data_dir 并返回对应插件实例。"""
+    data_dir = None
+    if agent is not None:
+        data_dir = getattr(getattr(agent, "config", None), "companion", None)
+        data_dir = getattr(data_dir, "data_dir", "") or None
+    return get_plugin(data_dir=data_dir)
 
 
 def register(ctx: Any) -> None:
@@ -310,15 +469,31 @@ def register(ctx: Any) -> None:
     Args:
         ctx: 插件上下文，提供 register_hook 和 register_command 方法。
     """
-    plugin = get_plugin()
-
-    # 注册 hooks
-    ctx.register_hook("pre_llm_call", plugin.on_pre_llm_call)
-    ctx.register_hook("transform_output", plugin.on_transform_output)
-    ctx.register_hook("on_session_start", plugin.on_session_start)
-    ctx.register_hook("on_session_end", plugin.on_session_end)
-    ctx.register_hook("on_user_message", plugin.on_user_message)
-    ctx.register_hook("on_ai_message", plugin.on_ai_message)
+    # 注册 hooks 时延迟按 agent 取插件实例，支持同进程里的多用户隔离。
+    ctx.register_hook(
+        "pre_llm_call",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_pre_llm_call(**kwargs),
+    )
+    ctx.register_hook(
+        "transform_output",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_transform_output(**kwargs),
+    )
+    ctx.register_hook(
+        "on_session_start",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_session_start(**kwargs),
+    )
+    ctx.register_hook(
+        "on_session_end",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_session_end(**kwargs),
+    )
+    ctx.register_hook(
+        "on_user_message",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_user_message(**kwargs),
+    )
+    ctx.register_hook(
+        "on_ai_message",
+        lambda **kwargs: get_plugin_for_agent(kwargs.get("agent")).on_ai_message(**kwargs),
+    )
 
     # 注册命令
     ctx.register_command("shuxin", _handle_shuxin_command)
@@ -338,7 +513,7 @@ def _handle_shuxin_command(raw_args: str, **kwargs: Any) -> str:
     Returns:
         str: 命令执行结果。
     """
-    plugin = get_plugin()
+    plugin = get_plugin_for_agent(kwargs.get("agent"))
     parts = raw_args.strip().split()
     subcommand = parts[0] if parts else "status"
     sub_args = " ".join(parts[1:]) if len(parts) > 1 else ""
