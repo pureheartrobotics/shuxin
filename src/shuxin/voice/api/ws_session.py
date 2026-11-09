@@ -67,6 +67,7 @@ from shuxin.voice.integrations.tencent_realtime_asr import (
     TencentRealtimeASRSession,
     is_tencent_realtime_stt,
 )
+from shuxin.voice.stt_noise import is_noise_utterance
 from shuxin.voice.persistence.users import DEFAULT_USER_ID, UserConfigProvider
 
 # WebSocket 上行音频统一按 16kHz / mono / PCM16 处理。
@@ -76,7 +77,7 @@ SAMPLE_WIDTH = 2
 CHANNELS = 1
 SENTENCE_DELIMITERS = "。！？!?；;\n"
 FIRST_SEGMENT_WEAK_DELIMITERS = "，,、"
-MAX_STREAMING_TTS_CHARS = 48
+MAX_STREAMING_TTS_CHARS = 72
 
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
@@ -190,12 +191,20 @@ class _VoiceWebSocketSession:
         self.agent = None
         self.agent_record = None
         self.audio_chunks: list[bytes] = []
+        self._preroll_chunks: list[bytes] = []
         self.listening = False
         self.audio_wire_format = "pcm"
         self.audio_params: dict[str, int | str] = _negotiate_audio_params(None)
         self.opus_uplink_decoder: OpusStreamDecoder | None = None
         self.hardware_session = False
         self.factory_acceptance = False
+        self.pending_vision_jpeg: Optional[bytes] = None
+        self._vision_event = asyncio.Event()
+        self.has_camera = False
+        self._turn_task: Optional[asyncio.Task] = None
+        self._asr_start_task: Optional[asyncio.Task] = None
+        self._asr_ready = False
+        self._asr_sent_upto = 0
         self.client_ip = _client_ip_from_websocket(websocket)
         self._location_cache: dict | None = None
         self._agent_init_task: Optional[asyncio.Task] = None
@@ -215,6 +224,7 @@ class _VoiceWebSocketSession:
             "mcp": self._handle_mcp_msg,
             "factory_verify_ack": self._handle_factory_verify_ack_msg,
             "ping": self._handle_ping_msg,
+            "vision": self._handle_vision_msg,
         }
 
     @property
@@ -227,10 +237,6 @@ class _VoiceWebSocketSession:
 
     async def run(self) -> None:
         """进入消息循环，按文本控制消息和二进制音频帧分流处理。"""
-        await self._send_json(
-            {"type": "hello", "state": "ready", "device_id": self.device_id}
-        )
-
         while True:
             message = await self.websocket.receive()
             if message.get("type") == "websocket.disconnect":
@@ -271,10 +277,14 @@ class _VoiceWebSocketSession:
     async def _handle_text(self, raw: str) -> None:
         """处理设备/浏览器上行的 JSON 控制消息。
 
-        `hello` 决定用户身份和设备配置；`listen start/stop` 决定一轮
-        语音采集边界；`abort` 清空当前轮缓存；`ping` 用于连接保活。
+        第一条文本就是连接：用户名加机器人代号，不要求 type=hello。
+        之后 `listen start/stop` 决定一轮语音采集边界；`abort` 清空当前轮缓存；
+        `ping` 用于连接保活。
         """
         data = json.loads(raw)
+        if self.user_settings is None:
+            await self._handle_hello_msg(data)
+            return
         message_type = data.get("type")
 
         # 拦截未经过成功 hello 鉴权就直接发起对话的连接
@@ -287,7 +297,7 @@ class _VoiceWebSocketSession:
             )
             return
 
-        if self.factory_acceptance and message_type in {"listen", "text_turn"}:
+        if self.factory_acceptance and message_type in {"listen", "text_turn", "vision"}:
             await self._send_json({"type": "error", "message": _FACTORY_ACCEPTANCE_DISABLED})
             return
 
@@ -304,43 +314,29 @@ class _VoiceWebSocketSession:
             await self._send_json({"type": "error", "message": f"unsupported message: {data}"})
 
     async def _handle_hello_msg(self, data: dict[str, Any]) -> None:
-        factory_acceptance = False
+        # 同一条 /ws/voice：K11C 与 ESP32 都只报用户名和机器人代号。
+        user_name = str(data.get("user_name") or data.get("username") or "").strip()
+        robot_code = str(data.get("robot_code") or data.get("device_code") or "").strip()
+        if not user_name:
+            await self._send_json({"type": "error", "message": "user_name is required"})
+            return
+        if not robot_code:
+            await self._send_json({"type": "error", "message": "robot_code is required"})
+            return
         try:
-            if data.get("device_code") or data.get("device_secret"):
-                device_code = (
-                    data.get("device_code") or data.get("device_id") or self.default_device_id
-                )
-                device_secret = data.get("device_secret") or ""
-                try:
-                    self.user_settings = await self.repo.authenticate_device(
-                        device_code,
-                        device_secret,
-                    )
-                except PermissionError as exc:
-                    if "not bound" in str(exc).lower():
-                        self.user_settings = await self.repo.authenticate_device_for_factory(
-                            device_code,
-                            device_secret,
-                        )
-                        factory_acceptance = True
-                    else:
-                        raise
-            else:
-                self.user_settings = await self.repo.authenticate_user(
-                    data.get("user_id") or DEFAULT_USER_ID,
-                    data.get("token") or "",
-                )
+            self.user_settings = await self.repo.identify_device_owner(
+                user_name=user_name,
+                robot_code=robot_code,
+            )
         except Exception as exc:
             await self._send_json({"type": "error", "message": str(exc)})
             return
-        self.factory_acceptance = factory_acceptance
+        self.factory_acceptance = False
         self.user_id = self.user_settings.user_id
-        self.device_id = (
-            data.get("device_code")
-            or data.get("device_id")
-            or self.default_device_id
-        )
+        self.device_id = robot_code
         self.client_id = data.get("client_id") or "web-demo"
+        features = data.get("features") if isinstance(data.get("features"), dict) else {}
+        self.has_camera = bool(features.get("camera")) or str(self.client_id) == "rk3566-android"
         self.audio_store = AudioFileStore(self.shuxin_home, self.out_dir, self.user_id)
         self.session_id = data.get("session_id") or uuid.uuid4().hex
         if not self.factory_acceptance:
@@ -359,7 +355,7 @@ class _VoiceWebSocketSession:
                 session_id=self.session_id,
             )
         )
-        self.hardware_session = bool(data.get("device_code") or data.get("device_secret"))
+        self.hardware_session = bool(robot_code)
         await self.mcp.reset()
         self.mcp.device_id = self.device_id
         self.audio_params = _negotiate_audio_params(data.get("audio_params"))
@@ -395,7 +391,9 @@ class _VoiceWebSocketSession:
             "type": "hello",
             "state": "ok",
             "user_id": self.user_id,
+            "user_name": user_name,
             "device_id": self.device_id,
+            "robot_code": self.device_id,
             "client_id": self.client_id,
             "session_id": self.session_id,
         }
@@ -424,38 +422,130 @@ class _VoiceWebSocketSession:
             await self.mcp.start()
         vsr.register(self.device_id, self)
         if not self.factory_acceptance:
-            self._agent_init_task = asyncio.create_task(self._ensure_runtime())
+            async def _init_runtime():
+                try:
+                    await self._ensure_runtime()
+                except Exception:
+                    logger.exception("agent runtime init failed")
+                    raise
+
+            self._agent_init_task = asyncio.create_task(_init_runtime())
 
             async def run_mbti_reveal():
                 try:
                     await self._maybe_reveal_mbti_on_hello()
                 except Exception as exc:
                     logger.warning("mbti reveal on hello failed: %s", exc)
+
             asyncio.create_task(run_mbti_reveal())
 
     async def _handle_listen_msg(self, data: dict[str, Any]) -> None:
         state = data.get("state")
         if state == "start":
+            pending = list(self._preroll_chunks)
+            self._preroll_chunks.clear()
             self.audio_chunks = []
+            self._asr_ready = False
+            self._asr_sent_upto = 0
             self.listening = True
             self.mcp.begin_turn()
-            try:
-                await self._start_realtime_asr_if_needed()
-            except Exception as exc:
-                self.listening = False
-                await self._send_json({"type": "error", "message": str(exc)})
-                return
             await self._send_json({"type": "listen", "state": "start"})
+            for packet in pending:
+                await self._ingest_audio_frame(packet)
+            self._asr_start_task = asyncio.create_task(self._start_realtime_asr_safe())
         elif state == "stop":
             self.listening = False
-            await self._process_turn()
+            if self._turn_task is not None and not self._turn_task.done():
+                return
+            if not any(self.audio_chunks):
+                await self._send_json(
+                    {"type": "stt", "state": "ignored", "text": "", "reason": "noise"}
+                )
+                return
+            self._turn_task = asyncio.create_task(self._process_turn())
+
+    async def _start_realtime_asr_safe(self) -> None:
+        try:
+            await self._start_realtime_asr_if_needed()
+            self._asr_ready = True
+            await self._flush_asr_audio()
+        except Exception:
+            logger.exception("realtime ASR start failed")
+            self._asr_ready = False
+            await self.stt_pipeline.close()
+
+    async def _flush_asr_audio(self) -> None:
+        if self.stt_pipeline.realtime_asr is None:
+            return
+        while self._asr_sent_upto < len(self.audio_chunks):
+            pcm = self.audio_chunks[self._asr_sent_upto]
+            self._asr_sent_upto += 1
+            await self.stt_pipeline.send_audio(pcm)
+
+    async def _await_realtime_asr_start(self) -> None:
+        task = self._asr_start_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), 16.0)
+        except Exception:
+            logger.warning("realtime ASR start wait timed out")
+            task.cancel()
+            self._asr_ready = False
+            await self.stt_pipeline.close()
 
     async def _handle_abort_msg(self, data: dict[str, Any]) -> None:
         self.audio_chunks = []
         self.listening = False
+        self.pending_vision_jpeg = None
+        self._vision_event.set()
         await self.stt_pipeline.close()
         await self.mcp.emergency_stop()
         await self._send_json({"type": "abort", "state": "ok"})
+
+    async def _handle_vision_msg(self, data: dict[str, Any]) -> None:
+        from shuxin.voice.vision_caption import decode_jpeg_base64
+
+        jpeg = decode_jpeg_base64(str(data.get("image_base64") or ""))
+        if jpeg is None:
+            await self._send_json({"type": "error", "message": "invalid vision frame"})
+            return
+        self.pending_vision_jpeg = jpeg
+        self._vision_event.set()
+        await self._send_json({"type": "vision", "state": "ok"})
+
+    async def _attach_camera_context(self, text: str) -> str:
+        from shuxin.voice.vision_caption import (
+            attach_scene,
+            camera_present_note,
+            caption_jpeg,
+            is_look_intent,
+        )
+
+        if self._hermes_owns_body():
+            return text
+        look = is_look_intent(text)
+        jpeg = self.pending_vision_jpeg
+        if jpeg is None and look:
+            await self._send_json({"type": "agent", "state": "thinking", "reason": "camera"})
+            self._vision_event.clear()
+            try:
+                await asyncio.wait_for(self._vision_event.wait(), 1.6)
+            except asyncio.TimeoutError:
+                pass
+            jpeg = self.pending_vision_jpeg
+        self.pending_vision_jpeg = None
+        if jpeg is not None and look:
+            await self._send_json({"type": "agent", "state": "thinking", "reason": "camera"})
+            scene = await caption_jpeg(
+                jpeg,
+                text,
+                llm=self.agent.llm if self.agent is not None else None,
+            )
+            return attach_scene(text, scene)
+        if look and self.has_camera:
+            return attach_scene(text, camera_present_note())
+        return text
 
     async def _handle_text_turn_msg(self, data: dict[str, Any]) -> None:
         if os.environ.get("SHUXIN_VOICE_DEV_TEXT_TURN") != "1":
@@ -472,7 +562,83 @@ class _VoiceWebSocketSession:
     async def _handle_mcp_msg(self, data: dict[str, Any]) -> None:
         await self.mcp.handle_device_message(data)
 
+    def _hermes_owns_body(self) -> bool:
+        from shuxin.integrations.hermes.runtime import agent_runtime_name
+
+        return agent_runtime_name() not in {"chuxin", "legacy", "shuxin"}
+
+    def _make_robot_bridge(self):
+        from shuxin.integrations.hermes.robot_tools import RobotSessionBridge
+        from shuxin.voice.vision_caption import caption_jpeg
+
+        loop = asyncio.get_running_loop()
+
+        def _call_mcp(name: str, args: dict) -> str:
+            async def _go() -> str:
+                if name == "chassis":
+                    ok = await self.mcp.execute_drive(
+                        str(args.get("action") or "stop"),
+                        float(args.get("duration") or 0.0),
+                        float(args.get("speed") or 0.55),
+                    )
+                    if not ok:
+                        return "底盘现在动不了。"
+                    action = str(args.get("action") or "")
+                    if action == "stop":
+                        return "已经停下。"
+                    return "轮子已经动了。"
+                if name == "self.camera.look_around":
+                    self.pending_vision_jpeg = None
+                    self._vision_event.clear()
+                ok = await self.mcp.call_named_tool(name, args)
+                if not ok:
+                    return "设备还没有这个动作。"
+                labels = {
+                    "self.camera.photo": "拍好了，存进相册了。",
+                    "self.camera.album": "相册打开了。",
+                    "self.head.nod": "点头了。",
+                    "self.head.shake": "摇头了。",
+                    "self.head.turn": "头转到了。",
+                    "self.camera.look": "ok",
+                    "self.camera.look_around": "ok",
+                }
+                return labels.get(name, "好了。")
+
+            return asyncio.run_coroutine_threadsafe(_go(), loop).result(timeout=8)
+
+        def _wait_vision(timeout: float):
+            async def _go():
+                try:
+                    await asyncio.wait_for(self._vision_event.wait(), timeout)
+                except asyncio.TimeoutError:
+                    return None
+                jpeg = self.pending_vision_jpeg
+                self.pending_vision_jpeg = None
+                self._vision_event.clear()
+                return jpeg
+
+            return asyncio.run_coroutine_threadsafe(_go(), loop).result(timeout=timeout + 1.0)
+
+        def _caption(jpeg: bytes, question: str) -> str:
+            async def _go():
+                llm = self.agent.llm if self.agent is not None else None
+                return await caption_jpeg(jpeg, question, llm=llm)
+
+            return asyncio.run_coroutine_threadsafe(_go(), loop).result(timeout=8)
+
+        def _has_tool(name: str) -> bool:
+            return name in self.mcp.tool_names
+
+        return RobotSessionBridge(
+            call_mcp=_call_mcp,
+            wait_vision=_wait_vision,
+            caption=_caption,
+            has_tool=_has_tool,
+        )
+
     async def _dispatch_chassis_motion(self, text: str, *, schedule_stop: bool = True) -> bool:
+        if self._hermes_owns_body():
+            return await self.mcp.dispatch_emergency_stop_from_text(text)
         return await self.mcp.dispatch_user_text(text, schedule_stop=schedule_stop)
 
     async def _handle_factory_verify_ack_msg(self, data: dict[str, Any]) -> None:
@@ -499,17 +665,33 @@ class _VoiceWebSocketSession:
 
     async def _handle_audio_frame(self, frame: bytes) -> None:
         """缓存 listen 窗口内收到的 PCM16 或 Opus 二进制音频帧，并按需转发实时 ASR。"""
-        if self.listening and frame:
-            pcm_frame = frame
-            if self.audio_wire_format == "opus":
-                if self.opus_uplink_decoder is None:
-                    self.opus_uplink_decoder = OpusStreamDecoder(
-                        sample_rate=int(self.audio_params["uplink_sample_rate"]),
-                        frame_duration_ms=int(self.audio_params["frame_duration"]),
-                    )
+        if not frame:
+            return
+        if not self.listening:
+            if self.user_settings is not None:
+                self._preroll_chunks.append(frame)
+                if len(self._preroll_chunks) > 40:
+                    del self._preroll_chunks[: len(self._preroll_chunks) - 40]
+            return
+        await self._ingest_audio_frame(frame)
+
+    async def _ingest_audio_frame(self, frame: bytes) -> None:
+        pcm_frame = frame
+        if self.audio_wire_format == "opus":
+            if self.opus_uplink_decoder is None:
+                self.opus_uplink_decoder = OpusStreamDecoder(
+                    sample_rate=int(self.audio_params["uplink_sample_rate"]),
+                    frame_duration_ms=int(self.audio_params["frame_duration"]),
+                )
+            try:
                 pcm_frame = self.opus_uplink_decoder.decode_packet(frame)
+            except Exception:
+                logger.debug("opus uplink decode failed", exc_info=True)
+                return
+        if pcm_frame:
             self.audio_chunks.append(pcm_frame)
-            await self.stt_pipeline.send_audio(pcm_frame)
+            if self._asr_ready:
+                await self._flush_asr_audio()
 
     async def _process_turn(self) -> None:
         """处理完整的一轮语音对话。
@@ -519,7 +701,9 @@ class _VoiceWebSocketSession:
         即用户松手后才开始识别和回复。
         """
         if not self.audio_chunks:
-            await self._send_json({"type": "error", "message": "no audio received"})
+            await self._send_json(
+                {"type": "stt", "state": "ignored", "text": "", "reason": "noise"}
+            )
             return
 
         started = time.perf_counter()
@@ -532,17 +716,59 @@ class _VoiceWebSocketSession:
             assert self.user_settings is not None
             paths = self.audio_store.new_turn_paths(self.device_id, self.session_id or None)
             self.session_id = paths.session_id
-            self.audio_store.write_input_wav(pcm, paths.input_wav)
             await self._send_json({"type": "stt", "state": "start"})
             stt_started = time.perf_counter()
-            if self.stt_pipeline.realtime_asr is not None:
-                text = (await self.stt_pipeline.finish()) or ""
+            wav_task = asyncio.get_running_loop().run_in_executor(
+                None, self.audio_store.write_input_wav, pcm, paths.input_wav
+            )
+            await self._await_realtime_asr_start()
+            text = ""
+            live_asr = self._asr_ready and self.stt_pipeline.realtime_asr is not None
+            if live_asr:
+                await self._flush_asr_audio()
+                text, _ = await asyncio.gather(
+                    self.stt_pipeline.finish(),
+                    wav_task,
+                )
+                text = (text or "").strip()
+            elif self.stt is not None:
+                await wav_task
+                text = (await self.stt.transcribe(paths.input_wav) or "").strip()
             else:
-                text = await self.stt.transcribe(paths.input_wav)
+                await wav_task
+            if not text and pcm and self.device is not None and is_tencent_realtime_stt(self.device.stt):
+                logger.warning(
+                    "ASR oneshot device=%s chunks=%d pcm_bytes=%d live=%s",
+                    self.device_id,
+                    len(self.audio_chunks),
+                    len(pcm),
+                    live_asr,
+                )
+                try:
+                    from shuxin.voice.integrations.tencent_realtime_asr import transcribe_pcm16
+
+                    text = (await transcribe_pcm16(self.device.stt, pcm) or "").strip()
+                except Exception:
+                    logger.exception("oneshot ASR retry failed")
+            logger.info(
+                "STT device=%s text=%r chunks=%d pcm_bytes=%d live=%s",
+                self.device_id,
+                text,
+                len(self.audio_chunks),
+                len(pcm),
+                live_asr,
+            )
+            if not text or is_noise_utterance(text):
+                logger.info("skip empty/noise STT device=%s text=%r", self.device_id, text)
+                await self._send_json(
+                    {"type": "stt", "state": "ignored", "text": text or "", "reason": "noise"}
+                )
+                return
             stt_ms = _elapsed_ms(stt_started)
             await self._send_json(
                 {"type": "stt", "state": "final", "text": text, "elapsed_ms": stt_ms}
             )
+            text = await self._attach_camera_context(text)
             await self._dispatch_chassis_motion(text)
 
             from shuxin.integrations.voice_call.dispatch import try_dispatch_call_intent
@@ -599,82 +825,90 @@ class _VoiceWebSocketSession:
             sentence_buffer = ""
             sentence_index = 0
             allow_weak_punctuation = True
-
-            await self._send_json({"type": "agent", "state": "thinking"})
-            if self.agent is not None:
-                self.agent.context.metadata.pop("llm_error_kind", None)
-                self.agent.context.metadata.pop("map_tool_ms", None)
-            location_started = time.perf_counter()
-            await self._refresh_location_context(text)
-            location_ms = _elapsed_ms(location_started)
-
-            async for chunk in self.llm_pipeline.stream_agent_chunks(text):
-                if not chunk:
-                    continue
-                if first_agent_delta_ms is None:
-                    first_agent_delta_ms = _elapsed_ms(agent_started)
-                    llm_ttft_ms = first_agent_delta_ms
-                    pending_error = (
-                        self.agent.context.metadata.get("llm_error_kind")
-                        if self.agent is not None
-                        else None
-                    )
-                    if pending_error:
-                        error_kind = str(pending_error)
-                        await self._send_json(
-                            {
-                                "type": "agent",
-                                "state": "error",
-                                "error_kind": error_kind,
-                                "elapsed_ms": first_agent_delta_ms,
-                            }
-                        )
-                reply_parts.append(chunk)
-                await self._send_json(
-                    {
-                        "type": "agent",
-                        "state": "delta",
-                        "text": chunk,
-                        "elapsed_ms": _elapsed_ms(agent_started),
-                    }
-                )
-                sentence_buffer += chunk
-                segments, sentence_buffer = self.tts_pipeline.pop_segments(
-                    sentence_buffer,
-                    allow_weak_punctuation=allow_weak_punctuation,
-                )
-                if segments:
-                    allow_weak_punctuation = False
-                for segment in segments:
-                    if not tts_started:
-                        tts_started = time.perf_counter()
-                        await self._send_json({"type": "tts", "state": "start"})
-                    sentence_index += 1
-                    speech_path = await self.tts_pipeline.synthesize_and_send(
-                        segment,
-                        paths.reply_mp3,
-                        sentence_index,
-                        started,
-                    )
-                    tts_total_ms = _elapsed_ms(tts_started)
-                    if first_tts_audio_ms is None:
-                        first_tts_audio_ms = _elapsed_ms(started)
-
-            segments, sentence_buffer = self.tts_pipeline.pop_segments(sentence_buffer, force=True)
-            for segment in segments:
-                if not tts_started:
-                    tts_started = time.perf_counter()
-                    await self._send_json({"type": "tts", "state": "start"})
-                sentence_index += 1
-                speech_path = await self.tts_pipeline.synthesize_and_send(
-                    segment,
+            tts_queue: asyncio.Queue = asyncio.Queue()
+            tts_state: dict[str, Any] = {
+                "started": 0.0,
+                "total_ms": 0,
+                "first_audio_ms": None,
+                "path": None,
+                "index": 0,
+            }
+            tts_task = asyncio.create_task(
+                self.tts_pipeline.consume_with_prefetch(
+                    tts_queue,
                     paths.reply_mp3,
-                    sentence_index,
                     started,
+                    tts_state,
                 )
-                tts_total_ms = _elapsed_ms(tts_started)
-                if first_tts_audio_ms is None:
-                    first_tts_audio_ms = _elapsed_ms(started)
+            )
+            location_ms = 0
+
+            try:
+                await self._send_json({"type": "agent", "state": "thinking"})
+                if self.agent is not None:
+                    self.agent.context.metadata.pop("llm_error_kind", None)
+                    self.agent.context.metadata.pop("map_tool_ms", None)
+                location_started = time.perf_counter()
+                await self._refresh_location_context(text)
+                location_ms = _elapsed_ms(location_started)
+
+                async for chunk in self.llm_pipeline.stream_agent_chunks(text):
+                    if not chunk:
+                        continue
+                    if first_agent_delta_ms is None:
+                        first_agent_delta_ms = _elapsed_ms(agent_started)
+                        llm_ttft_ms = first_agent_delta_ms
+                        pending_error = (
+                            self.agent.context.metadata.get("llm_error_kind")
+                            if self.agent is not None
+                            else None
+                        )
+                        if pending_error:
+                            error_kind = str(pending_error)
+                            await self._send_json(
+                                {
+                                    "type": "agent",
+                                    "state": "error",
+                                    "error_kind": error_kind,
+                                    "elapsed_ms": first_agent_delta_ms,
+                                }
+                            )
+                    reply_parts.append(chunk)
+                    await self._send_json(
+                        {
+                            "type": "agent",
+                            "state": "delta",
+                            "text": chunk,
+                            "elapsed_ms": _elapsed_ms(agent_started),
+                        }
+                    )
+                    sentence_buffer += chunk
+                    segments, sentence_buffer = self.tts_pipeline.pop_segments(
+                        sentence_buffer,
+                        allow_weak_punctuation=allow_weak_punctuation,
+                    )
+                    if segments:
+                        allow_weak_punctuation = False
+                    for segment in segments:
+                        await tts_queue.put(segment)
+
+                segments, sentence_buffer = self.tts_pipeline.pop_segments(
+                    sentence_buffer, force=True
+                )
+                for segment in segments:
+                    await tts_queue.put(segment)
+            finally:
+                await tts_queue.put(None)
+                try:
+                    await tts_task
+                except Exception:
+                    logger.exception("TTS pipeline failed")
+
+            tts_started = float(tts_state["started"] or 0.0)
+            tts_total_ms = int(tts_state["total_ms"] or 0)
+            first_tts_audio_ms = tts_state["first_audio_ms"]
+            speech_path = tts_state["path"]
+            sentence_index = int(tts_state["index"] or 0)
 
             reply = "".join(reply_parts).strip()
             agent_ms = _elapsed_ms(agent_started)
@@ -787,10 +1021,19 @@ class _VoiceWebSocketSession:
             )
         except Exception as exc:
             err_msg = str(exc)
+            logger.exception("voice turn failed device=%s", self.device_id)
             if err_msg == QUOTA_EXHAUSTED_MESSAGE or "额度已用尽" in err_msg or "quota" in err_msg.lower():
                 await self._send_json({"type": "error", "error_kind": "quota_exhausted", "message": err_msg})
-            else:
+            elif "没听清" in err_msg:
                 await self._send_json({"type": "error", "message": err_msg})
+            else:
+                await self._send_json(
+                    {
+                        "type": "error",
+                        "error_kind": type(exc).__name__,
+                        "message": "刚才卡住了，再说一次",
+                    }
+                )
         finally:
             self.audio_chunks = []
 
@@ -1064,6 +1307,8 @@ class _VoiceWebSocketSession:
             mp3_path,
             sample_rate=int(self.audio_params["downlink_sample_rate"]),
             frame_duration_ms=int(self.audio_params["frame_duration"]),
+            bitrate=48_000,
+            pcm_read_size=24576,
         ):
             if looks_like_mp3(packet):
                 logger.warning("downlink opus packet looks like mp3 header; skipping")
@@ -1074,7 +1319,9 @@ class _VoiceWebSocketSession:
                     len(packet),
                     max_bytes,
                 )
-            await self._send_downlink_bytes(packet)
+            # Never split an Opus frame across WS messages — the client
+            # treats each binary frame as one packet.
+            await self.websocket.send_bytes(packet)
             packet_count += 1
         if packet_count == 0:
             logger.warning("no opus packets produced for %s", mp3_path)
@@ -1137,6 +1384,8 @@ class _VoiceWebSocketSession:
             self._setup_agent_tool_callbacks()
             await asyncio.to_thread(self.agent.initialize)
             VoiceService.apply_device_mbti(self.agent, self.device, self.agent_record)
+            if self._hermes_owns_body():
+                self.agent.robot_bridge = self._make_robot_bridge()
 
     def _setup_agent_tool_callbacks(self) -> None:
         if self.agent is None:
