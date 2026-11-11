@@ -14,6 +14,8 @@
 
 量产优先：**载板固定互连**（零杜邦），MCU/驱动可先继续贴模组。
 
+> 载板工程已开坑：仓库 `hardware/carrier_v1/`（普通 FR4 互连板，**不是**芯片封装 substrate）。连接器真值见 `hardware/carrier_v1/docs/CONNECTORS.md`。
+
 ## 2. 电源
 
 ```text
@@ -68,15 +70,18 @@ PWM / IN1/IN2 / STBY 按现表；项目内另有 D24A 原理图 PDF：`3.D24A四
 ### 4.5 串口协议（S3）
 `F/B/L/R/S`、`HEAD`/`NOD`/`SHAKE`、`ENC` / `ENC R`（回报四轮 count/cps 与 trim）
 
-## 5. 建议载板内容（下一版）
+## 5. 载板 Carrier V1（进行中）
 
-1. K11C 扩展座 / 排线（UART7 + I2C ToF + 3.3V/GND）  
-2. S3 模组座或直接贴 WROOM  
-3. D24A 兼容连接器或把 TB6612+编码座画进板  
-4. 8.4V Buck（≥5A）+ 舵机端子  
-5. 电池 XT30/XT60、总开关、保险、星地  
+工程目录：`hardware/carrier_v1/`
+
+1. K11C 30Pin：UART7 Pin15/17 + I2C3 Pin16/18 + GND；**禁止** Pin25/27 DEBUG  
+2. S3：**DevKitC-1 双排母座**（先插拔验证；V2 再改 WROOM）  
+3. D24A：控制口 P4 + 编码口 P5（功率级仍用现成 D24A）  
+4. 8.4V Buck（≥5A）+ 舵机 XH 座  
+5. 电池 XT60、总开关、保险、星地  
 6. 测试点：UART、E1–E4、3.3V、VM、舵机 8.4V  
-7. 烧录口：S3 USB 与/或 UART0 隔离  
+7. `JP1`：D24A 5V → S3；烧录时拔掉  
+8. ToF：P7 挂 K11C I2C3  
 
 ## 6. 仓库内优先阅读
 

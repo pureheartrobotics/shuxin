@@ -1,0 +1,23 @@
+{
+  "board": {
+    "design_settings": {
+      "defaults": {
+        "board_thickness": 1.6,
+        "copper_finish": "None",
+        "edge_connector": "No"
+      }
+    }
+  },
+  "meta": {
+    "filename": "carrier_v1.kicad_pro",
+    "version": 1
+  },
+  "sheets": [
+    ["root", ""]
+  ],
+  "text_variables": {},
+  "libraries": {
+    "pinned_footprint_libs": [],
+    "pinned_symbol_libs": []
+  }
+}
