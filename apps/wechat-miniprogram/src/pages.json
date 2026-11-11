@@ -1,11 +1,25 @@
 {
   "pages": [
     {
+      "path": "pages/meet/meet",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTextStyle": "white",
+        "backgroundColor": "#04060c",
+        "backgroundColorTop": "#04060c",
+        "backgroundColorBottom": "#04060c",
+        "disableScroll": true
+      }
+    },
+    {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "初心设备绑定",
-        "navigationBarBackgroundColor": "#f5f1ea",
-        "navigationBarTextStyle": "black"
+        "navigationBarTitleText": "初心",
+        "navigationBarBackgroundColor": "#04060c",
+        "navigationBarTextStyle": "white",
+        "backgroundColor": "#04060c",
+        "backgroundColorTop": "#04060c",
+        "backgroundColorBottom": "#04060c"
       }
     },
     {
@@ -71,9 +85,9 @@
     "navigationBarTextStyle": "black"
   },
   "tabBar": {
-    "color": "#82786d",
-    "selectedColor": "#2f604f",
-    "backgroundColor": "#fffaf3",
+    "color": "#7f948f",
+    "selectedColor": "#8dffe8",
+    "backgroundColor": "#04060c",
     "borderStyle": "black",
     "list": [
       {

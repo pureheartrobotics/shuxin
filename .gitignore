@@ -83,3 +83,37 @@ scripts/fill_proposal_docx.py
 
 # Agent workspace configurations
 .agents/
+
+# Local Android SDK / Gradle caches (do not commit)
+.android-sdk/
+.gradle-home/
+android-app/.gradle/
+android-app/.gradle-dist/
+android-app/.docx-extract/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+android-app/*.iml
+android-app/app/src/main/assets/lab_device_secrets.properties
+android-app/boot-brand/
+android-app/.kotlin/
+
+# ESP32 local build/cache (firmware_out bins may still be committed)
+ESP32S3_D24A_SHUXIN/build/
+ESP32S3_D24A_SHUXIN/test-build/
+ESP32S3_D24A_SHUXIN/docker_build.log
+esp32_s3/**/build/
+esp32_c3/**/build/
+
+# Local vendor dumps / OS images (do not publish)
+Android13.0/
+android13/
+RK3566-K11C/
+RKDevTool_v3.30_for_window/
+RKDevTool_v3.30_for_window.zip
+*.mp4
+*.rar
+esp32_c3.zip
+ESP32S3_D24A_SHUXIN.7z
+_hw_tmp/
+

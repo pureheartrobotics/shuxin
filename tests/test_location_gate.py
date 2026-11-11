@@ -6,6 +6,8 @@ def test_may_need_location_positive_samples():
     assert may_need_location("北京今天天气怎么样")
     assert may_need_location("从这到国贸怎么走")
     assert may_need_location("附近有什么餐厅")
+    assert may_need_location("明天带伞吗")
+    assert may_need_location("附近有没有儿科")
     assert may_need_location("你知道我们现在在什么")
     assert may_need_location("我们这个地方有什么好吃的吗？")
 

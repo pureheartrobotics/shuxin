@@ -11,6 +11,7 @@ from shuxin.integrations.location.provider import LocationContext
 
 def test_should_direct_weather_call():
     assert should_direct_weather_call("现在天气怎么样？")
+    assert should_direct_weather_call("明天带伞吗")
     assert not should_direct_weather_call("你知道我们现在在什么")
 
 
@@ -21,6 +22,8 @@ def test_should_direct_poi_search():
 
 def test_infer_poi_query():
     assert infer_poi_query("有什么好吃的") == "美食"
+    assert infer_poi_query("附近有没有儿科") == "儿科"
+    assert infer_poi_query("附近药店") == "药店"
 
 
 def test_infer_search_region_from_context():

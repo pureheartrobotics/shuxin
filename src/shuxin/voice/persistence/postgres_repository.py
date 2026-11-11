@@ -567,6 +567,12 @@ class VoicePostgresRepository:
     ) -> UserSettings:
         return await self.devices.authenticate_device_for_factory(device_code, device_secret)
 
+    async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+        return await self.devices.identify_device_owner(
+            user_name=user_name,
+            robot_code=robot_code,
+        )
+
     async def unbind_device(self, *, user_id: str, device_code: str) -> dict[str, Any]:
         return await self.devices.unbind_device(user_id=user_id, device_code=device_code)
 

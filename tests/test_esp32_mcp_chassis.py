@@ -174,3 +174,24 @@ def test_mcp_initialize_timeout_falls_back_to_tools_list() -> None:
 
 def test_mcp_auto_stop_then_abort() -> None:
     asyncio.run(_run_auto_stop_and_abort())
+
+
+async def _run_hermes_drive_and_stop_only() -> None:
+    bridge, sent = _bridge()
+    bridge.enabled = True
+    await bridge.handle_device_message(
+        _tool_list_payload(["self.chassis.go_forward", "self.chassis.stop"], request_id=7)
+    )
+    assert await bridge.dispatch_emergency_stop_from_text("前进") is False
+    assert await bridge.execute_drive("go_forward", 1.2, 0.55) is True
+    assert _mcp_calls(sent)[-1]["params"]["name"] == "self.chassis.go_forward"
+    assert await bridge.dispatch_emergency_stop_from_text("停下") is True
+    assert _mcp_calls(sent)[-1]["params"]["name"] == "self.chassis.stop"
+    assert await bridge.call_named_tool("self.head.nod", {}) is False
+    await bridge.handle_device_message(_tool_list_payload(["self.head.nod"], request_id=8))
+    assert await bridge.call_named_tool("self.head.nod", {}) is True
+    await bridge.reset()
+
+
+def test_mcp_hermes_drive_and_emergency_stop() -> None:
+    asyncio.run(_run_hermes_drive_and_stop_only())

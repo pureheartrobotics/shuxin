@@ -34,8 +34,9 @@ services:
       retries: 12
       start_period: 10s
     # 本地默认 6335 避免与本机已有 Qdrant(6333) 冲突；生产部署见 docs/DEPLOY_SERVER.md
+    # 仅绑定本机回环，避免局域网直接访问向量库。
     ports:
-      - "${QDRANT_HTTP_PORT:-6335}:6333"
+      - "127.0.0.1:${QDRANT_HTTP_PORT:-6335}:6333"
     networks:
       - shuxin_backend
 
@@ -86,6 +87,8 @@ services:
       DMX_API_BASE_URL: ${DMX_API_BASE_URL:-https://www.dmxapi.cn}
       SHUXIN_LLM_DEFAULT_PROVIDER: ${SHUXIN_LLM_DEFAULT_PROVIDER:-openai-compatible}
       SHUXIN_LLM_DEFAULT_MODEL: ${SHUXIN_LLM_DEFAULT_MODEL:-deepseek-chat}
+      SHUXIN_AGENT_RUNTIME: ${SHUXIN_AGENT_RUNTIME:-hermes}
+      SHUXIN_HERMES_MAX_ITERATIONS: ${SHUXIN_HERMES_MAX_ITERATIONS:-8}
       SHUXIN_VOICE_TEST_MODE: ${SHUXIN_VOICE_TEST_MODE:-0}
       VOLCENGINE_TTS_API_KEY: ${VOLCENGINE_TTS_API_KEY:-}
       VOLCENGINE_TTS_VOICE_TYPE: ${VOLCENGINE_TTS_VOICE_TYPE:-}
@@ -122,8 +125,9 @@ services:
       BAIDU_RTC_SERVER_URL: ${BAIDU_RTC_SERVER_URL:-wss://rtc.exp.bcelive.com/janus}
       BAIDU_RTC_TOKEN_TTL_SECONDS: ${BAIDU_RTC_TOKEN_TTL_SECONDS:-3600}
       SHUXIN_CALL_RING_TIMEOUT_SECONDS: ${SHUXIN_CALL_RING_TIMEOUT_SECONDS:-30}
+    # 仅绑定本机回环，避免局域网直接访问语音服务。
     ports:
-      - "${VOICE_DEMO_PORT:-8765}:8765"
+      - "127.0.0.1:${VOICE_DEMO_PORT:-8765}:8765"
     volumes:
       - ./src:/app/src
       # 挂载脚本目录，便于容器内下载/更新语音模型。

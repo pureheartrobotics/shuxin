@@ -207,6 +207,31 @@ class DeviceMcpBridge:
         if pending_method == "tools/list" or isinstance(result.get("tools"), list):
             await self._on_tools_list(result)
 
+    async def dispatch_emergency_stop_from_text(self, text: str) -> bool:
+        command = parse_chassis_command(text)
+        if command is None or command.action != "stop":
+            return False
+        return await self._execute_command(command, schedule_stop=False)
+
+    async def execute_drive(self, action: str, duration_s: float, speed: float) -> bool:
+        if not self.enabled:
+            return False
+        command = ChassisCommand(action, duration_s, speed, "hermes")
+        return await self._execute_command(command, schedule_stop=(action != "stop"))
+
+    async def call_named_tool(self, name: str, arguments: Optional[dict[str, Any]] = None) -> bool:
+        if not self.enabled or name not in self.tools:
+            logger.warning(
+                "MCP tool missing device=%s name=%s tools=%s",
+                self.device_id,
+                name,
+                sorted(self.tool_names),
+            )
+            return False
+        await self._send_request("tools/call", {"name": name, "arguments": arguments or {}})
+        logger.info("MCP call device=%s tool=%s", self.device_id, name)
+        return True
+
     async def dispatch_user_text(self, text: str, *, schedule_stop: bool = True) -> bool:
         if not self.enabled:
             return False

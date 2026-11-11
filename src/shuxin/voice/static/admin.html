@@ -156,12 +156,10 @@
     .bind-summary { min-height: 120px; padding: 12px; border: 1px dashed var(--separator); border-radius: var(--radius-sm); background: rgba(0, 0, 0, .02); }
     .hint { color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
     pre { white-space: pre-wrap; margin: 0; font-size: 13px; }
-    .header-link { color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 500; }
-    .header-link:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <header><h1>ChuXin 管理后台</h1><div class="toolbar" style="margin:0"><a href="/voice-demo" class="header-link">语音测试台</a><button class="secondary" onclick="loadAll()">刷新</button></div></header>
+  <header><h1>ChuXin 管理后台</h1><div class="toolbar" style="margin:0"><button class="secondary" onclick="loadAll()">刷新</button></div></header>
   <main>
     <section id="login" class="panel login">
       <h2>管理员登录</h2>

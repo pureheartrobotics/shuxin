@@ -47,9 +47,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # Tier 2 — app: server, memory, TTS, integrations (day-to-day changes).
-COPY requirements-voice-app.txt ./
+COPY requirements-voice-app.txt requirements-hermes.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements-voice-app.txt && \
+    pip install -r requirements-hermes.txt && \
+    pip install --no-deps "hermes-agent>=0.19.0,<0.20" \
+      -i https://pypi.org/simple \
+      --trusted-host pypi.org \
+      --trusted-host files.pythonhosted.org && \
     find /usr/local/lib/python3.11/site-packages -type d -name tests -prune -exec rm -rf {} + && \
     find /usr/local/lib/python3.11/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 

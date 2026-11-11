@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from shuxin.core.agent import Agent
 from shuxin.core.config import Config
 from shuxin.core.identity import VALID_MBTI_TYPES
+from shuxin.integrations.hermes.runtime import create_voice_agent
 from shuxin.voice.persistence.agents import AgentRecord
 from shuxin.voice.config.config import DeviceConfig, DeviceConfigProvider
 from shuxin.voice.providers import create_stt_provider
@@ -70,12 +70,12 @@ class VoiceService:
 
         user_home 用于 Web 多用户路径，让同一用户复用自己的记忆和陪伴状态。
         """
-        agent = self.create_agent(device, user_home=user_home)
-        agent.initialize()
+        runtime = self.create_agent(device, user_home=user_home)
+        runtime.initialize()
         try:
-            return agent.chat(text).strip()
+            return runtime.chat(text).strip()
         finally:
-            agent.shutdown()
+            runtime.shutdown()
 
     def create_agent(
         self,
@@ -83,10 +83,10 @@ class VoiceService:
         user_home: Path | None = None,
         *,
         agent: AgentRecord | None = None,
-    ) -> Agent:
-        """根据设备和用户目录创建 Agent 实例。"""
-        return Agent(
-            config=self._build_agent_config(device, user_home=user_home, agent=agent)
+    ):
+        """按设备 LLM 配置创建语音 Agent（默认 Hermes）。"""
+        return create_voice_agent(
+            self._build_agent_config(device, user_home=user_home, agent=agent)
         )
 
     def build_agent_config(
@@ -127,7 +127,7 @@ class VoiceService:
         return config
 
     @staticmethod
-    def apply_device_mbti(agent: Agent, device: DeviceConfig, agent_record: AgentRecord | None) -> None:
+    def apply_device_mbti(agent, device: DeviceConfig, agent_record: AgentRecord | None) -> None:
         """Apply blind-box device MBTI after Agent.initialize()."""
         device_mbti = str(device.metadata.get("mbti") or "").strip().upper()
         if not device_mbti and agent_record is not None:

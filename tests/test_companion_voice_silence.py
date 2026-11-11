@@ -7,7 +7,7 @@ from shuxin.plugins.companion import CompanionPlugin
 
 
 def test_companion_softens_silent_response_for_voice_channel(tmp_path) -> None:
-    plugin = CompanionPlugin(data_dir=tmp_path)
+    plugin = CompanionPlugin(data_dir=tmp_path, self_esteem_enabled=True)
     plugin.initialize()
     plugin.self_esteem.state.is_silent = True
     plugin.self_esteem.state.silent_start = time.time()

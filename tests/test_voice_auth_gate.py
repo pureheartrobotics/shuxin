@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import pytest
 from pathlib import Path
@@ -35,7 +36,7 @@ async def test_auth_gate_rejects_unauthenticated_listen() -> None:
     assert len(ws.sent_messages) == 1
     err = ws.sent_messages[0]
     assert err["type"] == "error"
-    assert "not authenticated" in err["message"]
+    assert err["message"] == "user_name is required"
     assert not session.listening  # should not start listening
 
 @pytest.mark.anyio
@@ -60,7 +61,7 @@ async def test_auth_gate_rejects_unauthenticated_text_turn() -> None:
     assert len(ws.sent_messages) == 1
     err = ws.sent_messages[0]
     assert err["type"] == "error"
-    assert "not authenticated" in err["message"]
+    assert err["message"] == "user_name is required"
 
 @pytest.mark.anyio
 async def test_auth_gate_allows_authenticated_listen() -> None:
@@ -87,6 +88,7 @@ async def test_auth_gate_allows_authenticated_listen() -> None:
     # 2. Send "listen start" text message
     listen_msg = json.dumps({"type": "listen", "state": "start"})
     await session._handle_text(listen_msg)
+    await asyncio.sleep(0)
 
     # 3. Assert it does NOT raise unauthenticated error
     # It sends back {"type": "listen", "state": "start"}

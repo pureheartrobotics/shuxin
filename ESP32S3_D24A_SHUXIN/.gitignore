@@ -1,0 +1,6 @@
+build/
+firmware/
+sdkconfig
+sdkconfig.old
+test-build/
+*.log

@@ -21,11 +21,34 @@ import time
 import logging
 import threading
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
 logger = logging.getLogger("shuxin.companion.self_esteem")
+
+# 语音控车口令、ASR 语气词不应计入自尊伤害，否则车上说几句「前进/嗯」就会沉默。
+_MOTION_UTTERANCE_RE = re.compile(
+    r"(停下|停车|停止|站住|别动|不要动|取消|停一下|"
+    r"前进|往前|向前|过来|走近|开过来|"
+    r"后退|往后|向后|倒车|退后|"
+    r"左转|向左|往左|右转|向右|往右|"
+    r"转一圈|转圈|原地转|掉头|调头)"
+)
+_FILLER_UTTERANCE_RE = re.compile(r"^[啊阿嗯哦唔呃呀哈嗯嗯。\.，,！!？?\s]+$")
+
+
+def is_non_social_utterance(text: str) -> bool:
+    """True when the utterance is a drive command or ASR filler, not social talk."""
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact or _FILLER_UTTERANCE_RE.fullmatch(compact):
+        return True
+    if re.fullmatch(r"停[。．\.！!？?]?", compact):
+        return True
+    if _MOTION_UTTERANCE_RE.search(compact) and len(compact) <= 32:
+        return True
+    return False
+
 
 # 伤害事件表 — (正则模式, 伤害值)
 HURT_EVENTS: List[Tuple[str, int]] = [
@@ -158,6 +181,27 @@ class SelfEsteemSystem:
             {'delta': -12.0, 'value': 63.0, 'is_silent': False, 'reason': 'normal', 'message': ''}
         """
         with self._lock:
+            if self._expire_silence_if_needed():
+                return {
+                    "delta": 0,
+                    "value": self.state.value,
+                    "is_silent": False,
+                    "reason": "silent_timeout",
+                    "message": "（初心眨了眨眼睛，似乎从沉思中回过神来）",
+                }
+
+            if is_non_social_utterance(user_input):
+                if self.state.is_silent:
+                    self._exit_silent_mode()
+                    self._save()
+                return {
+                    "delta": 0,
+                    "value": self.state.value,
+                    "is_silent": False,
+                    "reason": "non_social",
+                    "message": "",
+                }
+
             # 检查沉默超时
             if self.state.is_silent:
                 if self._check_silent_timeout():
@@ -258,6 +302,23 @@ class SelfEsteemSystem:
                 pass
 
         return delta
+
+    def _expire_silence_if_needed(self) -> bool:
+        """Expire persisted silence when the timer has elapsed. Caller holds the lock."""
+        if self.state.is_silent and self._check_silent_timeout():
+            self._exit_silent_mode()
+            self._save()
+            return True
+        return False
+
+    def clear_silence_for_new_session(self) -> None:
+        """Drop sulk state at session start so a new hello does not keep refusing to talk."""
+        with self._lock:
+            if self._expire_silence_if_needed():
+                return
+            if self.state.is_silent:
+                self._exit_silent_mode()
+                self._save()
 
     def _enter_silent_mode(self) -> None:
         """进入沉默模式。
@@ -374,6 +435,7 @@ class SelfEsteemSystem:
                 data = json.loads(state_file.read_text(encoding="utf-8"))
                 self.state = SelfEsteemState(**data)
                 logger.info("自尊状态已加载: %.1f", self.state.value)
+                self._expire_silence_if_needed()
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("加载自尊状态失败: %s", e)
             except Exception as e:

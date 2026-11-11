@@ -67,7 +67,12 @@ class AudioFileStore:
             self.memory_dir,
             self.companion_dir,
         ]:
-            directory.mkdir(parents=True, exist_ok=True)
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                # Docker Desktop 偶发把 Windows 盘挂成 ENODEV，hello 不能因此直接断连。
+                if getattr(exc, "errno", None) != 19:
+                    raise
 
 
 def validate_path_part(value: str) -> str:

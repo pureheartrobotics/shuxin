@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from shuxin.core.agent import Agent
 from shuxin.voice.providers import create_stt_provider
 from shuxin.voice.config.tts_config import create_tts_provider_from_device
 from shuxin.voice.service import VoiceService

@@ -646,6 +646,136 @@ class DeviceRepository(BaseRepository):
             agent_id="",
         )
 
+    async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+        """设备 hello：用用户名和机器人代号建立或复用绑定，不校验账号、密码或 device_secret。"""
+        from shuxin.voice.persistence.users import user_id_for_display_name
+
+        display_name = str(user_name or "").strip()
+        device_id = _validate_device_code(robot_code)
+        user_id = user_id_for_display_name(display_name)
+        user_meta = {"display_name": display_name, "identity": "user_name"}
+        device_meta = {
+            "robot_code": device_id,
+            "bound_user_name": display_name,
+            "identity": "user_name",
+        }
+        # 厂商密钥留在服务端环境变量，不写入设备行，避免随配置下发到板子。
+        stt_config = {
+            "type": "tencent-realtime",
+            "model": "16k_zh",
+            "output_dir": "outputs",
+        }
+        tts_config = {
+            key: value
+            for key, value in default_device_tts_config().items()
+            if not any(
+                part in str(key).lower()
+                for part in ("key", "secret", "token", "password", "appid")
+            )
+        }
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                user_row = await conn.fetchrow(
+                    """
+                    SELECT enabled, deleted_at
+                    FROM users
+                    WHERE user_id = $1
+                    FOR UPDATE
+                    """,
+                    user_id,
+                )
+                if user_row is not None and (
+                    not user_row["enabled"] or user_row["deleted_at"] is not None
+                ):
+                    raise PermissionError("user is disabled")
+                await conn.execute(
+                    """
+                    INSERT INTO users (user_id, metadata, updated_at)
+                    VALUES ($1, $2::jsonb, now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        metadata = users.metadata || excluded.metadata,
+                        updated_at = now()
+                    """,
+                    user_id,
+                    json.dumps(user_meta, ensure_ascii=False),
+                )
+                device_row = await conn.fetchrow(
+                    """
+                    SELECT status, enabled
+                    FROM devices
+                    WHERE device_id = $1
+                    FOR UPDATE
+                    """,
+                    device_id,
+                )
+                if device_row is not None and (
+                    str(device_row["status"]) == "disabled" or not bool(device_row["enabled"])
+                ):
+                    raise PermissionError("device is disabled")
+                if device_row is None:
+                    await conn.execute(
+                        """
+                        INSERT INTO devices (
+                            device_id, auth_mode, device_secret_hash,
+                            stt_config, tts_config, llm_config,
+                            status, enabled, note, metadata, updated_at
+                        )
+                        VALUES (
+                            $1, 'shared_secret', NULL,
+                            $2::jsonb, $3::jsonb, '{}'::jsonb,
+                            'provisioned', true, '', $4::jsonb, now()
+                        )
+                        """,
+                        device_id,
+                        json.dumps(stt_config, ensure_ascii=False),
+                        json.dumps(tts_config, ensure_ascii=False),
+                        json.dumps(device_meta, ensure_ascii=False),
+                    )
+                    await conn.execute(
+                        """
+                        INSERT INTO device_status (device_id)
+                        VALUES ($1)
+                        ON CONFLICT (device_id) DO NOTHING
+                        """,
+                        device_id,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE devices
+                        SET deleted_at = NULL,
+                            metadata = metadata || $2::jsonb,
+                            updated_at = now()
+                        WHERE device_id = $1
+                        """,
+                        device_id,
+                        json.dumps(device_meta, ensure_ascii=False),
+                    )
+                await self._bind_device_for_user(
+                    conn,
+                    user_id=user_id,
+                    device_id=device_id,
+                    event_type="device_bound_by_name",
+                )
+
+        await self.parent.ensure_user_dmx_llm(user_id)
+        llm_row = await self.pool.fetchrow(
+            """
+            SELECT audio_quota_mb, llm_config, agent_id
+            FROM users
+            WHERE user_id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+        )
+        return UserSettings(
+            user_id=user_id,
+            token="",
+            audio_quota_mb=int(llm_row["audio_quota_mb"]) if llm_row else DEFAULT_AUDIO_QUOTA_MB,
+            llm_config=_json_obj(llm_row["llm_config"]) if llm_row else {},
+            agent_id=str((llm_row["agent_id"] if llm_row else "") or ""),
+        )
+
     async def unbind_device(self, *, user_id: str, device_code: str) -> dict[str, Any]:
         """用户主动解绑设备；保留用户级记忆和资产。"""
         selected_user = validate_user_id(user_id)
@@ -1289,7 +1419,6 @@ class DeviceRepository(BaseRepository):
                     "user_id": str(row["user_id"]),
                     "device_id": str(row["device_id"]),
                     "device_code": str(row["device_id"]),
-                    "device_secret": secret,
                     "online": bool(row["online"] or False),
                     "secret_hint": hint,
                     "llm_model": str(llm.get("model") or ""),

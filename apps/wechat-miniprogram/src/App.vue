@@ -1,6 +1,15 @@
 <script>
+import { captureEnterOptions, captureLaunchQuery } from "./core/first-meet";
+
 export default {
-  onLaunch() {},
+  onLaunch(options) {
+    captureLaunchQuery(options && options.query);
+    captureEnterOptions();
+  },
+  onShow(options) {
+    captureLaunchQuery(options && options.query);
+    captureEnterOptions();
+  },
 };
 </script>
 

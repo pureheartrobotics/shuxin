@@ -12,47 +12,38 @@
 | 健康检查 | `http://<host>:8765/health` | 同上 |
 | 浏览器测试台 | `http://<host>:8765/voice-demo`（PCM/mp3，非 Opus） | 同上 |
 
-**固件不调用 HTTP `/api/...`**；`device_code` + `device_secret` 来自 Admin 制码后烧录；`claim_code` 仅贴外壳，不进固件。
+**固件不调用 HTTP `/api/...`**。语音 WebSocket 采用**轻量连接**：只报 `user_name`（用户名）+ `robot_code`（机器人代号，可与 `device_code` 同义）；**不要求** `device_secret`、也不要求先开微信账号。
 
 **当前局域网阶段（双路径）**：
 
 1. **固件**：配置 `host=<LAN_IP>` → 连 `ws://<LAN_IP>:8765/ws/voice`
 2. **QA 小程序**：编译前设 `SHUXIN_API_BASE=http://<LAN_IP>:8765`，与固件指向**同一台** Voice 服务
 
-详表与步骤清单见 [VOICE_HARDWARE_HANDBOOK.md §2.10](VOICE_HARDWARE_HANDBOOK.md)；出厂验收认知边界见 [§2.11](VOICE_HARDWARE_HANDBOOK.md)。
+详表与步骤清单见 [VOICE_HARDWARE_HANDBOOK.md §2.10](VOICE_HARDWARE_HANDBOOK.md)。
 
 ## 2. 前置条件
 
-### 2.1 出厂工厂验收（未绑定）
+### 2.1 轻量对话（当前主路径）
 
-固件阅读顺序见 [**出厂工厂验收交接 §11**](FACTORY_ACCEPTANCE_HANDOFF.md)。
+1. 板子/客户端知道：服务端 host、`user_name`、`robot_code`
+2. 服务端已配置全局/默认 STT、TTS、LLM（`.env` / Admin）
+3. 连上 `/ws/voice` 后发连接消息（见 §3），收到 `hello state=ok` 即可 `listen`
 
-1. 工厂制码：`device_id` + `device_secret` + `claim_code` + `mbti`（制码时写入 `metadata`）
-2. 固件烧录 **`device_code`（= device_id）+ `device_secret`**
-3. 设备 `status=provisioned`，**无**用户绑定
-4. 上电 `hello` 成功，响应含 **`factory_acceptance: true`**
-5. 保持 WebSocket 连接，等待 QA 触发 `factory_verify` 并回 `factory_verify_ack`
+服务端会按用户名自动建/复用用户，按机器人代号建/复用设备并完成绑定；设备若被 Admin 禁用则拒绝。
 
-详表见 [**出厂工厂验收交接**](FACTORY_ACCEPTANCE_HANDOFF.md)。
+### 2.2 工厂制码 / 小程序绑定（运营侧，可选）
 
-### 2.2 用户绑定后对话
-
-1. 完成 §2.1 制码与烧录
-2. 用户小程序绑定设备（`claim_code`）
-3. 服务端已配置 STT/TTS/LLM（绑定用户的 `llm_config`、Agent 音色）
-4. `hello` 收到 `state: ok`（无 `factory_acceptance`）后可 `listen` 对话
-
-未绑定且非 `provisioned` 出厂路径时，`hello` 会返回 `device is not bound or disabled`。
+Admin 批量制码、`claim_code` 贴码、微信绑机等流程仍可用于量产运营；**固件 WS 握手不再依赖烧录 `device_secret`**。工厂验收细则见 [FACTORY_ACCEPTANCE_HANDOFF.md](FACTORY_ACCEPTANCE_HANDOFF.md)。
 
 ## 3. 连接与鉴权（Opus 硬件路径）
 
-连接后 **必须先** 发送 `hello`（含 Opus 协商）：
+连接后 **先发** 用户名 + 机器人代号（可带 `type: hello`，也可作为首条 JSON；兼容旧字段名 `device_code` = `robot_code`）：
 
 ```json
 {
   "type": "hello",
-  "device_code": "<device_id>",
-  "device_secret": "<secret>",
+  "user_name": "小林",
+  "robot_code": "car-001",
   "client_id": "device-001",
   "audio_params": {
     "format": "opus",
@@ -70,7 +61,9 @@
   "type": "hello",
   "state": "ok",
   "user_id": "...",
-  "device_id": "...",
+  "user_name": "小林",
+  "device_id": "car-001",
+  "robot_code": "car-001",
   "audio_params": {
     "format": "opus",
     "uplink_sample_rate": 16000,

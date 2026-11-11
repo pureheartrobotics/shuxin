@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">初心</string>
+    <color name="bg">#10141A</color>
+    <color name="panel">#1B222C</color>
+    <color name="text">#F3F6FA</color>
+    <color name="muted">#8A96A8</color>
+    <color name="accent">#3D8BFF</color>
+    <color name="talk">#D63847</color>
+    <color name="stop">#FFB020</color>
+    <style name="Theme.ShuxinCar" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="android:textColor">@color/text</item>
+    </style>
+</resources>

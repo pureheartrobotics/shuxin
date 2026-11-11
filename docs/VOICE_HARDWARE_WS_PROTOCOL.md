@@ -4,7 +4,7 @@
 
 本文档面向后续硬件接入方。当前协议用于无硬件 Web 测试台，也作为后续真实硬件的最小接入边界。
 
-**STT/TTS 由初心服务端代理调用**，固件不直连云厂商 API。设备须先以 `device_code + device_secret` 完成 WebSocket `hello` 鉴权。已绑定设备可进入语音识别与合成；**未绑定但 `provisioned` 的设备**可走工厂验收会话（`hello_ok.factory_acceptance=true`），仅支持 `factory_verify` / `ping` / `abort`，不可对话。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)。
+**STT/TTS 由初心服务端代理调用**，固件不直连云厂商 API。设备须先以 **`user_name` + `robot_code`**（兼容旧字段 `device_code`）完成 WebSocket 连接；**不要求 `device_secret`**，也不要求先开微信账号。服务端按名字建/复用用户、按代号建/复用设备并绑定。总览见 [硬件 STT/TTS 调用与鉴权接入指南](VOICE_HARDWARE_INTEGRATION.md)；速查见 [VOICE_HARDWARE_QUICKSTART.md](VOICE_HARDWARE_QUICKSTART.md)。
 
 固件如何获取 `<host>`、局域网双路径联调、出厂验收认知边界见 [VOICE_HARDWARE_HANDBOOK.md §2.10–§2.11](VOICE_HARDWARE_HANDBOOK.md)。
 
@@ -85,21 +85,13 @@ container: none
 真实硬件接入推荐使用设备身份，而不是让设备携带用户身份：
 
 ```json
-{"type":"hello","device_code":"ESP32_MAC_OR_EFUSE_CODE","device_secret":"shared-secret-for-prototype","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
+{"type":"hello","user_name":"小林","robot_code":"ESP32_MAC_OR_EFUSE_CODE","client_id":"device-001","session_id":"optional-session-id","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
 ```
 
-当前内部原型阶段，`device_secret` 可以先使用服务端环境变量
-`SHUXIN_DEVICE_SHARED_SECRET` 对应的统一密钥。后续量产阶段，服务端会按
-`device_code` 校验每台设备独立的密钥哈希。
+**当前推荐路径**：只发 `user_name` + `robot_code`（兼容字段名 `username` / `device_code`）。  
+首条文本消息即视为连接，不必强制 `type=hello`。服务端调用 `identify_device_owner` 自动建用户、建设备并绑定；**不校验 `device_secret`**。
 
-浏览器测试台默认模拟真实硬件，也发送 `device_code + device_secret`。
-服务端会根据设备的 active binding 解析出用户。
-
-旧的用户 token 形式仅作为兼容入口保留，不再作为推荐测试路径：
-
-```json
-{"type":"hello","user_id":"demo-user","token":"","device_id":"demo-device-001","client_id":"device-001","session_id":"optional-session-id"}
-```
+Admin 制码产生的 `device_secret` 仍可用于运营侧（导出、贴码体系），但 **WebSocket 运行时握手不再依赖它**。
 
 开始录音：
 
@@ -127,10 +119,10 @@ container: none
 
 ### 3.1 ESP32 MCP 底盘（语音控车）
 
-量产 RK3566 不走这条；ESP32/TB6612 在 `esp32` 分支启用。设备 `hello` 增加：
+ESP32-S3 样车走这条（设备自己当 MCP 执行端）。量产 RK3566 带屏车的执行端换成 Android，再经 UART 交给 ESP32-C3，云端口令与 MCP 工具名相同，见 [`RK3566_ANDROID_C3_PLAN.md`](RK3566_ANDROID_C3_PLAN.md)。设备 `hello` 增加：
 
 ```json
-{"type":"hello","device_code":"...","device_secret":"...","client_id":"esp32-car","features":{"mcp":true},"audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
+{"type":"hello","user_name":"小林","robot_code":"...","client_id":"esp32-car","features":{"mcp":true},"audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}
 ```
 
 `client_id` 可省略。浏览器 `/voice-demo` 不传 `features.mcp`，不会开车。服务端 `hello ok` 会带回 `"features":{"mcp":true}`，随后下发 MCP `initialize` →（等设备 result）→ `tools/list`。STT 命中前进/后退/转向/停车后，服务端直接 `tools/call`（不等 LLM），到期再 `self.chassis.stop`。报文与口令见 [`MCP_CHASSIS_HANDOFF.md`](../MCP_CHASSIS_HANDOFF.md)。

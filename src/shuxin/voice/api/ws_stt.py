@@ -9,6 +9,7 @@ from shuxin.voice.integrations.tencent_realtime_asr import (
     TencentRealtimeASRSession,
     is_tencent_realtime_stt,
 )
+from shuxin.voice.stt_noise import is_noise_utterance
 
 if TYPE_CHECKING:
     from shuxin.voice.api.ws_session import _VoiceWebSocketSession
@@ -30,17 +31,22 @@ class SpeechTranscriber:
 
     async def start(self) -> None:
         """在录音开始时启动腾讯云实时 ASR，让识别和录音并行。"""
-        if self.session._agent_init_task is not None:
-            await self.session._agent_init_task
-        if self.session.device is None:
-            self.session.device = await self.session.repo.get_device(self.session.device_id)
-        if self.session.device is None or not is_tencent_realtime_stt(self.session.device.stt):
+        device = self.session.device
+        if device is None and self.session.device_id:
+            device = await self.session.repo.get_device(self.session.device_id)
+        stt = getattr(device, "stt", None) if device is not None else None
+        if not is_tencent_realtime_stt(stt):
+            logger.warning(
+                "skip realtime ASR device=%s stt_type=%s",
+                self.session.device_id,
+                getattr(stt, "type", None),
+            )
             return
         if self.realtime_asr is not None:
             await self.realtime_asr.close()
         self.realtime_stt_started = time.perf_counter()
         self.realtime_asr = TencentRealtimeASRSession(
-            self.session.device.stt,
+            stt,
             on_result=self._handle_realtime_asr_result,
         )
         await self.realtime_asr.start()
@@ -77,6 +83,8 @@ class SpeechTranscriber:
             state = "sentence_final"
         if result.is_stream_final:
             state = "stream_final"
+        if is_noise_utterance(result.text) and not result.is_stream_final:
+            return
         await self.session._send_json(
             {
                 "type": "stt",

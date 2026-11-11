@@ -303,17 +303,10 @@ def test_factory_hello_unbound_skips_reveal_and_ensure_session() -> None:
     mock_try_reveal = AsyncMock(return_value=None)
 
     class FakeRepo:
-        async def authenticate_device(self, device_code: str, device_secret: str) -> UserSettings:
-            raise PermissionError("device is not bound or disabled")
-
-        async def authenticate_device_for_factory(
-            self,
-            device_code: str,
-            device_secret: str,
-        ) -> UserSettings:
-            assert device_code == device_id
-            assert device_secret == "secret-abc"
-            return UserSettings(user_id=FACTORY_PROBE_USER_ID, llm_config={}, agent_id="")
+        async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+            assert user_name == "小林"
+            assert robot_code == device_id
+            return UserSettings(user_id="name-user", token="", llm_config={}, agent_id="")
 
         async def ensure_session(self, **kwargs) -> None:
             await mock_ensure_session(**kwargs)
@@ -322,6 +315,11 @@ def test_factory_hello_unbound_skips_reveal_and_ensure_session() -> None:
             assert kwargs["device_id"] == device_id
             assert kwargs["online"] is True
 
+        async def get_device(self, selected_id: str):
+            from shuxin.voice.config.config import DeviceConfig
+
+            return DeviceConfig(device_id=selected_id)
+
         async def try_reveal_and_lock(self, device_id: str, revealed_by: str):
             return await mock_try_reveal(device_id, revealed_by)
 
@@ -329,23 +327,22 @@ def test_factory_hello_unbound_skips_reveal_and_ensure_session() -> None:
     with TestClient(app) as client:
         app.state.repo = FakeRepo()
         with client.websocket_connect("/ws/voice") as ws:
-            ready = ws.receive_json()
-            assert ready["state"] == "ready"
             ws.send_json(
                 {
                     "type": "hello",
-                    "device_code": device_id,
-                    "device_secret": "secret-abc",
+                    "user_name": "小林",
+                    "robot_code": device_id,
                     "client_id": "factory-hw",
                 }
             )
             hello_ok = ws.receive_json()
             assert hello_ok["state"] == "ok"
-            assert hello_ok["factory_acceptance"] is True
-            assert hello_ok["device_id"] == device_id
+            assert hello_ok["user_name"] == "小林"
+            assert hello_ok["robot_code"] == device_id
+            assert "factory_acceptance" not in hello_ok
+            assert "device_secret" not in hello_ok
+            assert "api_key" not in hello_ok
 
-    mock_ensure_session.assert_not_called()
-    mock_try_reveal.assert_not_called()
     vsr.reset_for_tests()
 
 
@@ -354,15 +351,17 @@ def test_factory_hello_then_verify_pass() -> None:
     vsr.reset_for_tests()
 
     class FakeRepo:
-        async def authenticate_device(self, device_code: str, device_secret: str) -> UserSettings:
-            raise PermissionError("device is not bound or disabled")
+        async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+            assert robot_code == device_id
+            return UserSettings(user_id="name-user", token="", llm_config={}, agent_id="")
 
-        async def authenticate_device_for_factory(
-            self,
-            device_code: str,
-            device_secret: str,
-        ) -> UserSettings:
-            return UserSettings(user_id=FACTORY_PROBE_USER_ID, llm_config={}, agent_id="")
+        async def ensure_session(self, **kwargs) -> None:
+            return None
+
+        async def get_device(self, selected_id: str):
+            from shuxin.voice.config.config import DeviceConfig
+
+            return DeviceConfig(device_id=selected_id)
 
         async def touch_device_status(self, **kwargs) -> None:
             return None
@@ -386,16 +385,16 @@ def test_factory_hello_then_verify_pass() -> None:
     with TestClient(app) as client:
         app.state.repo = FakeRepo()
         with client.websocket_connect("/ws/voice") as ws:
-            ws.receive_json()
             ws.send_json(
                 {
                     "type": "hello",
-                    "device_code": device_id,
-                    "device_secret": "secret-abc",
+                    "user_name": "小林",
+                    "robot_code": device_id,
                 }
             )
             hello_ok = ws.receive_json()
-            assert hello_ok.get("factory_acceptance") is True
+            assert hello_ok["state"] == "ok"
+            assert hello_ok.get("factory_acceptance") is not True
 
             session = vsr.get_active_session(device_id)
             assert session is not None
@@ -498,15 +497,16 @@ def test_factory_listen_rejected() -> None:
     vsr.reset_for_tests()
 
     class FakeRepo:
-        async def authenticate_device(self, device_code: str, device_secret: str) -> UserSettings:
-            raise PermissionError("device is not bound or disabled")
+        async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+            return UserSettings(user_id="name-user", token="", llm_config={}, agent_id="")
 
-        async def authenticate_device_for_factory(
-            self,
-            device_code: str,
-            device_secret: str,
-        ) -> UserSettings:
-            return UserSettings(user_id=FACTORY_PROBE_USER_ID, llm_config={}, agent_id="")
+        async def ensure_session(self, **kwargs) -> None:
+            return None
+
+        async def get_device(self, selected_id: str):
+            from shuxin.voice.config.config import DeviceConfig
+
+            return DeviceConfig(device_id=selected_id)
 
         async def touch_device_status(self, **kwargs) -> None:
             return None
@@ -515,19 +515,13 @@ def test_factory_listen_rejected() -> None:
     with TestClient(app) as client:
         app.state.repo = FakeRepo()
         with client.websocket_connect("/ws/voice") as ws:
-            ws.receive_json()
-            ws.send_json(
-                {
-                    "type": "hello",
-                    "device_code": device_id,
-                    "device_secret": "secret-abc",
-                }
-            )
-            hello_ok = ws.receive_json()
-            assert hello_ok.get("factory_acceptance") is True
-            ws.send_json({"type": "listen", "state": "start"})
-            err = ws.receive_json()
-            assert err["type"] == "error"
-            assert err["message"] == _FACTORY_ACCEPTANCE_DISABLED
+            ws.send_json({"type": "hello", "robot_code": device_id})
+            missing_name = ws.receive_json()
+            assert missing_name["type"] == "error"
+            assert missing_name["message"] == "user_name is required"
+            ws.send_json({"type": "hello", "user_name": "小林"})
+            missing_code = ws.receive_json()
+            assert missing_code["type"] == "error"
+            assert missing_code["message"] == "robot_code is required"
 
     vsr.reset_for_tests()

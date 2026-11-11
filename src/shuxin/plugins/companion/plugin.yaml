@@ -1,6 +1,6 @@
 name: companion
 version: 1.0.0
-description: 初心陪伴系统 — 自尊、情感、守护、用户建模
+description: 初心陪伴系统 — 情感、守护、用户建模（自尊默认关闭）
 author: ChuXin Team
 kind: standalone
 hooks:

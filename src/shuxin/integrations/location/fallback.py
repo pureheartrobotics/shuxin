@@ -15,6 +15,8 @@ _WEATHER_KEYWORDS: tuple[str, ...] = (
     "下雪",
     "冷不冷",
     "热不热",
+    "带伞",
+    "带雨伞",
     "weather",
 )
 
@@ -31,6 +33,11 @@ _POI_KEYWORDS: tuple[str, ...] = (
     "早餐",
     "午饭",
     "晚餐",
+    "医院",
+    "儿科",
+    "药店",
+    "药房",
+    "诊所",
 )
 
 _CITY_IN_QUERY = re.compile(
@@ -88,6 +95,14 @@ def should_direct_poi_search(user_input: str) -> bool:
 def infer_poi_query(user_input: str) -> str:
     """从用户句推断 POI 检索关键词。"""
     text = (user_input or "").strip()
+    if "儿科" in text:
+        return "儿科"
+    if "医院" in text:
+        return "医院"
+    if "药店" in text or "药房" in text:
+        return "药店"
+    if "诊所" in text:
+        return "诊所"
     if any(token in text for token in ("好吃", "吃什么", "美食", "餐厅", "饭店", "小吃")):
         return "美食"
     if "早饭" in text or "早餐" in text:

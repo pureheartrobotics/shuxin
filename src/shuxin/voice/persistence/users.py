@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -111,6 +112,28 @@ def validate_user_id(user_id: str) -> str:
             "user_id must be 1-64 chars and contain only letters, digits, dot, dash or underscore"
         )
     return user_id
+
+
+DISPLAY_NAME_MAX_LEN = 64
+
+
+def normalize_display_name(name: str) -> str:
+    """用户名只作为称呼保存，不作为账号或密码。"""
+    selected = str(name or "").strip()
+    if not selected:
+        raise ValueError("user_name is required")
+    if len(selected) > DISPLAY_NAME_MAX_LEN:
+        raise ValueError("user_name is too long")
+    return selected
+
+
+def user_id_for_display_name(name: str) -> str:
+    """把用户名映射到已有 users.user_id。ASCII 标识原样使用，其余取稳定摘要。"""
+    selected = normalize_display_name(name)
+    if USER_ID_PATTERN.fullmatch(selected):
+        return selected
+    digest = hashlib.sha256(selected.encode("utf-8")).hexdigest()[:20]
+    return validate_user_id(f"name-{digest}")
 
 
 def now_ms() -> int:

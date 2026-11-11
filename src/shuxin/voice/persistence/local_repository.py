@@ -11,7 +11,13 @@ from shuxin.voice.persistence.mall_local_repo import MallLocalRepository
 from shuxin.voice.persistence.time_display import format_beijing_iso
 from shuxin.voice.persistence.memory_summary import should_merge_summary
 from shuxin.voice.persistence.storage import UserVoiceStorage
-from shuxin.voice.persistence.users import DEFAULT_USER_ID, FACTORY_PROBE_USER_ID, UserConfigProvider, UserSettings
+from shuxin.voice.persistence.users import (
+    DEFAULT_USER_ID,
+    FACTORY_PROBE_USER_ID,
+    UserConfigProvider,
+    UserSettings,
+    user_id_for_display_name,
+)
 
 
 class VoiceLocalRepository:
@@ -30,6 +36,7 @@ class VoiceLocalRepository:
         self.shuxin_home = shuxin_home
         self.out_dir = out_dir
         self.wechat_sessions: dict[str, dict[str, str]] = {}
+        self.name_robot_bindings: dict[str, dict[str, str]] = {}
         self.mall = MallLocalRepository(parent=self)
 
     async def create_wechat_session(self, *, wx_code: str) -> dict[str, Any]:
@@ -168,6 +175,24 @@ class VoiceLocalRepository:
             token="",
             llm_config={},
             agent_id="",
+        )
+
+    async def identify_device_owner(self, *, user_name: str, robot_code: str) -> UserSettings:
+        from shuxin.voice.persistence.base_repo import _validate_device_code
+
+        user_id = user_id_for_display_name(user_name)
+        device_id = _validate_device_code(robot_code)
+        self.name_robot_bindings[device_id] = {
+            "user_name": str(user_name).strip(),
+            "user_id": user_id,
+        }
+        settings = self.user_provider.get(user_id)
+        return UserSettings(
+            user_id=user_id,
+            token="",
+            audio_quota_mb=settings.audio_quota_mb,
+            llm_config=dict(settings.llm_config or {}),
+            agent_id=settings.agent_id,
         )
 
     async def get_device(self, device_id: str | None) -> DeviceConfig:
@@ -369,7 +394,6 @@ class VoiceLocalRepository:
 
     async def list_voice_demo_targets(self) -> dict[str, Any]:
         default = self.device_provider.get(None)
-        shared = os.environ.get("SHUXIN_DEVICE_SHARED_SECRET", "dev-device-secret")
         settings = self.user_provider.get(DEFAULT_USER_ID)
         llm = settings.llm_config or {}
         return {
@@ -378,7 +402,6 @@ class VoiceLocalRepository:
                     "user_id": settings.user_id,
                     "device_id": default.device_id,
                     "device_code": default.device_id,
-                    "device_secret": shared,
                     "online": False,
                     "secret_hint": "global_shared_secret",
                     "llm_model": str(llm.get("model") or ""),

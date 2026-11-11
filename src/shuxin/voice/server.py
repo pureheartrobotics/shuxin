@@ -73,7 +73,7 @@ SAMPLE_WIDTH = 2
 CHANNELS = 1
 SENTENCE_DELIMITERS = "。！？!?；;\n"
 FIRST_SEGMENT_WEAK_DELIMITERS = "，,、"
-MAX_STREAMING_TTS_CHARS = 48
+MAX_STREAMING_TTS_CHARS = 72
 
 DEFAULT_AUDIO_RETENTION_HOURS = 12
 DEFAULT_AUDIO_RETENTION_INTERVAL_SEC = 1800
@@ -192,10 +192,10 @@ def create_app(
     default_device_id: str = "demo-device-001",
     out_dir: Path = Path("outputs/web"),
 ):
-    """创建 FastAPI 应用，并注册语音测试台相关 HTTP/WebSocket 入口。
+    """创建 FastAPI 应用，并注册管理后台与语音 WebSocket 入口。
 
     主要职责:
-    1. 暴露浏览器测试页和健康检查接口。
+    1. 暴露管理后台和健康检查接口。
     2. 提供用户语音状态/摘要查询接口。
     3. 通过 `/ws/voice` 承接准实时语音对话。
     """
@@ -306,13 +306,6 @@ def create_app(
         if provided != admin_token:
             raise PermissionError("invalid admin token")
 
-    @app.get("/voice-demo")
-    async def voice_demo():
-        static_file = Path(__file__).resolve().parent / "static" / "demo.html"
-        content = static_file.read_text(encoding="utf-8")
-        content = content.replace("{{DEFAULT_DEVICE_ID}}", default_device_id)
-        return HTMLResponse(content)
-
     @app.get("/admin")
     async def admin_page(request: Request):
         authenticated = False
@@ -387,8 +380,13 @@ def main() -> None:
         raise RuntimeError(
             "uvicorn is not installed. Add voice web dependencies and rebuild Docker."
         ) from exc
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
     app = create_app(args.device_config, args.users_config, args.default_device_id, args.out_dir)
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

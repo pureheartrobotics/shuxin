@@ -184,7 +184,7 @@ class CompanionConfig:
         data_dir: 数据持久化目录，为空则使用默认路径。
     """
     enabled: bool = True
-    self_esteem_enabled: bool = True
+    self_esteem_enabled: bool = False
     emotion_enabled: bool = True
     guardian_enabled: bool = True
     user_model_enabled: bool = True
@@ -342,6 +342,7 @@ class Config:
             "SHUXIN_MAP_TOOLS_ENABLED": ("map", "enabled"),
             "SHUXIN_MAP_GATE_ENABLED": ("map", "gate_enabled"),
             "SHUXIN_MAP_DEFAULT_REGION": ("map", "default_region"),
+            "SHUXIN_SELF_ESTEEM": ("companion", "self_esteem_enabled"),
         }
         for env_name, (attr, sub_attr) in env_map.items():
             val = os.environ.get(env_name)

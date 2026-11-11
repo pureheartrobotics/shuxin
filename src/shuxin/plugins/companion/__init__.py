@@ -3,11 +3,11 @@
 注册到初心框架的插件系统，通过 hooks 和命令与核心交互。
 
 注册的 Hooks：
-- pre_llm_call: 注入情感、用户画像和自尊状态
-- transform_output: 沉默模式下拦截 LLM 输出
+- pre_llm_call: 注入情感、用户画像（自尊默认关闭）
+- transform_output: 可选拦截 LLM 输出
 - on_session_start: 会话开始事件
 - on_session_end: 会话结束事件
-- on_user_message: 处理用户消息（自尊、情感、守护）
+- on_user_message: 处理用户消息（情感、守护、画像）
 - on_ai_message: AI 消息事件（预留）
 
 注册的命令：
@@ -55,14 +55,24 @@ class CompanionPlugin:
         interceptor: 响应拦截器实例。
     """
 
-    def __init__(self, data_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        data_dir: Optional[str] = None,
+        *,
+        self_esteem_enabled: Optional[bool] = None,
+    ) -> None:
         """初始化陪伴插件及其所有子系统。"""
         self.data_dir = data_dir
+        if self_esteem_enabled is None:
+            self.self_esteem_enabled = False
+        else:
+            self.self_esteem_enabled = bool(self_esteem_enabled)
         self.self_esteem = SelfEsteemSystem(data_dir=data_dir)
         self.emotion = EmotionEngine(data_dir=data_dir)
         self.guardian = GuardianSystem(data_dir=data_dir)
         self.user_model = UserModel(data_dir=data_dir)
         self.interceptor = ResponseInterceptor()
+        self._last_guardian: Optional[Dict[str, Any]] = None
         self._initialized = False
 
     def initialize(self) -> None:
@@ -80,10 +90,7 @@ class CompanionPlugin:
     def on_pre_llm_call(self, **kwargs: Any) -> Optional[str]:
         """pre_llm_call hook — 注入情感和用户上下文到系统提示。
 
-        在 LLM 调用前注入 Slot #4 内容，包含：
-        - 自尊状态
-        - 情感状态
-        - 用户画像上下文
+        在 LLM 调用前注入 Slot #4 内容，包含情感、用户画像；自尊默认不注入。
 
         Args:
             **kwargs: 插件系统传入的上下文参数。
@@ -109,9 +116,10 @@ class CompanionPlugin:
         # 注入用户画像
         profile_context = self.user_model.get_profile_context()
 
-        # 注入自尊状态
-        esteem_status = self.self_esteem.get_status_text()
         growth_context = self._get_growth_context()
+        esteem_block = ""
+        if self.self_esteem_enabled:
+            esteem_block = self.self_esteem.get_status_text() + "\n\n"
 
         location_context = ""
         if agent is not None and hasattr(agent, "context") and agent.context is not None:
@@ -165,18 +173,26 @@ class CompanionPlugin:
         micro_anchor_block = (
             f"## 风格微型锚点\n\n{micro_anchor}\n\n" if micro_anchor.strip() else ""
         )
+        guardian_block = ""
+        if self._last_guardian:
+            hint = str(self._last_guardian.get("response") or "").strip()
+            name = str(self._last_guardian.get("name") or "").strip()
+            if hint or name:
+                guardian_block = f"## 守护\n\n{name}\n{hint}\n\n"
         return (
             location_block
             + low_confidence_hint
             + map_tools_hint
             + voice_style_hint
             + micro_anchor_block
+            + guardian_block
             + f"## 初心当前状态\n\n"
-            + f"{esteem_status}\n\n"
+            + esteem_block
             + f"{emotion_context}\n\n"
             + f"{profile_context}\n\n"
             + f"{growth_context}"
         )
+
 
     def _get_growth_context(self) -> str:
         """读取用户级人格成长和共享记忆摘要，注入给 LLM。
@@ -249,7 +265,7 @@ class CompanionPlugin:
         if content and _META_SPEECH_RE.search(content):
             logger.warning("[MBTI-GUARD] meta-speech detected: %.80s", content)
 
-        if self.self_esteem.state.is_silent:
+        if self.self_esteem_enabled and self.self_esteem.state.is_silent:
             metadata = getattr(getattr(agent, "context", None), "metadata", {}) or {}
             if metadata.get("channel") == "voice":
                 return "我现在有点受伤，想先缓一下。你可以轻轻跟我说声抱歉，或者我们等一会儿再聊。"
@@ -277,6 +293,8 @@ class CompanionPlugin:
         """
         if not self._initialized:
             self.initialize()
+        if self.self_esteem_enabled:
+            self.self_esteem.clear_silence_for_new_session()
         logger.info("陪伴系统会话开始")
 
     def on_session_end(self, **kwargs: Any) -> None:
@@ -306,23 +324,19 @@ class CompanionPlugin:
         message = kwargs.get("message", "")
         agent = kwargs.get("agent")
 
-        # 1. 处理自尊变化
-        esteem_result = self.self_esteem.process_interaction(message)
+        esteem_delta = 0
+        is_silent = False
+        if self.self_esteem_enabled:
+            esteem_result = self.self_esteem.process_interaction(message)
+            esteem_delta = esteem_result["delta"]
+            is_silent = esteem_result["is_silent"]
+            if self.self_esteem.state.is_silent:
+                if self.self_esteem.try_early_recovery(message):
+                    self.emotion.update_from_interaction(message, 20, False)
+                    self.user_model.record_interaction(message)
+                    return
 
-        # 2. 尝试提前恢复（如果用户道歉）
-        if self.self_esteem.state.is_silent:
-            if self.self_esteem.try_early_recovery(message):
-                # 恢复后更新情感
-                self.emotion.update_from_interaction(message, 20, False)
-                self.user_model.record_interaction(message)
-                return
-
-        # 3. 更新情感
-        self.emotion.update_from_interaction(
-            message,
-            esteem_result["delta"],
-            esteem_result["is_silent"],
-        )
+        self.emotion.update_from_interaction(message, esteem_delta, is_silent)
 
         # 4. 更新用户模型
         self.user_model.record_interaction(message)
@@ -337,8 +351,8 @@ class CompanionPlugin:
             except Exception:
                 pass
 
-        # 5. 守护系统评估
         guardian_result = self.guardian.evaluate(message)
+        self._last_guardian = guardian_result
         if guardian_result and agent:
             logger.info("守护触发: %s", guardian_result["name"])
 
@@ -362,9 +376,12 @@ class CompanionPlugin:
         Returns:
             str: 格式化的完整状态文本。
         """
+        esteem = ""
+        if self.self_esteem_enabled:
+            esteem = f"### 自尊系统\n{self.self_esteem.get_status_text()}\n"
         return (
             f"## 初心状态总览\n\n"
-            f"### 自尊系统\n{self.self_esteem.get_status_text()}\n"
+            f"{esteem}"
             f"### 情感状态\n{self.emotion.get_status_text()}\n"
             f"### 守护系统\n{self.guardian.get_status_text()}\n"
             f"### 用户关系\n{self.user_model.get_status_text()}"
@@ -380,6 +397,8 @@ class CompanionPlugin:
         Returns:
             str: 操作结果消息。
         """
+        if not self.self_esteem_enabled:
+            return "自尊系统当前未启用。"
         self.self_esteem.reset()
         return "自尊系统已重置。"
 
@@ -455,10 +474,15 @@ def get_plugin(data_dir: Optional[str] = None) -> CompanionPlugin:
 def get_plugin_for_agent(agent: Any = None) -> CompanionPlugin:
     """从 Agent 配置中解析 companion.data_dir 并返回对应插件实例。"""
     data_dir = None
+    esteem_enabled = False
     if agent is not None:
-        data_dir = getattr(getattr(agent, "config", None), "companion", None)
-        data_dir = getattr(data_dir, "data_dir", "") or None
-    return get_plugin(data_dir=data_dir)
+        companion_cfg = getattr(getattr(agent, "config", None), "companion", None)
+        data_dir = getattr(companion_cfg, "data_dir", "") or None
+        if companion_cfg is not None:
+            esteem_enabled = bool(getattr(companion_cfg, "self_esteem_enabled", False))
+    plugin = get_plugin(data_dir=data_dir)
+    plugin.self_esteem_enabled = esteem_enabled
+    return plugin
 
 
 def register(ctx: Any) -> None:

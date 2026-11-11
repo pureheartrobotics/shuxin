@@ -1,0 +1,12 @@
+# Hermes 运行时额外依赖。不要把 hermes-agent 写进 requirements-voice-app.txt：
+# 它的 METADATA 会钉死 websockets==15 / cryptography==46，和语音栈冲突。
+# Docker 里用 --no-deps 装 hermes-agent 轮子，再用本文件补齐独有包。
+fire>=0.7.1
+tenacity>=8.2.0
+ruamel.yaml>=0.18.0
+croniter>=2.0.0
+Markdown>=3.5
+PyJWT[crypto]>=2.8.0
+psutil>=6.0.0
+pathspec>=0.12.0
+python-multipart>=0.0.9

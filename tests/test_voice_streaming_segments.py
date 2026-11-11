@@ -19,11 +19,19 @@ def test_pop_speakable_segments_waits_for_sentence_boundary() -> None:
     assert rest == "你好，我是"
 
 
-def test_pop_speakable_segments_splits_on_weak_punctuation_for_first_segment() -> None:
+def test_pop_speakable_segments_does_not_cut_short_comma_clause() -> None:
     segments, rest = _pop_speakable_segments("你好，我是初心", allow_weak_punctuation=True)
 
-    assert segments == ["你好，"]
-    assert rest == "我是初心"
+    assert segments == []
+    assert rest == "你好，我是初心"
+
+
+def test_pop_speakable_segments_splits_long_weak_clause() -> None:
+    text = ("啊" * 40) + "，后面还有"
+    segments, rest = _pop_speakable_segments(text, allow_weak_punctuation=True)
+
+    assert segments == [("啊" * 40) + "，"]
+    assert rest == "后面还有"
 
 
 def test_pop_speakable_segments_splits_finished_sentences() -> None:
@@ -31,6 +39,17 @@ def test_pop_speakable_segments_splits_finished_sentences() -> None:
 
     assert segments == ["你好。"]
     assert rest == "我在这里"
+
+
+def test_pop_speakable_segments_holds_until_longer_clause() -> None:
+    text = "今天心情很好所以想多说两句还没有句号"
+    segments, rest = _pop_speakable_segments(text)
+    assert segments == []
+    assert rest == text
+    long_text = "啊" * 90
+    segments, rest = _pop_speakable_segments(long_text)
+    assert segments == ["啊" * 72]
+    assert rest == "啊" * 18
 
 
 def test_pop_speakable_segments_flushes_remaining_text_when_forced() -> None:

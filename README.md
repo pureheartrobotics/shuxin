@@ -38,6 +38,7 @@
 
 | 读者 | 文档入口 |
 |------|----------|
+| **服务器 / 拆仓** | [**服务器汇总（地址·边界·文档索引）**](docs/SHUXIN_SERVER.md) |
 | 硬件/固件 | [硬件对接总手册](docs/VOICE_HARDWARE_HANDBOOK.md) |
 | 联调/QA | [语音 Demo 最小可测试单元](docs/VOICE_DEMO_MIN_TEST.md) |
 | 工厂 QA | [出厂工厂验收交接](docs/FACTORY_ACCEPTANCE_HANDOFF.md) |

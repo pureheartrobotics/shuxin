@@ -110,12 +110,7 @@ async def unbind_device(request: Request, repo=Depends(get_repo)):
                 device_code=str(payload.get("device_code") or ""),
             )
         )
-    return JSONResponse(
-        await repo.unbind_device(
-            user_id=str(payload.get("user_id") or ""),
-            device_code=str(payload.get("device_code") or ""),
-        )
-    )
+    raise PermissionError("authentication required")
 
 
 @router.post("/api/devices/my")

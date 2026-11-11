@@ -34,6 +34,8 @@ def test_dockerfile_installs_dependency_modules_in_cache_friendly_order() -> Non
     assert "--mount=type=cache,target=/root/.cache/pip" in dockerfile
     assert "requirements-voice-heavy.txt" in dockerfile
     assert "requirements-voice-app.txt" in dockerfile
+    assert "requirements-hermes.txt" in dockerfile
+    assert "hermes-agent" in dockerfile
 
     heavy_marker = "requirements-voice-heavy.txt"
     app_marker = "requirements-voice-app.txt"
