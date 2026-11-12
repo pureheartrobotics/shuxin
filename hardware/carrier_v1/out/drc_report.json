@@ -1,7 +1,7 @@
 {
     "$schema": "https://schemas.kicad.org/drc.v1.json",
     "coordinate_units": "mm",
-    "date": "2026-11-12T10:27:09",
+    "date": "2026-11-12T11:54:40",
     "ignored_checks": [
         {
             "description": "Footprint has no courtyard defined",
@@ -26,7 +26,8 @@
     ],
     "included_severities": [
         "error",
-        "warning"
+        "warning",
+        "exclusion"
     ],
     "kicad_version": "10.0.8",
     "schematic_parity": [],
@@ -41,7 +42,7 @@
                         "x": 1.5,
                         "y": 1.5
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
                 },
                 {
                     "description": "填充区[GND]在 B.Cu 上, 优先级 0",
@@ -49,7 +50,7 @@
                         "x": 1.5,
                         "y": 1.5
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
                 }
             ],
             "severity": "error",
@@ -64,7 +65,7 @@
                         "x": 1.5,
                         "y": 1.5
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
                 },
                 {
                     "description": "填充区[GND]在 B.Cu 上, 优先级 0",
@@ -72,7 +73,7 @@
                         "x": 1.5,
                         "y": 1.5
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
                 }
             ],
             "severity": "error",
@@ -82,43 +83,20 @@
             "description": "Missing connection between items",
             "items": [
                 {
-                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "description": "填充区[VM]在 F.Cu 上, 优先级 2",
                     "pos": {
-                        "x": 1.5,
-                        "y": 1.5
+                        "x": 4.0,
+                        "y": 36.0
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "9fb0792d-3dce-483d-9ee6-b52e89f9fdb5"
                 },
                 {
-                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "description": "填充区[VM]在 F.Cu 上, 优先级 2",
                     "pos": {
-                        "x": 1.5,
-                        "y": 1.5
+                        "x": 4.0,
+                        "y": 36.0
                     },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
-                }
-            ],
-            "severity": "error",
-            "type": "unconnected_items"
-        },
-        {
-            "description": "Missing connection between items",
-            "items": [
-                {
-                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
-                    "pos": {
-                        "x": 1.5,
-                        "y": 1.5
-                    },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
-                },
-                {
-                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
-                    "pos": {
-                        "x": 1.5,
-                        "y": 1.5
-                    },
-                    "uuid": "33f47676-750a-46f4-bd8c-5cbb82b692a7"
+                    "uuid": "9fb0792d-3dce-483d-9ee6-b52e89f9fdb5"
                 }
             ],
             "severity": "error",
@@ -127,6 +105,261 @@
     ],
     "violations": [
         {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[VM]在 F.Cu 上, 优先级 2",
+                    "pos": {
+                        "x": 4.0,
+                        "y": 36.0
+                    },
+                    "uuid": "9fb0792d-3dce-483d-9ee6-b52e89f9fdb5"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
+            "description": "Isolated copper fill",
+            "items": [
+                {
+                    "description": "填充区[GND]在 B.Cu 上, 优先级 0",
+                    "pos": {
+                        "x": 1.5,
+                        "y": 1.5
+                    },
+                    "uuid": "581bac91-9c85-4b3d-9fc4-619af0d67a3d"
+                }
+            ],
+            "severity": "warning",
+            "type": "isolated_copper"
+        },
+        {
             "description": "Silkscreen clipped by board edge",
             "items": [
                 {
@@ -135,7 +368,7 @@
                         "x": 0.0,
                         "y": 0.0
                     },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
                 },
                 {
                     "description": "F.Silkscreen 上的 PCB 文本 'JP1: +5V_LOGIC->S3_5V (pull when USB-flash). BAT only on XT60 JBAT.'",
@@ -143,7 +376,7 @@
                         "x": 6.0,
                         "y": 117.0
                     },
-                    "uuid": "1914af0e-e960-4d6f-b74f-7522bba51914"
+                    "uuid": "6f783f55-54f4-435e-9e17-04c655c8b0b3"
                 }
             ],
             "severity": "warning",
@@ -158,7 +391,7 @@
                         "x": 0.0,
                         "y": 0.0
                     },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
                 },
                 {
                     "description": "F.Silkscreen 上的 PCB 文本 'shuxin CARRIER V1.5  170x120mm  JST XH 2.50mm  Rev F'",
@@ -166,7 +399,7 @@
                         "x": 6.0,
                         "y": 114.0
                     },
-                    "uuid": "be68e395-fe16-4af2-9c7d-e6b326ed04ac"
+                    "uuid": "07a7c770-e4c1-4208-8bf4-e3f345882c5f"
                 }
             ],
             "severity": "warning",
@@ -181,7 +414,7 @@
                         "x": 0.0,
                         "y": 0.0
                     },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
                 },
                 {
                     "description": "H1 的参考字段",
@@ -189,7 +422,7 @@
                         "x": 4.0,
                         "y": -0.15
                     },
-                    "uuid": "3eda3752-55c0-4d92-a783-53e12f27835e"
+                    "uuid": "ac5f6fb7-6d9f-42a1-9b89-57d24e2e242a"
                 }
             ],
             "severity": "warning",
@@ -204,30 +437,7 @@
                         "x": 0.0,
                         "y": 0.0
                     },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
-                },
-                {
-                    "description": "H2 的参考字段",
-                    "pos": {
-                        "x": 166.0,
-                        "y": -0.15
-                    },
-                    "uuid": "99304581-4d61-4545-89be-b29a90505cfb"
-                }
-            ],
-            "severity": "warning",
-            "type": "silk_edge_clearance"
-        },
-        {
-            "description": "Silkscreen clipped by board edge",
-            "items": [
-                {
-                    "description": "Edge.Cuts 上的 矩形",
-                    "pos": {
-                        "x": 0.0,
-                        "y": 0.0
-                    },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
                 },
                 {
                     "description": "JBAT 的 线段, 位于 F.Silkscreen",
@@ -235,7 +445,7 @@
                         "x": 9.74,
                         "y": -4.46
                     },
-                    "uuid": "7620470d-8fcc-47b1-b33b-e8be78f0ad38"
+                    "uuid": "bebb1bf2-de3b-4001-99f2-08e6da1b442c"
                 }
             ],
             "severity": "warning",
@@ -250,7 +460,7 @@
                         "x": 0.0,
                         "y": 0.0
                     },
-                    "uuid": "e70a8b3c-c74a-4162-86a0-b8e8a4e0444f"
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
                 },
                 {
                     "description": "JBAT 的 线段, 位于 F.Silkscreen",
@@ -258,7 +468,30 @@
                         "x": 25.46,
                         "y": -4.46
                     },
-                    "uuid": "c2dc2b63-5587-4853-a713-53ba01f3636a"
+                    "uuid": "0efa3e8c-81d8-4ba8-8f8f-40fa8ba7b5ba"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_edge_clearance"
+        },
+        {
+            "description": "Silkscreen clipped by board edge",
+            "items": [
+                {
+                    "description": "Edge.Cuts 上的 矩形",
+                    "pos": {
+                        "x": 0.0,
+                        "y": 0.0
+                    },
+                    "uuid": "d82e73a3-4be5-4f3c-863d-c8a202ac4171"
+                },
+                {
+                    "description": "H2 的参考字段",
+                    "pos": {
+                        "x": 166.0,
+                        "y": -0.15
+                    },
+                    "uuid": "575584ef-f2ae-484c-94a9-308801851793"
                 }
             ],
             "severity": "warning",
@@ -273,7 +506,7 @@
                         "x": 24.0,
                         "y": 7.0
                     },
-                    "uuid": "8c8821ee-40e1-45d5-8e72-c556f1343f5b"
+                    "uuid": "f178079e-6117-4e51-8594-5ba688575d69"
                 }
             ],
             "severity": "warning",
@@ -288,7 +521,7 @@
                         "x": 52.0,
                         "y": 68.0
                     },
-                    "uuid": "0d731f43-1aa4-497f-bb57-576bebd3ac1d"
+                    "uuid": "fd9dd080-1a82-42dd-944d-22a30ac6e3c6"
                 }
             ],
             "severity": "warning",
@@ -303,7 +536,7 @@
                         "x": 96.0,
                         "y": 68.0
                     },
-                    "uuid": "a5a8a59f-4b03-4f1b-85ba-0dbfe1eb70c8"
+                    "uuid": "246ba2c7-b499-498a-afe7-1e737076e743"
                 }
             ],
             "severity": "warning",
@@ -313,20 +546,20 @@
             "description": "Silkscreen clearance",
             "items": [
                 {
-                    "description": "F.Silkscreen 上的 PCB 文本 'A<-BAT  K->FUSE'",
-                    "pos": {
-                        "x": 24.0,
-                        "y": 7.0
-                    },
-                    "uuid": "8c8821ee-40e1-45d5-8e72-c556f1343f5b"
-                },
-                {
                     "description": "JBAT 的 线段, 位于 F.Silkscreen",
                     "pos": {
                         "x": 25.46,
                         "y": -4.46
                     },
-                    "uuid": "c2dc2b63-5587-4853-a713-53ba01f3636a"
+                    "uuid": "0efa3e8c-81d8-4ba8-8f8f-40fa8ba7b5ba"
+                },
+                {
+                    "description": "F.Silkscreen 上的 PCB 文本 'A<-BAT  K->FUSE'",
+                    "pos": {
+                        "x": 24.0,
+                        "y": 7.0
+                    },
+                    "uuid": "f178079e-6117-4e51-8594-5ba688575d69"
                 }
             ],
             "severity": "warning",
@@ -335,90 +568,21 @@
         {
             "description": "Silkscreen clearance",
             "items": [
-                {
-                    "description": "F.Silkscreen 上的 PCB 文本 'ENC-D'",
-                    "pos": {
-                        "x": 84.0,
-                        "y": 84.0
-                    },
-                    "uuid": "d330cad1-273d-49f2-854d-372604a6bb65"
-                },
-                {
-                    "description": "J_ENC_D 的参考字段",
-                    "pos": {
-                        "x": 87.75,
-                        "y": 84.45
-                    },
-                    "uuid": "fb629289-f674-47e6-ab40-9f8d7b160608"
-                }
-            ],
-            "severity": "warning",
-            "type": "silk_overlap"
-        },
-        {
-            "description": "Silkscreen clearance",
-            "items": [
-                {
-                    "description": "F.Silkscreen 上的 PCB 文本 'SERVO-TILT'",
-                    "pos": {
-                        "x": 145.0,
-                        "y": 24.0
-                    },
-                    "uuid": "5c0b6f5b-72a9-43c5-8028-818fd077f104"
-                },
-                {
-                    "description": "J_SERVO_TILT 的参考字段",
-                    "pos": {
-                        "x": 147.5,
-                        "y": 24.45
-                    },
-                    "uuid": "daeb125b-9b3a-45d2-a652-fa2b2b086233"
-                }
-            ],
-            "severity": "warning",
-            "type": "silk_overlap"
-        },
-        {
-            "description": "Silkscreen clearance",
-            "items": [
-                {
-                    "description": "F.Silkscreen 上的 PCB 文本 'SERVO-PAN'",
-                    "pos": {
-                        "x": 145.0,
-                        "y": 10.0
-                    },
-                    "uuid": "15412bd0-0f9a-4ada-8c74-bc86e4e20e63"
-                },
-                {
-                    "description": "J_SERVO_PAN 的参考字段",
-                    "pos": {
-                        "x": 147.5,
-                        "y": 10.45
-                    },
-                    "uuid": "6b70f0bc-7601-4b2c-bda8-f9e4b7fe8ef5"
-                }
-            ],
-            "severity": "warning",
-            "type": "silk_overlap"
-        },
-        {
-            "description": "Silkscreen clearance",
-            "items": [
-                {
-                    "description": "F.Silkscreen 上的 PCB 文本 'ENC-A'",
-                    "pos": {
-                        "x": 36.0,
-                        "y": 84.0
-                    },
-                    "uuid": "36de5e9a-b12e-4a81-8837-11c23d3f278b"
-                },
                 {
                     "description": "J_ENC_A 的参考字段",
                     "pos": {
                         "x": 39.75,
                         "y": 84.45
                     },
-                    "uuid": "b181ed98-8a4d-4630-b17c-c570f2e9529d"
+                    "uuid": "95be64bd-9c6b-4b24-bb3f-a2ab8a2ad6dc"
+                },
+                {
+                    "description": "F.Silkscreen 上的 PCB 文本 'ENC-A'",
+                    "pos": {
+                        "x": 36.0,
+                        "y": 84.0
+                    },
+                    "uuid": "dd6dafc1-7328-4b96-816f-afcb0cce7c3b"
                 }
             ],
             "severity": "warning",
@@ -433,7 +597,7 @@
                         "x": 52.0,
                         "y": 84.0
                     },
-                    "uuid": "4b45924e-a69b-4c73-80c2-7dff608eb93b"
+                    "uuid": "0344cdd1-13bd-4d5d-9034-8d3daa68a8f7"
                 },
                 {
                     "description": "J_ENC_B 的参考字段",
@@ -441,7 +605,7 @@
                         "x": 55.75,
                         "y": 84.45
                     },
-                    "uuid": "81fee930-41d8-49bd-bcf2-233004ebfa0c"
+                    "uuid": "fe840eab-4a76-4369-97ef-c5676d8c39ad"
                 }
             ],
             "severity": "warning",
@@ -456,7 +620,7 @@
                         "x": 68.0,
                         "y": 84.0
                     },
-                    "uuid": "016d5eab-be01-488d-b600-acef02261be2"
+                    "uuid": "0afca332-a6f0-4acc-8eea-f666eca6a4c0"
                 },
                 {
                     "description": "J_ENC_C 的参考字段",
@@ -464,7 +628,76 @@
                         "x": 71.75,
                         "y": 84.45
                     },
-                    "uuid": "24e17f18-69aa-41af-a539-584f1dd67300"
+                    "uuid": "ffe45844-bb35-4731-ad70-6eb0acc85d98"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "items": [
+                {
+                    "description": "F.Silkscreen 上的 PCB 文本 'SERVO-TILT'",
+                    "pos": {
+                        "x": 145.0,
+                        "y": 24.0
+                    },
+                    "uuid": "11b8edd3-0d99-4241-ac0c-4597b415e569"
+                },
+                {
+                    "description": "J_SERVO_TILT 的参考字段",
+                    "pos": {
+                        "x": 147.5,
+                        "y": 24.45
+                    },
+                    "uuid": "9fdbd939-1b20-4b8e-af10-c0ba4f64a171"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "items": [
+                {
+                    "description": "F.Silkscreen 上的 PCB 文本 'ENC-D'",
+                    "pos": {
+                        "x": 84.0,
+                        "y": 84.0
+                    },
+                    "uuid": "7e380a2b-47e2-4b5b-9053-f56368b19445"
+                },
+                {
+                    "description": "J_ENC_D 的参考字段",
+                    "pos": {
+                        "x": 87.75,
+                        "y": 84.45
+                    },
+                    "uuid": "d25fe7d8-b58f-46b8-a3c5-2024647cd444"
+                }
+            ],
+            "severity": "warning",
+            "type": "silk_overlap"
+        },
+        {
+            "description": "Silkscreen clearance",
+            "items": [
+                {
+                    "description": "J_SERVO_PAN 的参考字段",
+                    "pos": {
+                        "x": 147.5,
+                        "y": 10.45
+                    },
+                    "uuid": "09871590-d59e-4669-a3b9-d5d6d1a29231"
+                },
+                {
+                    "description": "F.Silkscreen 上的 PCB 文本 'SERVO-PAN'",
+                    "pos": {
+                        "x": 145.0,
+                        "y": 10.0
+                    },
+                    "uuid": "3aa23dc2-47ee-4a18-8489-1d35443ec81b"
                 }
             ],
             "severity": "warning",
@@ -479,7 +712,7 @@
                         "x": 24.0,
                         "y": 7.0
                     },
-                    "uuid": "8c8821ee-40e1-45d5-8e72-c556f1343f5b"
+                    "uuid": "f178079e-6117-4e51-8594-5ba688575d69"
                 },
                 {
                     "description": "JBAT 的 PTH 焊盘 [<no net>]",
@@ -487,7 +720,7 @@
                         "x": 24.35,
                         "y": 6.0
                     },
-                    "uuid": "0677e48a-8bcb-4bab-8758-08255a7018e4"
+                    "uuid": "78d0ac8a-6367-451a-9986-22bcb3150cdb"
                 }
             ],
             "severity": "warning",
@@ -502,7 +735,7 @@
                         "x": 8.0,
                         "y": 6.0
                     },
-                    "uuid": "8863c9d8-acc1-422a-8d94-40284f37329b"
+                    "uuid": "ae6bacad-045d-4f79-b11a-3f535521c259"
                 },
                 {
                     "description": "JBAT 的 PTH 焊盘 [<no net>]",
@@ -510,7 +743,7 @@
                         "x": 10.85,
                         "y": 6.0
                     },
-                    "uuid": "d840a4fc-16c1-47de-8b4a-7d0de300c7e1"
+                    "uuid": "1f16311c-a70a-4eae-ab60-8fc85079dcf6"
                 }
             ],
             "severity": "warning",
@@ -525,7 +758,7 @@
                         "x": 6.0,
                         "y": 117.0
                     },
-                    "uuid": "1914af0e-e960-4d6f-b74f-7522bba51914"
+                    "uuid": "6f783f55-54f4-435e-9e17-04c655c8b0b3"
                 },
                 {
                     "description": "H3 的 NPTH 焊盘",
@@ -533,7 +766,7 @@
                         "x": 4.0,
                         "y": 116.0
                     },
-                    "uuid": "06df181e-b904-4130-972a-de523def9e60"
+                    "uuid": "af4238b5-d3cb-4bea-8076-e3528f1305f4"
                 }
             ],
             "severity": "warning",
@@ -548,7 +781,7 @@
                         "x": 6.0,
                         "y": 114.0
                     },
-                    "uuid": "be68e395-fe16-4af2-9c7d-e6b326ed04ac"
+                    "uuid": "07a7c770-e4c1-4208-8bf4-e3f345882c5f"
                 },
                 {
                     "description": "H3 的 NPTH 焊盘",
@@ -556,7 +789,7 @@
                         "x": 4.0,
                         "y": 116.0
                     },
-                    "uuid": "06df181e-b904-4130-972a-de523def9e60"
+                    "uuid": "af4238b5-d3cb-4bea-8076-e3528f1305f4"
                 }
             ],
             "severity": "warning",

@@ -3,8 +3,8 @@ JBAT,1,XT60PW-M,AMASS_XT60PW-M_1x02_P7.20mm_Horizontal,Amass XT60PW-M,电池入�
 D1,1,SR20100 20A/100V Schottky,D_DO-201AD_P12.70mm_Horizontal,SR20100 / MBR20100,串联反接保护；Pad1=K Pad2=A；≥15A
 F1,1,12A fuse holder,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,5x20 holder wires,丝印 FUSE；勿接电池
 SW1,1,SPST 15A,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,panel toggle wires,丝印 SW
-JVM,1,KF128-5.08 2P,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,KF128-2P 5.08,丝印 D24A-VIN
-JK11,1,KF128-5.08 2P,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,KF128-2P 5.08,丝印 K11C-12V
+JVM,1,MKDS 1,5/2-G-5,0,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,Phoenix MKDS 1,5/2-G-5,0,丝印 D24A-VIN；非 KF128-5.08
+JK11,1,MKDS 1,5/2-G-5,0,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,Phoenix MKDS 1,5/2-G-5,0,丝印 K11C-12V；非 KF128-5.08
 UBUCK,1,Buck >=5A @8.4V,PinHeader_1x04_P2.54mm_Vertical,XL4015 module,Servo rail
 C_IN,1,100uF/25V,CP_Radial_D8.0mm_P3.50mm,generic,VM bulk
 C_SERVO1,1,470uF/16V,CP_Radial_D8.0mm_P3.50mm,generic,Near servo

@@ -116,6 +116,27 @@ def zone(board, name, layer, pts, clearance=0.4):
     return z
 
 
+def track_keepout_b(board, pts):
+    """B.Cu keepout: block signal tracks (allow vias + zone fills) so GND pour stays whole."""
+    z = pcbnew.ZONE(board)
+    z.SetIsRuleArea(True)
+    z.SetDoNotAllowTracks(True)
+    z.SetDoNotAllowVias(False)
+    z.SetDoNotAllowPads(False)
+    z.SetDoNotAllowFootprints(False)
+    z.SetDoNotAllowZoneFills(False)
+    ls = pcbnew.LSET()
+    ls.AddLayer(B_Cu)
+    z.SetLayerSet(ls)
+    poly = z.Outline()
+    poly.RemoveAllContours()
+    poly.NewOutline()
+    for x, y in pts:
+        poly.Append(FromMM(x), FromMM(y))
+    board.Add(z)
+    return z
+
+
 def track(board, x1, y1, x2, y2, name, w, layer=F_Cu):
     t = pcbnew.PCB_TRACK(board)
     t.SetStart(mm(x1, y1))
@@ -461,6 +482,8 @@ def main() -> int:
     zone(board, "VBAT_F", F_Cu, [(28, 4), (48, 4), (48, 20), (28, 20)], 0.45)  # under D1 cathode
     zone(board, "VM", F_Cu, [(4, 36), (28, 36), (28, 104), (4, 104)], 0.45)
     zone(board, "V_SERVO", F_Cu, [(154, 8), (168, 8), (168, 42), (154, 42)], 0.45)
+    # V1.5 P0: forbid B.Cu signal tracks under ENC row (was +3V3 fencing GND pads)
+    track_keepout_b(board, [(38.0, 86.0), (95.0, 86.0), (95.0, 92.0), (38.0, 92.0)])
 
     track(board, 14, 12, 24, 12, "VBAT", 3.0)
     track(board, 40, 12, 44, 12, "VBAT_F", 2.5)
