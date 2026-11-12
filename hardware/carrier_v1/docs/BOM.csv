@@ -1,24 +1,27 @@
 Ref,Qty,Value,Footprint,Manufacturer/MPN,Notes
-JBAT,1,XT60PW-M,XT60 PCB male,Amass XT60,Battery in
-F1,1,12A fuse,5x20 holder or PTC,littelfuse/generic,Total input
-SW1,1,SPST 15A,Panel or PCB toggle,generic,Main power
-J_K11C_PWR,1,DC-005 5.5x2.1 or KF128-2,terminal,generic,To K11C 12V jack via cable
-J_VM,1,KF128-2P 5.08mm,terminal,generic,To D24A VIN
-U1,1,Buck 12V->8.4V >=5A,module pads 4P,MP1584/XL4015 module or fixed 8.4V,Servo rail
-C_IN,1,100uF/25V,electro 6.3x11,generic,VM bulk
-C_SERVO,2,470uF/16V,electro,generic,Near P6
-P1,1,2x15 2.54 female,Conn_02x15_Odd_Even,generic,K11C header mate / IDC
-P2,1,1x22 2.54 female,Conn_01x22,generic,S3 DevKit left
-P3,1,1x22 2.54 female,Conn_01x22,generic,S3 DevKit right
-P4,1,2x8 IDC box header,Conn_02x08_Odd_Even,generic,D24A control harness
-P5,1,2x8 or 4x XH-4P,Conn,generic,Encoder E1-E4
-P6A,1,XH2.54-3P,JST XH,generic,Servo pan
-P6B,1,XH2.54-3P,JST XH,generic,Servo tilt
-P7,1,XH2.54-4P,JST XH,generic,VL53L5CX
-JP1,1,2.54 jumper,PinHeader_1x02,generic,S3 5V from D24A
-R1-R13,13,100 ohm,1206,generic,Series on motor control GPIOs
-R14-R15,2,4.7k,0603,generic,I2C pullup; DNP if module has pullups
-TP1-TP12,12,Test point 1.0mm,Pad,generic,VM 5V 3V3 8V4 UART ENC
-LED1,1,Green 3mm or 0805 + 1k,indicator,generic,VM present
-D1,1,SS54 or SMA Schottky,SMA,generic,Optional reverse protect if not on D24A path
-PCB,1,Carrier V1 2-layer,FR4 1.6mm HASL,JLCPCB/PCBWay,See fab notes
+JBAT,1,XT60PW-M,XT60 PCB,Amass,Battery in
+F1,1,12A fuse,5x20 or PTC,generic,Total input
+SW1,1,SPST 15A,toggle/panel,generic,Main power
+JVM,1,KF128-2P 5.08,terminal,generic,To D24A VIN
+JK11,1,KF128-2P 5.08,terminal,generic,To K11C 12V
+UBUCK,1,Buck>=5A 8.4V,module 4P,XL4015/MP1584 class,Servo rail
+C_IN,1,100uF/25V,electro,generic,VM bulk
+C_SERVO,2,470uF/16V,electro,generic,Near servo XH
+P1,1,2x15 2.54 female,PinHeader_2x15,generic,K11C mate (not Dupont jumper)
+P2,1,1x22 2.54 female,PinHeader_1x22,generic,S3 DevKit left
+P3,1,1x22 2.54 female,PinHeader_1x22,generic,S3 DevKit right
+J_UART,1,XH2.54-3P male,XH2.54_1x03,市售 XH2.54-3P 直针,K11C UART harness
+J_CTRL_AB,1,XH2.54-8P male,XH2.54_1x08,市售 XH2.54-8P 直针,D24A J4 control
+J_CTRL_CD,1,XH2.54-8P male,XH2.54_1x08,市售 XH2.54-8P 直针,D24A J6 control
+J_ENC_A,1,XH2.54-4P male,XH2.54_1x04,市售 XH2.54-4P 直针,Encoder RR
+J_ENC_B,1,XH2.54-4P male,XH2.54_1x04,市售 XH2.54-4P 直针,Encoder RF
+J_ENC_C,1,XH2.54-4P male,XH2.54_1x04,市售 XH2.54-4P 直针,Encoder LF
+J_ENC_D,1,XH2.54-4P male,XH2.54_1x04,市售 XH2.54-4P 直针,Encoder LR
+J_SERVO_PAN,1,XH2.54-3P male,XH2.54_1x03,市售 XH2.54-3P 直针,Servo pan
+J_SERVO_TILT,1,XH2.54-3P male,XH2.54_1x03,市售 XH2.54-3P 直针,Servo tilt
+J_TOF,1,XH2.54-4P male,XH2.54_1x04,市售 XH2.54-4P 直针,VL53L5CX
+JP1,1,jumper 2.54,PinHeader_1x02,generic,S3 5V from D24A
+R1-R13,13,100R,1206,generic,Series on motor GPIOs (optional fit)
+R14-R15,2,4.7k,0603,generic,I2C pullup DNP ok
+Housing+crimp,1 lot,XH2.54 housings+terminals,wire harness,generic,Match each plug
+PCB,1,Carrier V1.3,FR4 1.6mm 2L HASL,JLCPCB,160x110mm

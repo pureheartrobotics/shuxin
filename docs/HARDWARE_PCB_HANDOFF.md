@@ -15,8 +15,8 @@
 量产优先：**载板固定互连**（零杜邦），MCU/驱动可先继续贴模组。
 
 > 载板工程：仓库 `hardware/carrier_v1/`（普通 FR4 互连板，**不是**芯片封装 substrate）。  
-> **V1.2** 已 FreeRouting 布通（incomplete=0，DRC 仅丝印警告）；Gerber 见 `hardware/carrier_v1/out/carrier_v1_gerbers.zip`。  
-> 真值：`hardware/carrier_v1/docs/CONNECTORS.md`、`LAYOUT.md`。
+> **V1.3**：原杜邦线束改为 **XH2.54**；审阅见 `hardware/carrier_v1/docs/REVIEW_XH254.md`。  
+> Gerber：`hardware/carrier_v1/out/carrier_v1_gerbers.zip`。真值：`docs/CONNECTORS.md`。
 
 ## 2. 电源
 

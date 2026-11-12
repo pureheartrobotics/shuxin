@@ -5,13 +5,13 @@
       "Application": "Pcbnew",
       "Version": "10.0.8"
     },
-    "CreationDate": "2026-11-12T08:28:22+08:00"
+    "CreationDate": "2026-11-12T08:40:48+08:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
       "Name": "carrier_v1",
       "GUID": "63617272-6965-4725-9f76-312e6b696361",
-      "Revision": "C"
+      "Revision": "D"
     },
     "Size": {
       "X": 160.1,

@@ -1,6 +1,8 @@
-# shuxin 互连载板 Carrier V1.2
+# shuxin 互连载板 Carrier V1.3（XH2.54）
 
-这是**普通 FR4 互连板**（把 K11C / ESP32-S3 DevKit / D24A / 电源 / 舵机 / ToF 用座子和排线固定），**不是**芯片封装用的 IC substrate。
+这是**普通 FR4 互连板**（K11C / S3 DevKit 排针座 + **线束全部 XH2.54**），**不是**芯片封装 substrate。
+
+审阅入口：`docs/REVIEW_XH254.md`。
 
 ## 设计目标
 
