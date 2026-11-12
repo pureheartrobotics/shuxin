@@ -117,3 +117,6 @@ esp32_c3.zip
 ESP32S3_D24A_SHUXIN.7z
 _hw_tmp/
 
+
+hardware/carrier_v1/~*
+hardware/carrier_v1/*.lck
