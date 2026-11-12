@@ -1,42 +1,39 @@
-# Carrier V1.1 布局与布线
+# Carrier V1.2 布局与布线
 
-板框：**140 × 100 mm**，双层，1.6 mm FR4。
+板框：**160 × 110 mm**，双层，1.6 mm FR4。
 
-## 分区（自上而下 / 自左而右）
+## 分区
 
-| 区域 | 坐标约 | 器件 |
-|------|--------|------|
-| 电源 | 左上–左中 | JBAT、F1、SW1、JVM、JK11、UBUCK、JP1 |
-| K11C | 中上 | P1 2×15 |
-| S3 DevKit | 右上 | P2 左排、P3 右排（USB 朝板外/上方） |
-| 舵机 / ToF | 最右 | P6、P7 |
-| D24A 线束 | 中下 | P4 控制、P5 编码 |
-| 安装孔 | 四角 | H1–H4 M3 |
+| 区域 | 内容 |
+|------|------|
+| 左 | 电源 JBAT / F1 / SW1 / JVM / JK11 / UBUCK / JP1 |
+| 中左 | P1 K11C 2×15 |
+| 中右 | P2/P3 ESP32-S3 DevKit 双排座（中间留走廊） |
+| 右 | P6 舵机、P7 ToF |
+| 下左 | P5 编码器 |
+| 下右 | P4 D24A 控制（与 P5 错开，避免竖线打架） |
 
-## 已完成
+## 布线状态（V1.2）
 
-- 全连接器**落位** + pad **已绑网名**（打开 PCB 可见完整 ratsnest）  
-- 板框 140×100、安装孔、丝印分区  
-- **GND** 背面整板铺铜 + 电源区正面 GND/VM 铺铜区  
+用 **FreeRouting** 自动布通：
 
-## 待在 KiCad 里完成（布线）
+- 连接 incomplete：**0**
+- DRC：仅剩丝印压铜警告（可接受）
+- 轨迹 / 过孔：见当前 `carrier_v1.kicad_pcb`
 
-脚本自动走线在排针阵列上会穿焊盘短路，已去掉。请在 PCB 编辑器按 ratsnest 布线（或 FreeRouting）：
+重跑：
 
-1. 电源：VBAT→F1→SW1→VM（粗线/铺铜）→ Buck → V_SERVO  
-2. UART + I2C  
-3. 编码 → 电机控制（控制可走 B.Cu）→ 舵机 PWM
+```bash
+python hardware/carrier_v1/gen/make_pcb_layout.py
+# KiCad python:
+"%LOCALAPPDATA%\Programs\KiCad\10.0\bin\python.exe" hardware/carrier_v1/gen/run_freerouting.py
+```
 
-## 在 KiCad 中打板前
+`tools/freerouting.jar` 需自行放入（体积大，未入库）。
 
-1. 打开 `carrier_v1.kicad_pro` → PCB  
-2. **Edit → Fill All Zones**  
-3. 完成信号布线 → **DRC**（排针 `solder_mask_bridge` 可按厂规则忽略或缩小焊盘）  
-4. 按采购件替换 XT60/XH/IDC 真实封装  
-5. 导出 Gerber：已有样例 `cam/` 与 `out/carrier_v1_gerbers.zip`（布完信号后务必重导）  
-6. 顶视图：`out/board_top.png`  
+## 打板前
 
-## 丝印注意
-
-- `JP1 off when USB-flash S3`  
-- `P1-25/27 NC`  
+1. KiCad 打开工程 → Fill Zones → 再确认 DRC  
+2. 按 BOM 换成真实 XT60 / XH / IDC 封装  
+3. 导出 Gerber：`out/carrier_v1_gerbers.zip`  
+4. 顶视：`out/board_top.png`  

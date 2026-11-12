@@ -5,17 +5,17 @@
       "Application": "Pcbnew",
       "Version": "10.0.8"
     },
-    "CreationDate": "2026-11-12T08:05:51+08:00"
+    "CreationDate": "2026-11-12T08:28:22+08:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
       "Name": "carrier_v1",
       "GUID": "63617272-6965-4725-9f76-312e6b696361",
-      "Revision": "B"
+      "Revision": "C"
     },
     "Size": {
-      "X": 140.1,
-      "Y": 100.1
+      "X": 160.1,
+      "Y": 110.1
     },
     "LayerNumber": 2,
     "BoardThickness": 1.6,
@@ -27,6 +27,7 @@
       "PadToPad": 0.2,
       "PadToTrack": 0.2,
       "TrackToTrack": 0.2,
+      "MinLineWidth": 0.2,
       "TrackToRegion": 0.4,
       "RegionToRegion": 0.4
     }

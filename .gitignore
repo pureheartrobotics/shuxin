@@ -120,3 +120,6 @@ _hw_tmp/
 
 hardware/carrier_v1/~*
 hardware/carrier_v1/*.lck
+hardware/carrier_v1/tools/*.jar
+hardware/carrier_v1/out/freerouting.log
+freerouting.json

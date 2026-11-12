@@ -1,4 +1,4 @@
-# shuxin 互连载板 Carrier V1.1
+# shuxin 互连载板 Carrier V1.2
 
 这是**普通 FR4 互连板**（把 K11C / ESP32-S3 DevKit / D24A / 电源 / 舵机 / ToF 用座子和排线固定），**不是**芯片封装用的 IC substrate。
 
@@ -14,11 +14,13 @@
 | 路径 | 内容 |
 |------|------|
 | `docs/CONNECTORS.md` | **主真值**：各连接器脚位 |
-| `docs/LAYOUT.md` | **V1.1 落位与已布线说明** |
+| `docs/LAYOUT.md` | **V1.2 落位 + FreeRouting 布通说明** |
 | `docs/nets.csv` | 网表摘要 |
 | `docs/BOM.csv` | 物料 |
-| `docs/FAB.md` | 打板参数与叠层注意 |
-| `carrier_v1.kicad_*` | KiCad 工程（原理图骨架 + **已布线 PCB**） |
+| `docs/FAB.md` | 打板参数 |
+| `carrier_v1.kicad_*` | KiCad 工程（**已布线**，DRC 仅丝印警告） |
+| `out/carrier_v1_gerbers.zip` | 可上传打板的 Gerber 包 |
+| `gen/run_freerouting.py` | 重新自动布线脚本 |
 
 ## 系统关系
 
@@ -34,16 +36,17 @@ K11C 30Pin ──UART7── ESP32-S3 DevKit ──控制/编码── D24A
 
 ## 使用步骤
 
-1. 读 `docs/CONNECTORS.md` + `docs/LAYOUT.md`，确认 K11C 为 **V1.2（3.3 V 扩展脚）**  
+1. 读 `docs/CONNECTORS.md` + `docs/LAYOUT.md`，确认 K11C 为 **板卡 V1.2（3.3 V 扩展脚）**  
 2. 安装 [KiCad 8+](https://www.kicad.org/)，打开 `carrier_v1.kicad_pro` → PCB  
-3. **Fill All Zones** → 跑 DRC → 按采购件替换封装  
-4. 导出 Gerber（输出目录建议 `cam/`），按 `docs/FAB.md` 下单  
+3. **Fill All Zones** → 确认 DRC → 按 BOM 换真实封装  
+4. 用 `out/carrier_v1_gerbers.zip` 或重新 Plot 后下单（`docs/FAB.md`）  
 
-重新生成：
+重新落位 + 自动布线：
 
 ```bash
-python hardware/carrier_v1/gen/make_kicad_project.py   # 原理图骨架
-python hardware/carrier_v1/gen/make_pcb_layout.py      # 落位+布线 PCB
+python hardware/carrier_v1/gen/make_pcb_layout.py
+# 放入 tools/freerouting.jar 后：
+"%LOCALAPPDATA%\Programs\KiCad\10.0\bin\python.exe" hardware/carrier_v1/gen/run_freerouting.py
 ```
 
 ## 明确不做（V1）
