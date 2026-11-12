@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Carrier V1.4 board builder — fixes review P0/P1 (KiCad 10 pcbnew)."""
+"""Carrier V1.5 board builder — V1.4 re-review fab blockers (KiCad 10 pcbnew)."""
 from __future__ import annotations
 
 import sys
@@ -49,7 +49,6 @@ def fp(lib_rel: str, name: str):
         _IO = pcbnew.PCB_IO_MGR.FindPlugin(pcbnew.PCB_IO_MGR.KICAD_SEXP)
     f = _IO.FootprintLoad(path, name)
     if f is None:
-        # fallback
         f = pcbnew.FootprintLoad(path, name)
     if f is None:
         raise RuntimeError(f"Footprint not found: {lib_rel} / {name}")
@@ -61,6 +60,10 @@ def place(board, f, ref, x, y, value=""):
     if value:
         f.SetValue(value)
     f.SetPosition(mm(x, y))
+    try:
+        f.Value().SetVisible(False)
+    except Exception:
+        pass
     board.Add(f)
     return f
 
@@ -84,19 +87,33 @@ def silk(board, text, x, y, size=1.0):
     board.Add(t)
 
 
-def zone(board, name, layer, pts, clearance=0.35):
+def zone(board, name, layer, pts, clearance=0.4):
     z = pcbnew.ZONE(board)
-    z.SetNetCode(net(board, name))
+    code = net(board, name)
+    z.SetNetCode(code)
+    # KiCad 10: also bind NETINFO so GetNetname() survives save/fill
+    ni = board.GetNetInfo().GetNetItem(name)
+    if ni and hasattr(z, "SetNet"):
+        z.SetNet(ni)
     z.SetLayer(layer)
     z.SetLocalClearance(FromMM(clearance))
-    z.SetMinThickness(FromMM(0.25))
+    z.SetMinThickness(FromMM(0.3))
     z.SetPadConnection(ZONE_CONNECTION_FULL)
+    try:
+        z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
+    except Exception:
+        pass
     poly = z.Outline()
     poly.RemoveAllContours()
     poly.NewOutline()
     for x, y in pts:
         poly.Append(FromMM(x), FromMM(y))
     board.Add(z)
+    # Re-assert after Add (some builds clear net on insert)
+    z.SetNetCode(code)
+    if ni and hasattr(z, "SetNet"):
+        z.SetNet(ni)
+    return z
 
 
 def track(board, x1, y1, x2, y2, name, w, layer=F_Cu):
@@ -120,9 +137,18 @@ def npth(board, ref, x, y, value="M3"):
         p.SetNetCode(0)
 
 
-def setup_netclasses(board) -> None:
-    """Power nets route thick from the start (avoids post-widen shorts)."""
-    ns = board.GetDesignSettings().m_NetSettings
+def setup_rules(board) -> None:
+    ds = board.GetDesignSettings()
+    # Match FreeRouting defaults (documented in FAB.md as 0.6 / 0.3)
+    try:
+        ds.m_ViasMinSize = FromMM(0.6)
+        ds.m_ViasMinDrill = FromMM(0.3)
+        ds.m_ViasDefaultSize = FromMM(0.6)
+        ds.m_ViasDefaultDrill = FromMM(0.3)
+    except Exception:
+        pass
+
+    ns = ds.m_NetSettings
     power = pcbnew.NETCLASS("Power")
     power.SetTrackWidth(FromMM(1.6))
     power.SetClearance(FromMM(0.45))
@@ -131,6 +157,16 @@ def setup_netclasses(board) -> None:
     ns.SetNetclass("Power", power)
     for pat in ("VBAT*", "VM*", "V_SERVO"):
         ns.SetNetclassPatternAssignment(pat, "Power")
+
+    logic = pcbnew.NETCLASS("LogicPower")
+    logic.SetTrackWidth(FromMM(0.5))
+    logic.SetClearance(FromMM(0.25))
+    logic.SetViaDiameter(FromMM(0.8))
+    logic.SetViaDrill(FromMM(0.4))
+    ns.SetNetclass("LogicPower", logic)
+    for pat in ("+3V3", "+5V_LOGIC", "S3_5V"):
+        ns.SetNetclassPatternAssignment(pat, "LogicPower")
+
     gnd = pcbnew.NETCLASS("GND")
     gnd.SetTrackWidth(FromMM(0.5))
     gnd.SetClearance(FromMM(0.25))
@@ -141,10 +177,20 @@ def setup_netclasses(board) -> None:
     ns.RecomputeEffectiveNetclasses()
 
 
+def mkds(board, ref, x, y, value, n1, n2):
+    f = fp(
+        "TerminalBlock_Phoenix.pretty",
+        "TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal",
+    )
+    place(board, f, ref, x, y, value)
+    bind(board, f, {"1": n1, "2": n2})
+    return f
+
+
 def main() -> int:
     board = pcbnew.NewBoard(str(BOARD_PATH))
-    setup_netclasses(board)
-    # Edge
+    setup_rules(board)
+
     edge = pcbnew.PCB_SHAPE(board)
     edge.SetShape(pcbnew.SHAPE_T_RECT)
     edge.SetLayer(Edge_Cuts)
@@ -154,71 +200,65 @@ def main() -> int:
     board.Add(edge)
 
     tb = board.GetTitleBlock()
-    tb.SetTitle("shuxin Carrier V1.4")
-    tb.SetRevision("E")
+    tb.SetTitle("shuxin Carrier V1.5")
+    tb.SetRevision("F")
     tb.SetDate("2026-11-12")
     tb.SetCompany("pureheartrobotics")
-    silk(board, "shuxin CARRIER V1.4  170x120mm  JST XH 2.50mm", 6, 114, 1.2)
-    silk(board, "JP1 bridges +5V_LOGIC to S3_5V (P2-21); remove when USB-flashing", 6, 117, 0.95)
+    silk(board, "shuxin CARRIER V1.5  170x120mm  JST XH 2.50mm  Rev F", 6, 114, 1.15)
+    silk(board, "JP1: +5V_LOGIC->S3_5V (pull when USB-flash). BAT only on XT60 JBAT.", 6, 117, 0.85)
 
     HDR = "Connector_PinHeader_2.54mm.pretty"
     JST = "Connector_JST.pretty"
 
-    def power2(ref, x, y, value, n1, n2):
-        # Prefer Phoenix 5.08 terminal; fallback 2.54 header (documented in BOM)
-        try:
-            f = fp(
-                "TerminalBlock_Phoenix.pretty",
-                "TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal",
-            )
-        except RuntimeError:
-            f = fp(HDR, "PinHeader_1x02_P2.54mm_Vertical")
-        place(board, f, ref, x, y, value)
-        bind(board, f, {"1": n1, "2": n2})
-        return f
+    # --- Power path: XT60 -> D1(20A) -> F1 -> SW1 -> VM ---
+    jbat = fp("Connector_AMASS.pretty", "AMASS_XT60PW-M_1x02_P7.20mm_Horizontal")
+    place(board, jbat, "JBAT", 14, 12, "XT60PW-M")
+    bind(board, jbat, {"1": "VBAT", "2": "GND"})
+    silk(board, "BAT ONLY", 8, 6, 0.9)
 
-    # Power path (left column, clear of P1): JBAT -> D1 -> F1 -> SW1 -> VM
-    # KiCad D_SMC: pad1=K (cathode), pad2=A (anode). Series reverse-polarity: BAT+→A→K→fuse.
-    power2("JBAT", 12, 12, "BAT/XT60-wire", "VBAT", "GND")
-
-    try:
-        d1 = fp("Diode_SMD.pretty", "D_SMC")
-    except RuntimeError:
-        d1 = fp("Diode_SMD.pretty", "D_SOD-123")
-    place(board, d1, "D1", 26, 12, "SS54")
+    # DO-201AD 20A Schottky (SR20100 / MBR20100). Pad1=K, Pad2=A.
+    # Place left of P1 (P1 @ x=58) — body spans +12.7 mm from origin.
+    d1 = fp("Diode_THT.pretty", "D_DO-201AD_P12.70mm_Horizontal")
+    place(board, d1, "D1", 28, 12, "SR20100")
     bind(board, d1, {"2": "VBAT", "1": "VBAT_F"})
+    silk(board, "A<-BAT  K->FUSE", 24, 7, 0.75)
 
-    power2("F1", 12, 26, "FUSE-wires", "VBAT_F", "VM_PRE")
-    power2("SW1", 12, 40, "SW-wires", "VM_PRE", "VM")
-    power2("JVM", 12, 54, "D24A-VIN", "VM", "GND")
-    power2("JK11", 12, 68, "K11C-12V", "VM", "GND")
+    mkds(board, "F1", 14, 30, "FUSE-12A", "VBAT_F", "VM_PRE")
+    silk(board, "FUSE", 8, 24, 0.85)
+    mkds(board, "SW1", 14, 44, "SW-15A", "VM_PRE", "VM")
+    silk(board, "SW", 8, 38, 0.85)
+    mkds(board, "JVM", 14, 58, "TO-D24A", "VM", "GND")
+    silk(board, "D24A-VIN", 8, 52, 0.85)
+    mkds(board, "JK11", 14, 72, "TO-K11C", "VM", "GND")
+    silk(board, "K11C-12V", 8, 66, 0.85)
 
     ubuck = fp(HDR, "PinHeader_1x04_P2.54mm_Vertical")
-    place(board, ubuck, "UBUCK", 12, 82, "BUCK")
+    place(board, ubuck, "UBUCK", 14, 86, "BUCK-8.4V")
     bind(board, ubuck, {"1": "VM", "2": "GND", "3": "V_SERVO", "4": "GND"})
 
     jp1 = fp(HDR, "PinHeader_1x02_P2.54mm_Vertical")
-    place(board, jp1, "JP1", 12, 96, "5V-EN")
+    place(board, jp1, "JP1", 14, 100, "5V-EN")
     bind(board, jp1, {"1": "+5V_LOGIC", "2": "S3_5V"})
 
-    # Caps
-    try:
-        cin = fp("Capacitor_THT.pretty", "CP_Radial_D8.0mm_P3.50mm")
-    except RuntimeError:
-        cin = fp("Capacitor_SMD.pretty", "C_1206_3216Metric")
-    place(board, cin, "C_IN", 28, 54, "100u")
+    # Bulk caps — clear of connectors
+    cin = fp("Capacitor_THT.pretty", "CP_Radial_D8.0mm_P3.50mm")
+    place(board, cin, "C_IN", 30, 58, "100u")
     bind(board, cin, {"1": "VM", "2": "GND"})
-    for ref, y in (("C_SERVO1", 16), ("C_SERVO2", 30)):
-        try:
-            c = fp("Capacitor_THT.pretty", "CP_Radial_D8.0mm_P3.50mm")
-        except RuntimeError:
-            c = fp("Capacitor_SMD.pretty", "C_1206_3216Metric")
-        place(board, c, ref, 158, y, "470u")
+
+    # 3V3 decoupling near K11C (THT so GND ties into B.Cu pour without stitch vias)
+    c33 = fp("Capacitor_THT.pretty", "C_Disc_D5.0mm_W2.5mm_P2.50mm")
+    place(board, c33, "C_3V3", 56, 54, "10u")
+    bind(board, c33, {"1": "+3V3", "2": "GND"})
+
+    # Servo caps — clear of XH seats (x=145) and corner hole H2 (165,5)
+    for ref, y in (("C_SERVO1", 16), ("C_SERVO2", 32)):
+        c = fp("Capacitor_THT.pretty", "CP_Radial_D8.0mm_P3.50mm")
+        place(board, c, ref, 160, y, "470u")
         bind(board, c, {"1": "V_SERVO", "2": "GND"})
 
-    # P1 — no 5V to K11C, DEBUG NC; keep clear of left power column
+    # P1 K11C — DEBUG 25/27 NC (keep clear of D1 @ x=28..40.7)
     p1 = fp(HDR, "PinHeader_2x15_P2.54mm_Vertical")
-    place(board, p1, "P1", 48, 12, "K11C")
+    place(board, p1, "P1", 58, 12, "K11C")
     bind(
         board,
         p1,
@@ -236,7 +276,7 @@ def main() -> int:
         },
     )
 
-    # DevKit headers (row pitch 22.86 mm)
+    # DevKit — P2-1/2 intentionally NC (no dual 3V3 with DevKit LDO)
     p2x, p2y = 96.0, 10.0
     p3x = p2x + DEVKIT_ROW
     p2 = fp(HDR, "PinHeader_1x22_P2.54mm_Vertical")
@@ -244,9 +284,8 @@ def main() -> int:
     place(board, p2, "P2", p2x, p2y, "S3-J1")
     place(board, p3, "P3", p3x, p2y, "S3-J3")
     silk(board, f"row={DEVKIT_ROW}mm", p2x, 5, 0.9)
+    silk(board, "P2-1/2 NC (no 3V3 dual-source)", p2x, 68, 0.75)
 
-    # Control nets use *_J toward connectors; S3 pins use base names through resistors
-    # Place 100R series between P2 column and CTRL area (left of P2)
     series = [
         ("R1", "STBY", p2x - 10, 12),
         ("R2", "PWMA", p2x - 10, 15.5),
@@ -271,8 +310,7 @@ def main() -> int:
         board,
         p2,
         {
-            "1": "+3V3",
-            "2": "+3V3",
+            # 1,2 intentionally omitted — DevKit LDO must not parallel K11C 3V3
             "4": "PWMA",
             "5": "AIN1",
             "6": "AIN2",
@@ -312,22 +350,19 @@ def main() -> int:
         },
     )
 
-    # I2C pullups near P1 I2C pins
     for ref, nname, y in (("R14", "I2C3_SCL", 58), ("R15", "I2C3_SDA", 62)):
         r = fp("Resistor_SMD.pretty", "R_0603_1608Metric")
-        place(board, r, ref, 58, y, "4K7")
+        place(board, r, ref, 62, y, "4K7")
         bind(board, r, {"1": nname, "2": "+3V3"})
 
     def xh(n):
         return fp(JST, f"JST_XH_B{n}B-XH-A_1x{n:02d}_P2.50mm_Vertical")
 
-    # UART 4P (keyed; not same family as servo 3P)
     ju = xh(4)
     place(board, ju, "J_UART", 58, 72, "UART")
     bind(board, ju, {"1": "UART_K11C_TX", "2": "UART_K11C_RX", "3": "GND", "4": ""})
-    silk(board, "UART", 58, 68, 1.0)
+    silk(board, "UART (or P1, not both)", 52, 68, 0.75)
 
-    # CTRL AB vertical 8P; CD horizontal 8P (anti-mismatch)
     jab = xh(8)
     place(board, jab, "J_CTRL_AB", 48, 104, "CTRL-AB")
     bind(
@@ -380,46 +415,57 @@ def main() -> int:
         ("J_SERVO_TILT", 28, "SERVO_TILT", "SERVO-TILT"),
     ]:
         j = xh(3)
-        place(board, j, ref, 148, y, label)
+        place(board, j, ref, 145, y, label)
         bind(board, j, {"1": sig, "2": "V_SERVO", "3": "GND"})
-        silk(board, label, 148, y - 4, 0.9)
+        silk(board, label, 145, y - 4, 0.9)
 
     jtof = xh(4)
-    place(board, jtof, "J_TOF", 148, 48, "TOF")
+    place(board, jtof, "J_TOF", 145, 48, "TOF")
     bind(board, jtof, {"1": "+3V3", "2": "GND", "3": "I2C3_SCL", "4": "I2C3_SDA"})
-    silk(board, "TOF", 148, 44, 0.9)
+    silk(board, "TOF", 145, 44, 0.9)
 
-    # Test points (right of power column, left of P1)
-    for i, (nname, y) in enumerate(
-        [("VM", 48), ("V_SERVO", 54), ("+3V3", 60), ("+5V_LOGIC", 66), ("S3_5V", 72), ("GND", 78), ("UART_K11C_TX", 84)],
+    # Test points — PTH pins for power/GND so they hit B.Cu pour; pad OK for signals
+    for i, (nname, x, y, pth) in enumerate(
+        [
+            ("VM", 38, 40, True),
+            ("V_SERVO", 38, 46, True),
+            ("+3V3", 38, 64, True),
+            ("+5V_LOGIC", 38, 70, True),
+            ("S3_5V", 70, 58, True),
+            ("GND", 38, 100, True),
+            ("UART_K11C_TX", 72, 64, False),
+        ],
         1,
     ):
-        try:
-            tp = fp("TestPoint.pretty", "TestPoint_Pad_D1.5mm")
-        except RuntimeError:
+        if pth:
             tp = fp(HDR, "PinHeader_1x01_P2.54mm_Vertical")
-        place(board, tp, f"TP{i}", 34, y, nname)
+        else:
+            try:
+                tp = fp("TestPoint.pretty", "TestPoint_Pad_D1.5mm")
+            except RuntimeError:
+                tp = fp(HDR, "PinHeader_1x01_P2.54mm_Vertical")
+        place(board, tp, f"TP{i}", x, y, nname)
         bind(board, tp, {"1": nname})
 
-    # NPTH mounting holes (board corners + module anchors)
     for i, (x, y) in enumerate([(4, 4), (W - 4, 4), (4, H - 4), (W - 4, H - 4)], 1):
         npth(board, f"H{i}", x, y)
-    for i, (x, y) in enumerate([(42, 6), (150, 6), (42, 72), (150, 72)], 1):
+    for i, (x, y) in enumerate([(48, 6), (150, 6), (48, 78), (150, 78)], 1):
         npth(board, f"MH_K11C{i}", x, y, "K11C")
     for i, (x, y) in enumerate([(40, 114), (130, 114)], 1):
         npth(board, f"MH_D24A{i}", x, y, "D24A")
 
-    # Zones + thick power spines (zones carry GND / VM / VBAT bulk)
-    zone(board, "GND", B_Cu, [(1.5, 1.5), (W - 1.5, 1.5), (W - 1.5, H - 1.5), (1.5, H - 1.5)])
-    zone(board, "GND", F_Cu, [(1.5, 1.5), (30, 1.5), (30, 28), (1.5, 28)])
-    zone(board, "VM", F_Cu, [(1.5, 36), (30, 36), (30, 100), (1.5, 100)], 0.4)
-    zone(board, "V_SERVO", F_Cu, [(140, 8), (168, 8), (168, 42), (140, 42)], 0.4)
-    zone(board, "VBAT", F_Cu, [(6, 6), (34, 6), (34, 20), (6, 20)], 0.4)
+    # Zones: non-overlapping F.Cu power islands + full B.Cu GND
+    # NO F.Cu GND island near VBAT (that caused zones_intersect + short risk)
+    zone(board, "GND", B_Cu, [(1.5, 1.5), (W - 1.5, 1.5), (W - 1.5, H - 1.5), (1.5, H - 1.5)], 0.35)
+    zone(board, "VBAT", F_Cu, [(4, 4), (26, 4), (26, 20), (4, 20)], 0.45)
+    zone(board, "VBAT_F", F_Cu, [(28, 4), (48, 4), (48, 20), (28, 20)], 0.45)  # under D1 cathode
+    zone(board, "VM", F_Cu, [(4, 36), (28, 36), (28, 104), (4, 104)], 0.45)
+    zone(board, "V_SERVO", F_Cu, [(154, 8), (168, 8), (168, 42), (154, 42)], 0.45)
 
-    # Short stubs only — long power runs come from zones in post_fix_power.py
-    track(board, 12, 12, 22, 12, "VBAT", 3.0)
-    track(board, 12, 26, 12, 36, "VM_PRE", 2.5)
-    track(board, 12, 40, 18, 40, "VM", 2.5)
+    track(board, 14, 12, 24, 12, "VBAT", 3.0)
+    track(board, 40, 12, 44, 12, "VBAT_F", 2.5)
+    track(board, 14, 30, 14, 40, "VM_PRE", 2.5)
+    track(board, 14, 44, 20, 44, "VM", 2.5)
 
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.SaveBoard(str(BOARD_PATH), board)

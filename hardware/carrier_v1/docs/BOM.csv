@@ -1,33 +1,35 @@
 Ref,Qty,Value,Footprint,Manufacturer/MPN,LCSC/Notes
-JBAT,1,XT60 wire-in,PinHeader_1x02_P2.54mm (placeholder),Amass XT60PW-M,首板用导线焊 XT60；量产换 MKDS/XT60PCB
-D1,1,SS54 Schottky,D_SMC,SS54 / SS5P4,C84767 类；串联反接保护 BAT+→A→K→F1
-F1,1,12A fuse holder wires,PinHeader_1x02_P2.54mm (placeholder),5x20 holder or PTC,首板飞线座；勿与 SW1 混用封装
-SW1,1,SPST 15A panel,PinHeader_1x02_P2.54mm (placeholder),panel toggle,首板飞线开关；与 F1 同占位但网不同
-JVM,1,KF128-5.08 2P,PinHeader_1x02 fallback / Phoenix MKDS,KF128-2P 5.08,To D24A VIN
-JK11,1,KF128-5.08 2P,PinHeader_1x02 fallback / Phoenix MKDS,KF128-2P 5.08,To K11C 12V
-UBUCK,1,Buck >=5A @8.4V,PinHeader_1x04_P2.54mm,XL4015 module,Servo rail module pads
-C_IN,1,100uF/25V,CP_Radial_D8.0mm_P3.50mm,generic electrolytic,VM bulk
-C_SERVO1,1,470uF/16V,CP_Radial_D8.0mm_P3.50mm,generic,Near servo XH
-C_SERVO2,1,470uF/16V,CP_Radial_D8.0mm_P3.50mm,generic,Near servo XH
-P1,1,2x15 2.54 female,PinHeader_2x15_P2.54mm_Vertical,generic,K11C 30Pin mate；DEBUG 25/27 NC
-P2,1,1x22 2.54 female,PinHeader_1x22_P2.54mm_Vertical,generic,S3 DevKit J1；row=22.86mm
-P3,1,1x22 2.54 female,PinHeader_1x22_P2.54mm_Vertical,generic,S3 DevKit J3
-J_UART,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A / 山一等同,2.50mm；针4 NC 防与舵机3P互插
+JBAT,1,XT60PW-M,AMASS_XT60PW-M_1x02_P7.20mm_Horizontal,Amass XT60PW-M,电池入口；与 MKDS 不同型防呆
+D1,1,SR20100 20A/100V Schottky,D_DO-201AD_P12.70mm_Horizontal,SR20100 / MBR20100,串联反接保护；Pad1=K Pad2=A；≥15A
+F1,1,12A fuse holder,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,5x20 holder wires,丝印 FUSE；勿接电池
+SW1,1,SPST 15A,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,panel toggle wires,丝印 SW
+JVM,1,KF128-5.08 2P,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,KF128-2P 5.08,丝印 D24A-VIN
+JK11,1,KF128-5.08 2P,TerminalBlock_Phoenix_MKDS-1,5-2_1x02_P5.00mm_Horizontal,KF128-2P 5.08,丝印 K11C-12V
+UBUCK,1,Buck >=5A @8.4V,PinHeader_1x04_P2.54mm_Vertical,XL4015 module,Servo rail
+C_IN,1,100uF/25V,CP_Radial_D8.0mm_P3.50mm,generic,VM bulk
+C_SERVO1,1,470uF/16V,CP_Radial_D8.0mm_P3.50mm,generic,Near servo
+C_SERVO2,1,470uF/16V,CP_Radial_D8.0mm_P3.50mm,generic,Near servo
+C_3V3,1,10uF,C_Disc_D5.0mm_W2.5mm_P2.50mm,generic,K11C 3V3 去耦
+P1,1,2x15 2.54 female,PinHeader_2x15_P2.54mm_Vertical,generic,K11C；DEBUG 25/27 NC
+P2,1,1x22 2.54 female,PinHeader_1x22_P2.54mm_Vertical,generic,S3 J1；P2-1/2 NC（禁 3V3 双源）
+P3,1,1x22 2.54 female,PinHeader_1x22_P2.54mm_Vertical,generic,S3 J3；row=22.86mm
+J_UART,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,针4 NC；与 P1 UART 二选一
 J_CTRL_AB,1,JST XH 8P vertical,JST_XH_B8B-XH-A_1x08_P2.50mm_Vertical,JST B8B-XH-A,D24A J4
-J_CTRL_CD,1,JST XH 8P horizontal,JST_XH_S8B-XH-A_1x08_P2.50mm_Horizontal,JST S8B-XH-A,卧式防与 AB 互插
-J_ENC_A,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder A
-J_ENC_B,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder B
-J_ENC_C,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder C
-J_ENC_D,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder D
-J_SERVO_PAN,1,JST XH 3P vertical,JST_XH_B3B-XH-A_1x03_P2.50mm_Vertical,JST B3B-XH-A,Servo pan
-J_SERVO_TILT,1,JST XH 3P vertical,JST_XH_B3B-XH-A_1x03_P2.50mm_Vertical,JST B3B-XH-A,Servo tilt
-J_TOF,1,JST XH 4P vertical,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,VL53L5CX
+J_CTRL_CD,1,JST XH 8P horizontal,JST_XH_S8B-XH-A_1x08_P2.50mm_Horizontal,JST S8B-XH-A,卧式防呆
+J_ENC_A,1,JST XH 4P,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder A
+J_ENC_B,1,JST XH 4P,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder B
+J_ENC_C,1,JST XH 4P,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder C
+J_ENC_D,1,JST XH 4P,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,Encoder D
+J_SERVO_PAN,1,JST XH 3P,JST_XH_B3B-XH-A_1x03_P2.50mm_Vertical,JST B3B-XH-A,Servo pan
+J_SERVO_TILT,1,JST XH 3P,JST_XH_B3B-XH-A_1x03_P2.50mm_Vertical,JST B3B-XH-A,Servo tilt
+J_TOF,1,JST XH 4P,JST_XH_B4B-XH-A_1x04_P2.50mm_Vertical,JST B4B-XH-A,VL53L5CX
 JP1,1,jumper 2.54,PinHeader_1x02_P2.54mm_Vertical,generic,+5V_LOGIC↔S3_5V；烧录拔掉
-R1-R13,13,100R,R_1206_3216Metric,generic 100R 1206,Series on motor GPIOs
-R14-R15,2,4.7k,R_0603_1608Metric,generic 4.7k 0603,I2C pullup
-TP1-TP7,7,test pad 1.5mm,TestPoint_Pad_D1.5mm,generic,VM/V_SERVO/3V3/5V/S3_5V/GND/UART_TX
-H1-H4,4,M3 NPTH 3.2mm,MountingHole_3.2mm_M3 NPTH,generic,板角安装；非镀铜
-MH_K11C1-4,4,M3 NPTH,MountingHole_3.2mm_M3 NPTH,generic,K11C 机械固定
-MH_D24A1-2,2,M3 NPTH,MountingHole_3.2mm_M3 NPTH,generic,D24A 机械固定
-Housing+crimp,1 lot,JST XH housings+SPH-002T-P0.5S,wire harness,JST,匹配各座；勿买「XH2.54」假脚距
-PCB,1,Carrier V1.4 rev E,FR4 1.6mm 2L HASL,JLCPCB/立创,170x120mm
+R1-R13,13,100R,R_1206_3216Metric,generic,Motor GPIO series
+R14-R15,2,4.7k,R_0603_1608Metric,generic,I2C pullup
+TP1-TP6,6,test pin 1x01,PinHeader_1x01_P2.54mm_Vertical,generic,VM/V_SERVO/3V3/5V/S3_5V/GND
+TP7,1,test pad,TestPoint_Pad_D1.5mm,generic,UART_TX
+H1-H4,4,M3 NPTH,MountingHole_3.2mm_M3 NPTH,generic,板角
+MH_K11C1-4,4,M3 NPTH,MountingHole_3.2mm_M3 NPTH,generic,K11C 锚点（需按实物核孔距）
+MH_D24A1-2,2,M3 NPTH,MountingHole_3.2mm_M3 NPTH,generic,D24A 锚点
+Housing+crimp,1 lot,JST XH + SPH-002T-P0.5S,wire harness,JST,勿买「XH2.54」杂牌
+PCB,1,Carrier V1.5 rev F,FR4 1.6mm 2L HASL,JLCPCB,170x120mm
