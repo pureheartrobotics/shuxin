@@ -67,6 +67,25 @@ def add_zone(board, name, layer, pts, clearance):
         z.SetNet(ni)
 
 
+def _is_via(t) -> bool:
+    # KiCad 10: SWIG isinstance(PCB_VIA) is unreliable; Type()/name is stable
+    try:
+        if t.Type() == pcbnew.PCB_VIA_T:
+            return True
+    except Exception:
+        pass
+    return type(t).__name__ == "PCB_VIA"
+
+
+def _track_width_mm(t) -> float | None:
+    if _is_via(t):
+        return None
+    try:
+        return round(ToMM(t.GetWidth()), 3)
+    except Exception:
+        return None
+
+
 def main() -> int:
     board = pcbnew.LoadBoard(str(BOARD_PATH))
     # Drop freerouted thin GND F.Cu segs — B.Cu pour + PTH handles ground
@@ -74,7 +93,7 @@ def main() -> int:
     for t in list(board.GetTracks()):
         if t.GetNetname() != "GND":
             continue
-        if isinstance(t, pcbnew.PCB_VIA):
+        if _is_via(t):
             continue
         if t.GetLayer() == F_Cu:
             board.Delete(t)
@@ -84,19 +103,18 @@ def main() -> int:
         add_zone(board, name, layer, pts, clr)
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.SaveBoard(str(BOARD_PATH), board)
-    pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-    pcbnew.SaveBoard(str(BOARD_PATH), board)
 
     zones = [(z.GetNetname(), z.GetLayer()) for z in board.Zones()]
     from collections import defaultdict
 
     ws = defaultdict(set)
     for t in board.GetTracks():
-        if isinstance(t, pcbnew.PCB_VIA):
-            continue
         n = t.GetNetname()
-        if n in ("VBAT", "VBAT_F", "VM_PRE", "VM", "V_SERVO", "GND", "+3V3", "+5V_LOGIC", "S3_5V"):
-            ws[n].add(round(ToMM(t.GetWidth()), 3))
+        if n not in ("VBAT", "VBAT_F", "VM_PRE", "VM", "V_SERVO", "GND", "+3V3", "+5V_LOGIC", "S3_5V"):
+            continue
+        w = _track_width_mm(t)
+        if w is not None:
+            ws[n].add(w)
     print(f"removed {gnd_rm} F.Cu GND tracks; zones recreated (removed {removed}): {zones}")
     print("widths", {k: sorted(v) for k, v in ws.items()})
     return 0
